@@ -81,3 +81,35 @@ class InventoryRecordSerializer(serializers.ModelSerializer):
         if e and l and e > l:
             raise serializers.ValidationError("配送到达最早时间不能晚于最晚时间。")
         return attrs
+
+
+from rest_framework import serializers
+
+class TrendStoreSeriesSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    address = serializers.CharField(allow_blank=True, allow_null=True)
+    dates = serializers.ListField(child=serializers.DateField(format="%Y-%m-%d"))
+    earliest = serializers.ListField(child=serializers.IntegerField())
+    median = serializers.ListField(child=serializers.IntegerField())
+    latest = serializers.ListField(child=serializers.IntegerField())
+
+class BasicIphoneInfoSerializer(serializers.Serializer):
+    part_number = serializers.CharField()
+    model_name = serializers.CharField()
+    capacity_gb = serializers.IntegerField()
+    color = serializers.CharField()
+    release_date = serializers.DateField()
+    capacity_label = serializers.SerializerMethodField()
+
+    def get_capacity_label(self, obj):
+        gb = obj.get("capacity_gb")
+        return f"{gb // 1024}TB" if gb and gb % 1024 == 0 else f"{gb}GB"
+
+class TrendResponseByPNSerializer(serializers.Serializer):
+    part_number = serializers.CharField()
+    iphone = BasicIphoneInfoSerializer(required=False)
+    recorded_after = serializers.DateTimeField(allow_null=True, required=False)
+    recorded_before = serializers.DateTimeField(allow_null=True, required=False)
+    stores = TrendStoreSeriesSerializer(many=True)
+

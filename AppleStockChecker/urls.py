@@ -11,6 +11,7 @@ from rest_framework.routers import DefaultRouter
 from .views import IphoneViewSet,OfficialStoreViewSet, InventoryRecordViewSet
 from .views_frontend import StockDashboardView
 from .views_frontend import StoreLatestStockView
+from .views_frontend import DeliveryTrendView
 router = DefaultRouter()
 router.register(r"iphones", IphoneViewSet, basename="iphone")
 router.register(r"stores", OfficialStoreViewSet, basename="store")
@@ -33,5 +34,9 @@ urlpatterns = [
 urlpatterns = [
     path("store-latest/", StoreLatestStockView.as_view(), name="store-latest"),
 ] + urlpatterns
+urlpatterns = [
+    path("delivery-trend/", DeliveryTrendView.as_view(), name="delivery-trend"),
+] + urlpatterns
+
 urlpatterns += router.urls
 

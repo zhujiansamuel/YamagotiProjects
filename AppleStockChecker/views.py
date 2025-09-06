@@ -14,6 +14,20 @@ from django.utils.dateparse import parse_datetime
 from .models import Iphone, OfficialStore, InventoryRecord
 from .serializers import OfficialStoreSerializer, InventoryRecordSerializer, IphoneSerializer
 from .serializers import UserSerializer
+
+
+
+from math import ceil
+from datetime import timedelta
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework import status
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
+
+from .models import InventoryRecord, Iphone       # ← 确保导入 Iphone
+from .serializers import TrendResponseByPNSerializer
 # Create your views here.
 
 class HealthView(APIView):
@@ -249,3 +263,158 @@ class InventoryRecordViewSet(viewsets.ModelViewSet):
             qs = qs.filter(estimated_arrival_latest__lte=al_before)
 
         return qs
+
+    @extend_schema(
+        tags=["Apple / Inventory"],
+        summary="送达天数趋势（按 part_number → 门店，日聚合）",
+        description=(
+                "以唯一编码 part_number 为一级分类，门店为二级分类。"
+                "同一门店同一天：最早天数取最小、最晚天数取最大；中位数 = round((最早+最晚)/2)。"
+                "天数 = ceil(送达日期 - 记录日期)，若无库存或缺少送达时间则记 0。"
+        ),
+        parameters=[
+            OpenApiParameter("pn", OpenApiTypes.STR, description="必填：iPhone 唯一编码 Part Number（精确匹配）",
+                             required=True),
+            OpenApiParameter("recorded_after", OpenApiTypes.DATETIME, description="记录时间不早于（ISO8601）",
+                             required=False),
+            OpenApiParameter("recorded_before", OpenApiTypes.DATETIME, description="记录时间不晚于（ISO8601）",
+                             required=False),
+            OpenApiParameter("days", OpenApiTypes.INT,
+                             description="最近 N 天（默认 14；若提供 recorded_after/recorded_before 则忽略）",
+                             required=False),
+            OpenApiParameter("store", OpenApiTypes.INT, description="可选：仅该门店 ID", required=False),
+        ],
+        responses=TrendResponseByPNSerializer,
+    )
+    @action(detail=False, methods=["GET"], url_path="trend")
+    def trend(self, request):
+        """
+        GET /api/inventory-records/trend/?pn=MTUW3J%2FA&days=14
+        返回：
+        {
+          "part_number": "MTUW3J/A",
+          "iphone": {...},
+          "recorded_after": "...", "recorded_before": null,
+          "stores": [
+            { "id": 1, "name": "...", "address": "...",
+              "dates": ["2025-09-01", ...],
+              "earliest": [0,2,...], "median": [0,2,...], "latest": [0,4,...]
+            }
+          ]
+        }
+        """
+        qp = request.query_params
+        pn = (qp.get("pn") or qp.get("part_number") or "").strip()
+        if not pn:
+            return Response({"detail": "缺少参数 pn（part_number）"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 时间范围
+        recorded_after = parse_datetime(qp.get("recorded_after") or "") or None
+        recorded_before = parse_datetime(qp.get("recorded_before") or "") or None
+        if not recorded_after and not recorded_before:
+            try:
+                days = max(1, int(qp.get("days", 14)))
+            except ValueError:
+                days = 14
+            recorded_after = timezone.now() - timedelta(days=days)
+
+        qs = (
+            InventoryRecord.objects.select_related("store", "iphone")
+            .filter(iphone__part_number=pn)
+            .order_by("recorded_at")
+        )
+        store_id = qp.get("store")
+        if store_id and store_id.isdigit():
+            qs = qs.filter(store_id=int(store_id))
+        if recorded_after:
+            qs = qs.filter(recorded_at__gte=recorded_after)
+        if recorded_before:
+            qs = qs.filter(recorded_at__lte=recorded_before)
+
+        rows = qs.values(
+            "store_id",
+            "store__name",
+            "store__address",
+            "recorded_at",
+            "has_stock",
+            "estimated_arrival_earliest",
+            "estimated_arrival_latest",
+        )
+
+        # store -> date -> {e, l}
+        by_store: dict[int, dict] = {}
+
+        def to_days(rec):
+            ra = rec["recorded_at"]
+            if not rec["has_stock"]:
+                return 0, 0
+
+            def diff_days(target):
+                if not target:
+                    return 0
+                d = ceil((target - ra).total_seconds() / 86400.0)
+                return d if d > 0 else 0
+
+            e = diff_days(rec["estimated_arrival_earliest"])
+            l = diff_days(rec["estimated_arrival_latest"])
+            return e, l
+
+        for r in rows:
+            sid = r["store_id"]
+            if sid not in by_store:
+                by_store[sid] = {
+                    "store": {"id": sid, "name": r["store__name"], "address": r["store__address"]},
+                    "dates": {},
+                }
+            key = r["recorded_at"].date().isoformat()
+            e_days, l_days = to_days(r)
+            slot = by_store[sid]["dates"].get(key)
+            if slot is None:
+                by_store[sid]["dates"][key] = {"e": e_days, "l": l_days}
+            else:
+                slot["e"] = min(slot["e"], e_days)
+                slot["l"] = max(slot["l"], l_days)
+
+        stores_out = []
+        for sid, payload in by_store.items():
+            dmap = payload["dates"]
+            dates = sorted(dmap.keys())
+            e_list, m_list, l_list = [], [], []
+            for d in dates:
+                e = int(dmap[d]["e"] or 0)
+                l = int(dmap[d]["l"] or 0)
+                m = int(round((e + l) / 2.0))
+                e_list.append(e)
+                l_list.append(l)
+                m_list.append(m)
+            stores_out.append({
+                **payload["store"],
+                "dates": dates,
+                "earliest": e_list,
+                "median": m_list,
+                "latest": l_list,
+            })
+        stores_out.sort(key=lambda x: x["name"] or "")
+
+        # 附带 iPhone 基本信息（若存在）
+        iphone_info = None
+        ip = Iphone.objects.filter(part_number=pn).values(
+            "part_number", "model_name", "capacity_gb", "color", "release_date"
+        ).first()
+        if ip:
+            iphone_info = {
+                **ip,
+                "capacity_label": (
+                    f"{ip['capacity_gb'] // 1024}TB" if ip["capacity_gb"] % 1024 == 0 else f"{ip['capacity_gb']}GB")
+            }
+
+        data = {
+            "part_number": pn,
+            "iphone": iphone_info,
+            "recorded_after": recorded_after,
+            "recorded_before": recorded_before,
+            "stores": stores_out,
+        }
+        # 用序列化器规范输出
+        ser = TrendResponseByPNSerializer(data)
+        return Response(ser.data)

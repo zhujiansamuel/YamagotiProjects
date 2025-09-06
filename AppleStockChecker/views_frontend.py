@@ -6,3 +6,6 @@ class StockDashboardView(TemplateView):
 
 class StoreLatestStockView(TemplateView):
     template_name = "apple_stock/store_latest.html"
+
+class DeliveryTrendView(TemplateView):
+    template_name = "apple_stock/delivery_trend.html"
