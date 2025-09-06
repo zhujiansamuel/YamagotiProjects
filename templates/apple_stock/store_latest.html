@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>按门店分组：所有 iPhone 最新记录</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    (()=>{const pref=localStorage.getItem('theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');if(pref==='dark')document.documentElement.classList.add('dark');window.__toggleTheme=()=>{document.documentElement.classList.toggle('dark');localStorage.setItem('theme',document.documentElement.classList.contains('dark')?'dark':'light');};})();
+  </script>
+  <style>
+    *{scrollbar-width:thin}::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:8px}.dark ::-webkit-scrollbar-thumb{background:#334155}
+  </style>
+</head>
+<body class="bg-zinc-50 text-zinc-900 dark:bg-zinc-900 dark:text-zinc-50 min-h-screen">
+  <div class="max-w-7xl mx-auto p-4 space-y-4">
+    <header class="flex items-center gap-3">
+      <h1 class="text-xl font-semibold">按门店分组：所有 iPhone 最新记录</h1>
+      <button class="ml-auto p-2 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800" title="切换主题" onclick="__toggleTheme()">🌓</button>
+    </header>
+
+    <!-- 过滤区 -->
+    <section class="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-3">
+      <div class="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+        <div class="md:col-span-2">
+          <label class="block text-sm mb-1">iPhone 型号（模糊匹配，如：16 Pro）</label>
+          <input id="modelFilter" list="modelOptions" type="text" placeholder="输入型号关键词"
+                 class="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 outline-none" />
+          <datalist id="modelOptions"></datalist>
+        </div>
+        <div class="flex items-center gap-2">
+          <input id="onlyInStock" type="checkbox" class="w-4 h-4">
+          <label for="onlyInStock" class="text-sm">仅显示有货</label>
+        </div>
+        <div class="flex items-center gap-2 md:justify-end md:col-span-2">
+          <button id="expandAll" class="px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800">展开全部</button>
+          <button id="collapseAll" class="px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800">收起全部</button>
+          <button id="refreshBtn" class="px-3 py-2 bg-black text-white dark:bg-white dark:text-black rounded-lg">查询</button>
+          <span id="loading" class="text-sm text-zinc-600 dark:text-zinc-400 hidden">加载中…</span>
+        </div>
+      </div>
+      <p class="text-xs text-zinc-500 mt-2">说明：对每家门店，展示（按 <code>recorded_at</code>）<b>每个 iPhone 变体的最新记录</b>。若某机型无记录，则显示“无记录”。</p>
+    </section>
+
+    <!-- 门店分组容器 -->
+    <section id="storesWrap" class="space-y-4"></section>
+
+    <footer class="text-xs text-zinc-500">数据来源：/AppleStockChecker/stores、/AppleStockChecker/iphones、/AppleStockChecker/inventory-records</footer>
+  </div>
+
+<script>
+const apiBase = '/AppleStockChecker';
+const $ = sel => document.querySelector(sel);
+function esc(s){return (s??'').toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));}
+function fmt(ts){if(!ts)return '-';try{return new Date(ts).toLocaleString();}catch{return ts;}}
+
+async function fetchAll(url){
+  const out=[]; let next=url;
+  while(next){
+    const r=await fetch(next); if(!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    const j=await r.json();
+    if(Array.isArray(j)) return j; // 无分页模式
+    out.push(...(j.results||[]));
+    next=j.next;
+  }
+  return out;
+}
+
+async function loadIphones(modelKeyword){
+  const params=new URLSearchParams();
+  params.set('ordering','model_name');
+  if(modelKeyword) params.set('model', modelKeyword); // IphoneViewSet 支持 model= 模糊匹配
+  return await fetchAll(`${apiBase}/iphones/?${params.toString()}`);
+}
+
+async function fetchLatestMapForStore(storeId, modelKeyword, expectCount){
+  // 拉取该门店的库存记录（按时间倒序），并聚合成：PN -> 最新记录
+  const map=new Map();
+  let page=1, MAX_PAGES=10; // 最多取 10 页（约 200 条，视你的 PAGE_SIZE 而定）
+  while(page<=MAX_PAGES){
+    const p=new URLSearchParams({store:String(storeId), ordering:'-recorded_at', page:String(page)});
+    if(modelKeyword) p.set('search', modelKeyword); // 在 pn/型号/颜色/门店名 上匹配
+    const r=await fetch(`${apiBase}/inventory-records/?${p.toString()}`);
+    if(!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    const j=await r.json();
+    const rows=j.results||j||[];
+    for(const rec of rows){
+      const pn=rec.iphone_part_number; if(!pn) continue;
+      if(!map.has(pn)) map.set(pn, rec); // 第一条即最新
+      if(expectCount && map.size>=expectCount) break;
+    }
+    if(!(j.next)) break;
+    page++;
+  }
+  return map;
+}
+
+function createStoreCard(store){
+  const card=document.createElement('div');
+  card.className='rounded-2xl border border-zinc-200 dark:border-zinc-800 overflow-hidden';
+  const header=document.createElement('div');
+  header.className='flex items-center gap-3 p-3 bg-zinc-100 dark:bg-zinc-900/50';
+  header.innerHTML=`
+    <div class="min-w-0">
+      <div class="font-medium truncate">${esc(store.name)}</div>
+      <div class="text-xs text-zinc-600 dark:text-zinc-400 truncate">${esc(store.address||'')}</div>
+    </div>
+    <div class="ml-auto text-xs" id="count-${store.id}"></div>
+    <button class="px-2 py-1 text-sm rounded border border-zinc-300 dark:border-zinc-700 hover:bg-white/60 dark:hover:bg-zinc-800" id="toggle-${store.id}">收起</button>
+  `;
+  const body=document.createElement('div');
+  body.className='p-0';
+  body.innerHTML=`
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead class="bg-white dark:bg-zinc-950">
+          <tr class="border-b border-zinc-200 dark:border-zinc-800">
+            <th class="p-3 text-left">PN</th>
+            <th class="p-3 text-left">iPhone</th>
+            <th class="p-3 text-left">库存</th>
+            <th class="p-3 text-left">记录时间</th>
+            <th class="p-3 text-left">预计到达（最早〜最晚）</th>
+          </tr>
+        </thead>
+        <tbody id="tbody-${store.id}"></tbody>
+      </table>
+    </div>`;
+  card.appendChild(header); card.appendChild(body);
+  // 折叠事件
+  header.querySelector(`#toggle-${store.id}`).addEventListener('click',()=>{
+    const hidden=body.style.display==='none';
+    body.style.display=hidden?'':'none';
+    header.querySelector(`#toggle-${store.id}`).textContent=hidden?'收起':'展开';
+  });
+  return {card, body, header};
+}
+
+async function runQuery(){
+  const wrap=$('#storesWrap');
+  const loading=$('#loading');
+  wrap.innerHTML=''; loading.classList.remove('hidden');
+  try{
+    const modelKeyword=($('#modelFilter').value||'').trim();
+    const onlyInStock=$('#onlyInStock').checked;
+
+    const [stores, iphones] = await Promise.all([
+      fetchAll(`${apiBase}/stores/?ordering=name`),
+      loadIphones(modelKeyword)
+    ]);
+
+    // datalist 选项（基于当前筛选的 iPhone）
+    const opts=[...new Set(iphones.map(x=>x.model_name))].filter(Boolean);
+    $('#modelOptions').innerHTML = opts.map(m=>`<option value="${esc(m)}"></option>`).join('');
+
+    for(const store of stores){
+      const {card, body, header}=createStoreCard(store);
+      wrap.appendChild(card);
+
+      // 获取该店最新记录映射（PN -> 最新记录）
+      const recMap = await fetchLatestMapForStore(store.id, modelKeyword, iphones.length);
+      const tbody = body.querySelector(`#tbody-${store.id}`);
+      let shown=0;
+      for(const ip of iphones){
+        const rec = recMap.get(ip.part_number);
+        if(onlyInStock && !(rec && rec.has_stock)) continue;
+        const tr=document.createElement('tr');
+        tr.className='border-b border-zinc-200 dark:border-zinc-800';
+        const pn = ip.part_number; const label = `${ip.model_name} ${(ip.capacity_gb%1024===0? (ip.capacity_gb/1024+'TB') : (ip.capacity_gb+'GB'))} ${ip.color}`;
+        const stock = rec ? (rec.has_stock ? '有货 ✅' : '无货 ❌') : '—';
+        const recorded = rec ? fmt(rec.recorded_at) : '无记录';
+        const earliest = rec?.estimated_arrival_earliest ? fmt(rec.estimated_arrival_earliest) : '—';
+        const latest   = rec?.estimated_arrival_latest   ? fmt(rec.estimated_arrival_latest)   : '—';
+        tr.innerHTML=`
+          <td class="p-3">${pn ? `<a class="underline" target="_blank" href="${apiBase}/iphones/${encodeURIComponent(pn)}/">${esc(pn)}</a>` : '-'}</td>
+          <td class="p-3">${esc(label)}</td>
+          <td class="p-3">${stock}</td>
+          <td class="p-3 whitespace-nowrap">${recorded}</td>
+          <td class="p-3">${earliest} 〜 ${latest}</td>`;
+        tbody.appendChild(tr); shown++;
+      }
+      if(!shown){
+        const tr=document.createElement('tr');
+        tr.innerHTML=`<td class="p-4 text-zinc-500" colspan="5">该门店下无符合条件的机型。</td>`;
+        tbody.appendChild(tr);
+      }
+      header.querySelector(`#count-${store.id}`).textContent = `${shown}/${iphones.length}`;
+    }
+  }catch(e){
+    const err=document.createElement('div');
+    err.className='p-3 rounded-lg bg-red-50 text-red-700';
+    err.textContent=`加载失败：${e.message||e}`;
+    $('#storesWrap').appendChild(err);
+  }finally{ loading.classList.add('hidden'); }
+}
+
+// 事件
+$('#refreshBtn').addEventListener('click', runQuery);
+$('#modelFilter').addEventListener('keydown', e=>{ if(e.key==='Enter') runQuery(); });
+$('#expandAll').addEventListener('click', ()=>{ document.querySelectorAll('#storesWrap > div > div + div').forEach(b=>b.style.display=''); document.querySelectorAll('[id^=toggle-]').forEach(x=>x.textContent='收起'); });
+$('#collapseAll').addEventListener('click', ()=>{ document.querySelectorAll('#storesWrap > div > div + div').forEach(b=>b.style.display='none'); document.querySelectorAll('[id^=toggle-]').forEach(x=>x.textContent='展开'); });
+
+// 初始执行
+runQuery();
+</script>
+</body>
+</html>
