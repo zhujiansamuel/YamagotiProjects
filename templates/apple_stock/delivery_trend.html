@@ -3,9 +3,10 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>送达天数趋势：按 iPhone 类型 → 门店</title>
+  <title>送达天数趋势（按 PN → 门店）</title>
+  <!-- 样式：Tailwind 仅为快速排版，可替换为任意方案 -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Chart.js CDN（零依赖，快速出图） -->
+  <!-- 图表：Chart.js（零依赖） -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script>
     // 简易暗色模式
@@ -18,170 +19,176 @@
 <body class="bg-zinc-50 text-zinc-900 dark:bg-zinc-900 dark:text-zinc-50 min-h-screen">
   <div class="max-w-7xl mx-auto p-4 space-y-4">
     <header class="flex items-center gap-3">
-      <h1 class="text-xl font-semibold">送达天数趋势（按 iPhone 类型 → 门店）</h1>
+      <h1 class="text-xl font-semibold">送达天数趋势（按 PN → 门店）</h1>
       <button class="ml-auto p-2 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800" title="切换主题" onclick="__toggleTheme()">🌓</button>
     </header>
 
-    <!-- 过滤器 -->
+    <!-- 查询栏 -->
     <section class="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-3">
-<div class="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
-  <div class="md:col-span-2">
-    <label class="block text-sm mb-1">iPhone 唯一编码（PN）</label>
-    <input id="pnInput" list="pnOptions" type="text" placeholder="如：MTUW3J/A"
-           class="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 outline-none"/>
-    <datalist id="pnOptions"></datalist>
-    <p class="text-xs text-zinc-500 mt-1">支持输入完整 PN 或从下拉建议选择。</p>
-  </div>
-  <div>
-    <label class="block text-sm mb-1">最近 N 天</label>
-    <input id="daysInput" type="number" min="1" max="90" value="14"
-           class="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 outline-none"/>
-  </div>
-  <div class="flex items-center gap-2">
-    <input id="onlyNonZero" type="checkbox" class="w-4 h-4"/>
-    <label for="onlyNonZero" class="text-sm">仅显示非 0 天数点</label>
-  </div>
-  <div class="flex items-center gap-2 md:justify-end">
-    <button id="refreshBtn" class="px-3 py-2 bg-black text-white dark:bg-white dark:text-black rounded-lg">查询</button>
-    <span id="loading" class="text-sm text-zinc-600 dark:text-zinc-400 hidden">加载中…</span>
-  </div>
-</div>
-      <p class="text-xs text-zinc-500 mt-2">规则：送达天数 = 送达日期 − 记录日期（天，向上取整，不为负）。若 <strong>无库存</strong> 则天数强制为 <strong>0</strong>。中位数曲线按“（最早+最晚）/2”在每个记录点上计算。</p>
+      <div class="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+        <div class="md:col-span-2">
+          <label class="block text-sm mb-1">iPhone 唯一编码（PN）</label>
+          <input id="pnInput" list="pnOptions" type="text" placeholder="如：MTUW3J/A"
+                 class="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 outline-none"/>
+          <datalist id="pnOptions"></datalist>
+          <p class="text-xs text-zinc-500 mt-1">从下拉建议选择或输入完整 PN。</p>
+        </div>
+        <div>
+          <label class="block text-sm mb-1">最近 N 天</label>
+          <input id="daysInput" type="number" min="1" max="90" value="14"
+                 class="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 outline-none"/>
+        </div>
+        <div class="flex items-center gap-2">
+          <input id="onlyNonZero" type="checkbox" class="w-4 h-4"/>
+          <label for="onlyNonZero" class="text-sm">仅显示非 0 天数点</label>
+        </div>
+        <div class="flex items-center gap-2 md:justify-end">
+          <button id="refreshBtn" class="px-3 py-2 bg-black text-white dark:bg-white dark:text-black rounded-lg">查询</button>
+          <span id="loading" class="text-sm text-zinc-600 dark:text-zinc-400 hidden">加载中…</span>
+        </div>
+      </div>
+      <p class="text-xs text-zinc-500 mt-2">规则：天数 = ceil(送达日期 − 记录日期)。若无库存或送达时间缺失，则取 0。按天聚合（同店同日）时：最早取最小、最晚取最大；中位数 = round((最早+最晚)/2)。</p>
     </section>
 
-    <!-- 图表容器（按门店分组） -->
+    <!-- PN 基本信息（可选展示） -->
+    <section id="pnMeta" class="hidden rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-3 text-sm"></section>
+
+    <!-- 图表容器（每家店一张图） -->
     <section id="chartsWrap" class="space-y-6"></section>
 
-    <footer class="text-xs text-zinc-500">数据来源：/AppleStockChecker/inventory-records（search=型号、recorded_after、ordering），/AppleStockChecker/stores、/AppleStockChecker/iphones</footer>
+    <footer class="text-xs text-zinc-500">数据来源：/AppleStockChecker/inventory-records/trend?pn=…（后端聚合）；PN 列表来自 /AppleStockChecker/iphones/</footer>
   </div>
 
 <script>
 const apiBase = '/AppleStockChecker';
 const $ = sel => document.querySelector(sel);
+let charts = [];
 
 function esc(s){return (s??'').toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));}
-function fmt(ts){if(!ts)return '-';try{return new Date(ts).toLocaleString();}catch{return ts;}}
-function ymd(ts){const d=new Date(ts);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
-const DAY_MS=24*60*60*1000;
-function daysDiffCeil(fromISO,toISO){ if(!fromISO||!toISO) return null; const a=new Date(fromISO).getTime(), b=new Date(toISO).getTime(); const d=Math.ceil((b-a)/DAY_MS); return d>0?d:0; }
 
-async function loadPnOptions() {
-  try {
-    // 可按需分页抓多页；这里用首屏做示例
-    const res = await fetch(`${apiBase}/iphones/?ordering=model_name`);
-    const j = await res.json();
-    const rows = j.results || j || [];
+async function fetchAll(url, maxPages=20){
+  const out=[]; let next=url, page=0;
+  while(next && page<maxPages){
+    const r=await fetch(next); if(!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    const j=await r.json(); page++;
+    if(Array.isArray(j)) return j; // 无分页模式
+    out.push(...(j.results||[])); next=j.next;
+  }
+  return out;
+}
+
+// 载入 PN 建议（value=PN，label=型号+容量+颜色）
+async function loadPnOptions(){
+  try{
+    const rows = await fetchAll(`${apiBase}/iphones/?ordering=model_name`);
     const html = rows.map(x => {
-      const cap = (x.capacity_gb % 1024 === 0) ? (x.capacity_gb/1024 + "TB") : (x.capacity_gb + "GB");
-      return `<option value="${x.part_number}">${x.model_name} ${cap} ${x.color}</option>`;
-    }).join("");
-    document.getElementById("pnOptions").innerHTML = html;
-  } catch {}
+      const cap = (x.capacity_gb % 1024 === 0) ? (x.capacity_gb/1024 + 'TB') : (x.capacity_gb + 'GB');
+      return `<option value="${esc(x.part_number)}">${esc(x.model_name)} ${esc(cap)} ${esc(x.color)}</option>`;
+    }).join('');
+    $('#pnOptions').innerHTML = html;
+  }catch{}
 }
 
-
-async function queryData(partNumber, days) {
-  if (!partNumber) { throw new Error("请输入 PN（part_number）"); }
-  const p = new URLSearchParams({ pn: partNumber, days: String(days) });
+// 调后端聚合接口（按 PN → 门店）
+async function queryTrendByPN(pn, days){
+  if(!pn) throw new Error('请输入 PN');
+  const p = new URLSearchParams({ pn: pn.trim(), days: String(Math.max(1, days|0)) });
   const res = await fetch(`${apiBase}/inventory-records/trend/?${p.toString()}`);
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  const data = await res.json();
-  // 返回格式：[{ store, dates, earliest, median, latest }, ...]
-  return (data.stores || []).map(s => ({
-    store: { id: s.id, name: s.name, address: s.address },
-    dates: s.dates, earliest: s.earliest, median: s.median, latest: s.latest
-  }));
+  if(!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return await res.json(); // { part_number, iphone, stores: [...] }
 }
 
-
-let charts=[];
 function destroyCharts(){ charts.forEach(c=>c?.destroy()); charts=[]; }
 
-function renderCharts(groups, onlyNonZero){
+function renderPnMeta(meta){
+  const box = $('#pnMeta');
+  if(!meta){ box.classList.add('hidden'); box.innerHTML=''; return; }
+  const cap = (meta.capacity_gb % 1024 === 0) ? (meta.capacity_gb/1024 + 'TB') : (meta.capacity_gb + 'GB');
+  box.innerHTML = `
+    <div class="flex items-center gap-4">
+      <div><span class="text-zinc-500">PN：</span><span class="font-mono">${esc(meta.part_number)}</span></div>
+      <div><span class="text-zinc-500">型号：</span>${esc(meta.model_name)}</div>
+      <div><span class="text-zinc-500">规格：</span>${esc(cap)} ${esc(meta.color)}</div>
+      <div><span class="text-zinc-500">上市：</span>${esc(meta.release_date || '-')}</div>
+    </div>`;
+  box.classList.remove('hidden');
+}
+
+function renderChartsFromResponse(resp, onlyNonZero){
   const wrap = $('#chartsWrap');
   wrap.innerHTML = '';
   destroyCharts();
 
-  if(!groups.length){
-    wrap.innerHTML = '<div class="p-3 text-zinc-500">未找到数据，尝试放宽时间/关键词。</div>';
+  renderPnMeta(resp.iphone);
+
+  const stores = resp.stores || [];
+  if(!stores.length){
+    wrap.innerHTML = '<div class="p-3 text-zinc-500">未找到数据，尝试更换 PN 或放宽时间范围。</div>';
     return;
   }
 
-  for(const g of groups){
-    const card=document.createElement('div');
-    card.className='rounded-2xl border border-zinc-200 dark:border-zinc-800 overflow-hidden';
-    card.innerHTML=`
-      <div class="p-3 bg-zinc-100 dark:bg-zinc-900/50 flex items-center gap-3">
-        <div class="min-w-0">
-          <div class="font-medium truncate">${esc(g.store.name)}</div>
-          <div class="text-xs text-zinc-600 dark:text-zinc-400 truncate">${esc(g.store.address||'')}</div>
-        </div>
-        <div class="ml-auto text-xs text-zinc-600 dark:text-zinc-400">点数：${g.dates.length}</div>
-      </div>
-      <div class="p-3">
-        <canvas id="chart-${g.store.id}"></canvas>
-      </div>`;
-    wrap.appendChild(card);
+  for(const s of stores){
+    let labels = s.dates || [];
+    let E = s.earliest || [], M = s.median || [], L = s.latest || [];
 
-    // 过滤 0 点（可选）
-    let labels=g.dates, E=g.earliest, M=g.median, L=g.latest;
     if(onlyNonZero){
       const idx=[]; for(let i=0;i<labels.length;i++){ if((E[i]||0)!==0 || (M[i]||0)!==0 || (L[i]||0)!==0) idx.push(i); }
       labels=idx.map(i=>labels[i]); E=idx.map(i=>E[i]); M=idx.map(i=>M[i]); L=idx.map(i=>L[i]);
     }
 
-    const ctx=document.getElementById(`chart-${g.store.id}`).getContext('2d');
-    const chart=new Chart(ctx,{
+    const card=document.createElement('div');
+    card.className='rounded-2xl border border-zinc-200 dark:border-zinc-800 overflow-hidden';
+    card.innerHTML=`
+      <div class="p-3 bg-zinc-100 dark:bg-zinc-900/50 flex items-center gap-3">
+        <div class="min-w-0">
+          <div class="font-medium truncate">${esc(s.name)}</div>
+          <div class="text-xs text-zinc-600 dark:text-zinc-400 truncate">${esc(s.address||'')}</div>
+        </div>
+        <div class="ml-auto text-xs text-zinc-600 dark:text-zinc-400">点数：${labels.length}</div>
+      </div>
+      <div class="p-3"><canvas id="chart-${s.id}"></canvas></div>`;
+    wrap.appendChild(card);
+
+    const ctx = document.getElementById(`chart-${s.id}`).getContext('2d');
+    const chart = new Chart(ctx,{
       type:'line',
-      data:{
-        labels: labels,
-        datasets:[
-          {label:'最早到达（天）', data:E, tension:0.2},
-          {label:'中位数（天）', data:M, borderDash:[6,4], tension:0.2},
-          {label:'最晚到达（天）', data:L, tension:0.2},
-        ]
-      },
+      data:{ labels, datasets:[
+        { label:'最早到达（天）', data:E, tension:0.2 },
+        { label:'中位数（天）', data:M, borderDash:[6,4], tension:0.2 },
+        { label:'最晚到达（天）', data:L, tension:0.2 },
+      ]},
       options:{
         responsive:true,
         interaction:{mode:'index', intersect:false},
-        plugins:{
-          legend:{ position:'top' },
-          tooltip:{ callbacks:{
-            title:(items)=> items[0]?.label || '',
-            label:(item)=> `${item.dataset.label}: ${item.formattedValue} 天`
-          }}
-        },
-        scales:{
-          x:{ title:{ display:true, text:'记录日期' } },
-          y:{ title:{ display:true, text:'送达天数（天）' }, beginAtZero:true, ticks:{ stepSize:1 } }
-        }
+        plugins:{ legend:{position:'top'}, tooltip:{ callbacks:{ label:(it)=> `${it.dataset.label}: ${it.formattedValue} 天` } } },
+        scales:{ x:{ title:{display:true,text:'记录日期'} }, y:{ beginAtZero:true, title:{display:true,text:'送达天数（天）'}, ticks:{stepSize:1} } }
       }
     });
     charts.push(chart);
   }
 }
 
-async function run() {
-  const loading = document.getElementById("loading");
-  loading.classList.remove("hidden");
-  try {
-    const pn = (document.getElementById("pnInput").value || "").trim();
-    const days = Math.max(1, parseInt(document.getElementById("daysInput").value || "14", 10));
-    const onlyNonZero = document.getElementById("onlyNonZero").checked;
+async function run(){
+  const loading=$('#loading'); loading.classList.remove('hidden');
+  try{
+    const pn = ($('#pnInput').value||'').trim();
+    const days = Math.max(1, parseInt($('#daysInput').value||'14',10));
+    const onlyNonZero = $('#onlyNonZero').checked;
 
-    const groups = await queryData(pn, days);
-    renderCharts(groups, onlyNonZero); // 你原来已有的绘图函数可复用
-  } catch (e) {
-    const wrap = document.getElementById("chartsWrap");
-    wrap.innerHTML = `<div class="p-3 rounded-lg bg-red-50 text-red-700">加载失败：${(e.message||e)}</div>`;
-  } finally {
-    loading.classList.add("hidden");
-  }
+    const resp = await queryTrendByPN(pn, days);
+    renderChartsFromResponse(resp, onlyNonZero);
+  }catch(e){
+    $('#chartsWrap').innerHTML = `<div class="p-3 rounded-lg bg-red-50 text-red-700">加载失败：${esc(e.message||e)}</div>`;
+    renderPnMeta(null);
+  }finally{ loading.classList.add('hidden'); }
 }
-// 事件绑定
-document.getElementById("refreshBtn").addEventListener("click", run);
-document.getElementById("pnInput").addEventListener("keydown", e => { if (e.key === "Enter") run(); });
+
+// 事件
+$('#refreshBtn').addEventListener('click', run);
+$('#pnInput').addEventListener('keydown', e=>{ if(e.key==='Enter') run(); });
 
 // 初始化
 loadPnOptions();
-run();
+</script>
+</body>
+</html>

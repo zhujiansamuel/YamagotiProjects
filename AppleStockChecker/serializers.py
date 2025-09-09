@@ -1,7 +1,8 @@
+import re
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from .models import Iphone, OfficialStore, InventoryRecord
-
+from .models import SecondHandShop, PurchasingShopPriceRecord
 User = get_user_model()
 
 class UserSerializer(serializers.ModelSerializer):
@@ -20,14 +21,7 @@ class IphoneSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Iphone
-        fields = [
-            "part_number",
-            "model_name",
-            "capacity_gb",
-            "capacity_label",
-            "color",
-            "release_date",
-        ]
+        fields = ["part_number", "jan", "model_name", "capacity_gb", "capacity_label", "color", "release_date"]
         read_only_fields = ["capacity_label"]
 
     def get_capacity_label(self, obj):
@@ -46,6 +40,14 @@ class IphoneSerializer(serializers.ModelSerializer):
             if qs.exists():
                 raise serializers.ValidationError("已存在相同『型号/容量/颜色』的 iPhone 记录。")
         return attrs
+
+    def validate_jan(self, v):
+        if v in (None, ""):
+            return None
+        s = re.sub(r"\D", "", str(v))
+        if len(s) != 13:
+            raise serializers.ValidationError("JAN 必须是 13 位数字")
+        return s
 
 class OfficialStoreSerializer(serializers.ModelSerializer):
     class Meta:
@@ -83,8 +85,6 @@ class InventoryRecordSerializer(serializers.ModelSerializer):
         return attrs
 
 
-from rest_framework import serializers
-
 class TrendStoreSeriesSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     name = serializers.CharField()
@@ -113,3 +113,44 @@ class TrendResponseByPNSerializer(serializers.Serializer):
     recorded_before = serializers.DateTimeField(allow_null=True, required=False)
     stores = TrendStoreSeriesSerializer(many=True)
 
+
+
+
+class SecondHandShopSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SecondHandShop
+        fields = ["id", "name", "website", "address"]
+
+
+class PurchasingShopPriceRecordSerializer(serializers.ModelSerializer):
+    # 便于前端展示的只读字段
+    shop_name = serializers.CharField(source="shop.name", read_only=True)
+    iphone_part_number = serializers.CharField(source="iphone.part_number", read_only=True)
+    iphone_label = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = PurchasingShopPriceRecord
+        fields = [
+            "id",
+            "shop", "shop_name",
+            "iphone", "iphone_part_number", "iphone_label",
+            "price_new", "price_grade_a", "price_grade_b",
+            "recorded_at",
+        ]
+        read_only_fields = ["shop_name", "iphone_part_number", "iphone_label", "recorded_at"]
+
+    def get_iphone_label(self, obj):
+        cap = f"{obj.iphone.capacity_gb // 1024}TB" if obj.iphone.capacity_gb % 1024 == 0 else f"{obj.iphone.capacity_gb}GB"
+        return f"{obj.iphone.model_name} {cap} {obj.iphone.color}"
+
+    def validate_price_new(self, v):
+        if v is None or v <= 0:
+            raise serializers.ValidationError("新品卖取价格必须为正整数。")
+        return v
+
+    def validate(self, attrs):
+        for fld in ("price_grade_a", "price_grade_b"):
+            val = attrs.get(fld)
+            if val is not None and val <= 0:
+                raise serializers.ValidationError({fld: "必须为正整数或留空。"})
+        return attrs

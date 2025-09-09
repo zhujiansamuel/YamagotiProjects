@@ -1,0 +1,42 @@
+https://www.1-chome.com/api/keitai/listPage
+    ?accCode=
+    &page=2
+    &size=24
+    &keyword=
+    &isImpo=false
+    &isCampaign=false
+    &cateCode=sqwDCccRt4Woon0R
+    &kbNames=
+    &isImpoCate=false
+
+https://www.1-chome.com/api/keitai/listPage
+    ?accCode=
+    &page=1
+    &size=24
+    &keyword=
+    &isImpo=false
+    &isCampaign=false
+    &cateCode=RGNg976kptBN7UjF
+    &kbNames=
+    &isImpoCate=true
+
+
+https://www.1-chome.com/api/index/getPopularCategories
+{
+    "code": 200,
+    "msg": "success",
+    "data": {
+        "categoryIphone": "RGNg976kptBN7UjF",
+        "categoryAndroid": "WkCcKCxwC6NInC5c",
+        "categoryEarphone": "10000004",
+        "categoryApple": "20030007",
+        "categoryGame": "10000005",
+        "categoryTablet": "20030016",
+        "categoryCamera": "10000001",
+        "categoryWhiskey": "30010001"
+    }
+}
+
+https://www.1-chome.com/api/keitai/getAllCateTreeList?cateCode=R0000001
+
+AppleStockChecker

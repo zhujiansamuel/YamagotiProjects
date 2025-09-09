@@ -1,12 +1,21 @@
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
 from django.db.models import Q, F
+from django.core.validators import RegexValidator
 
 class Iphone(models.Model):
     """
     iPhone 机型变体（型号 x 容量 x 颜色），以 Apple Part Number 作为唯一编码
     """
-
+    jan = models.CharField(
+        "JAN",
+        max_length=13,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="13位JAN码，如 4549995536515",
+        validators=[RegexValidator(r"^\d{13}$", message="JAN 必须是 13 位数字", code="invalid_jan")],
+    )
     # 新增：唯一编码（Apple Part Number，如 "MTUW3J/A"）
     part_number = models.CharField(
         "唯一编码(Part Number)",
@@ -37,6 +46,7 @@ class Iphone(models.Model):
         ]
         indexes = [
             models.Index(fields=["model_name", "capacity_gb"], name="idx_model_cap"),
+            models.Index(fields=["jan"], name="idx_iphone_jan"),
         ]
 
     def __str__(self) -> str:
@@ -123,3 +133,71 @@ class InventoryRecord(models.Model):
 
     def __str__(self) -> str:
         return f"[{self.recorded_at:%Y-%m-%d %H:%M}] {self.store} · {self.iphone} · {'有货' if self.has_stock else '无货'}"
+
+
+class SecondHandShop(models.Model):
+    """
+    二手店/回收店
+    """
+    name = models.CharField("店铺名称", max_length=128, db_index=True)
+    website = models.URLField("网址", max_length=255, blank=True)
+    address = models.CharField("地址", max_length=255)
+
+    class Meta:
+        verbose_name = "二手店"
+        verbose_name_plural = "二手店"
+        ordering = ["name"]
+        constraints = [
+            # 同名同址视为同一家，避免重复
+            models.UniqueConstraint(
+                fields=["name", "address"],
+                name="uniq_secondhandshop_name_addr",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["name"], name="idx_shs_name"),
+            models.Index(fields=["address"], name="idx_shs_addr"),
+        ]
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class PurchasingShopPriceRecord(models.Model):
+    """
+    二手店对某 iPhone 变体的回收报价记录（时间序列）
+    - 必填：新品卖取价格
+    - 可空：A品卖取价格、B品卖取价格
+    价格单位默认按日元计（整数）
+    """
+    shop = models.ForeignKey(
+        "SecondHandShop",
+        on_delete=models.PROTECT,        # 保留历史记录，防止误删门店
+        related_name="price_records",
+        verbose_name="二手店",
+    )
+    iphone = models.ForeignKey(
+        "Iphone",
+        on_delete=models.PROTECT,        # 同理，保留历史
+        related_name="purchase_price_records",
+        verbose_name="iPhone",
+    )
+
+    price_new = models.PositiveIntegerField("新品卖取价格(円)")
+    price_grade_a = models.PositiveIntegerField("A品卖取价格(円)", null=True, blank=True)
+    price_grade_b = models.PositiveIntegerField("B品卖取价格(円)", null=True, blank=True)
+
+    recorded_at = models.DateTimeField("记录时间", auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = "二手店回收价格记录"
+        verbose_name_plural = "二手店回收价格记录"
+        ordering = ["-recorded_at"]
+        indexes = [
+            models.Index(fields=["shop", "iphone", "-recorded_at"], name="idx_pspr_shop_phone_time"),
+            models.Index(fields=["iphone", "-recorded_at"], name="idx_pspr_phone_time"),
+            models.Index(fields=["shop", "-recorded_at"], name="idx_pspr_shop_time"),
+        ]
+
+    def __str__(self) -> str:
+        return f"[{self.recorded_at:%Y-%m-%d %H:%M}] {self.shop} · {self.iphone} · 新品¥{self.price_new:,}"

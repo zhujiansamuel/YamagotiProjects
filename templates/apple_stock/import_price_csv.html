@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CSV 导入：二手店回收价格</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // 暗色模式（可选）
+    (()=>{const pref=localStorage.getItem('theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');if(pref==='dark')document.documentElement.classList.add('dark');window.__toggleTheme=()=>{document.documentElement.classList.toggle('dark');localStorage.setItem('theme',document.documentElement.classList.contains('dark')?'dark':'light');};})();
+  </script>
+  <style>
+    *{scrollbar-width:thin}::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:8px}.dark ::-webkit-scrollbar-thumb{background:#334155}
+  </style>
+</head>
+<body class="bg-zinc-50 text-zinc-900 dark:bg-zinc-900 dark:text-zinc-50 min-h-screen">
+  <div class="max-w-4xl mx-auto p-4 space-y-4">
+    <header class="flex items-center gap-3">
+      <h1 class="text-xl font-semibold">CSV 导入：二手店回收价格</h1>
+      <button class="ml-auto p-2 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800" onclick="__toggleTheme()" title="切换主题">🌓</button>
+    </header>
+
+    <!-- 设置区 -->
+    <section class="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-3 space-y-3">
+      <div class="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+        <div class="md:col-span-3">
+          <label class="block text-sm mb-1">API Base（默认 /api）</label>
+          <input id="apiBase" type="text" placeholder="/api" class="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 outline-none" />
+        </div>
+        <div class="md:col-span-2">
+          <label class="block text-sm mb-1">Bearer Token（access）</label>
+          <input id="token" type="password" placeholder="粘贴 /api/auth/token/ 的 access" class="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 outline-none" />
+        </div>
+      </div>
+      <div class="flex items-center gap-3 text-sm">
+        <label class="inline-flex items-center gap-2"><input id="optCreateShop" type="checkbox" class="w-4 h-4" checked> 自动创建店铺（name+address）</label>
+        <label class="inline-flex items-center gap-2"><input id="optDedupe" type="checkbox" class="w-4 h-4" checked> 去重（shop+PN+recorded_at）</label>
+        <label class="inline-flex items-center gap-2"><input id="optDryRun" type="checkbox" class="w-4 h-4"> 仅校验（dry run）</label>
+        <button id="saveSettings" class="ml-auto px-3 py-1.5 rounded border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-sm">保存设置</button>
+      </div>
+    </section>
+
+    <!-- 上传区 -->
+    <section class="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-3 space-y-3">
+      <div class="grid grid-cols-1 md:grid-cols-5 gap-3 items-start">
+        <div class="md:col-span-3">
+          <label class="block text-sm mb-1">选择 CSV 文件</label>
+          <input id="fileInput" type="file" accept=".csv,text/csv" class="w-full text-sm" />
+          <div id="dropZone" class="mt-2 p-4 border-2 border-dashed rounded-xl text-sm text-zinc-600 dark:text-zinc-400">可将 CSV 拖拽到此处</div>
+        </div>
+        <div class="md:col-span-2">
+          <label class="block text-sm mb-1">说明</label>
+          <ul class="text-sm list-disc pl-5 space-y-1 text-zinc-600 dark:text-zinc-400">
+            <li>必需列：<code>pn/part_number</code>、<code>shop_name</code>、<code>price_new</code></li>
+            <li>可选列：<code>shop_address</code>、<code>shop_website</code>、<code>price_grade_a</code>、<code>price_grade_b</code>、<code>recorded_at</code></li>
+            <li>金额可用：<code>105000</code> / <code>¥105,000</code> / <code>103,000.0</code></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="space-y-2">
+        <div class="h-2 bg-zinc-200 dark:bg-zinc-800 rounded overflow-hidden"><div id="progressBar" class="h-full bg-black dark:bg-white w-0"></div></div>
+        <div class="flex items-center gap-2 text-sm"><span id="statusMsg" class="text-zinc-600 dark:text-zinc-400">等待上传…</span><span id="loading" class="hidden text-zinc-500">（上传中…）</span></div>
+        <div class="flex items-center gap-2">
+          <button id="uploadBtn" class="px-4 py-2 rounded-lg bg-black text-white dark:bg-white dark:text-black">上传</button>
+          <button id="cancelBtn" class="px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800" disabled>取消</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 结果区 -->
+    <section class="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-3 space-y-3">
+      <div class="flex items-center justify-between">
+        <div class="text-sm font-medium">导入结果</div>
+        <div class="text-xs text-zinc-500" id="timing"></div>
+      </div>
+      <div id="summary" class="text-sm text-zinc-700 dark:text-zinc-300">尚无结果。</div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <div class="text-xs opacity-70 mb-1">预览（前 5 条）</div>
+          <div id="previewBox" class="overflow-x-auto text-sm"></div>
+        </div>
+        <div>
+          <div class="text-xs opacity-70 mb-1">错误（最多 50 条）</div>
+          <div id="errorBox" class="overflow-x-auto text-sm"></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+<script>
+const $ = id => document.getElementById(id);
+let xhr = null;
+
+function loadSettings(){
+  $('apiBase').value = localStorage.getItem('csv:apiBase') || '/AppleStockChecker';
+  $('token').value = localStorage.getItem('csv:token') || '';
+  $('optCreateShop').checked = JSON.parse(localStorage.getItem('csv:createShop') || 'true');
+  $('optDedupe').checked = JSON.parse(localStorage.getItem('csv:dedupe') || 'true');
+  $('optDryRun').checked = JSON.parse(localStorage.getItem('csv:dryRun') || 'false');
+}
+function saveSettings(){
+  localStorage.setItem('csv:apiBase', $('apiBase').value.trim() || '/AppleStockChecker');
+  localStorage.setItem('csv:token', $('token').value.trim());
+  localStorage.setItem('csv:createShop', JSON.stringify($('optCreateShop').checked));
+  localStorage.setItem('csv:dedupe', JSON.stringify($('optDedupe').checked));
+  localStorage.setItem('csv:dryRun', JSON.stringify($('optDryRun').checked));
+}
+
+function setProgress(p){ $('progressBar').style.width = Math.max(0, Math.min(100, p)) + '%'; }
+function setStatus(msg){ $('statusMsg').textContent = msg; }
+function esc(s){ return (s??'').toString().replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c])); }
+
+function renderTable(rows){
+  if(!rows || !rows.length) return '<div class="text-zinc-500">（无）</div>';
+  const cols = Object.keys(rows[0]);
+  let html = '<table class="min-w-full border text-xs"><thead><tr>'; cols.forEach(c=> html += `<th class=\"p-2 border bg-zinc-100 dark:bg-zinc-900/50\">${esc(c)}</th>`); html += '</tr></thead><tbody>';
+  rows.forEach(r=>{ html += '<tr>'; cols.forEach(c=> html += `<td class=\"p-2 border\">${esc(r[c])}</td>`); html += '</tr>'; });
+  html += '</tbody></table>';
+  return html;
+}
+
+function upload(){
+  const apiBase = ($('apiBase').value.trim() || '/AppleStockChecker').replace(/\/$/, '');
+  const token = $('token').value.trim();
+  const file = $('fileInput').files[0];
+  if(!file){ setStatus('请先选择 CSV 文件'); return; }
+  if(!token){ setStatus('缺少 Bearer Token（请从 /AppleStockChecker/auth/token/ 获取 access）'); return; }
+
+  const url = `${apiBase}/purchasing-price-records/import-csv/`;
+  const fd = new FormData();
+  fd.append('file', file, file.name);
+  fd.append('create_shop', $('optCreateShop').checked ? '1' : '0');
+  fd.append('dedupe', $('optDedupe').checked ? '1' : '0');
+  fd.append('dry_run', $('optDryRun').checked ? '1' : '0');
+
+  $('uploadBtn').disabled = true;
+  $('cancelBtn').disabled = false;
+  $('loading').classList.remove('hidden');
+  setProgress(0); setStatus('开始上传…');
+  $('summary').textContent = '处理中…';
+  $('previewBox').innerHTML = '';
+  $('errorBox').innerHTML = '';
+  $('timing').textContent = '';
+
+  xhr = new XMLHttpRequest();
+  xhr.open('POST', url);
+  xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+
+  const t0 = performance.now();
+  xhr.upload.onprogress = (e)=>{ if(e.lengthComputable){ setProgress(e.loaded * 100 / e.total); } };
+  xhr.onreadystatechange = () => {
+    if(xhr.readyState === 4){
+      $('uploadBtn').disabled = false;
+      $('cancelBtn').disabled = true;
+      $('loading').classList.add('hidden');
+      setProgress(100);
+      const ms = Math.round(performance.now() - t0);
+      $('timing').textContent = `用时 ${ms} ms`;
+
+      try{
+        const res = JSON.parse(xhr.responseText || '{}');
+        if(xhr.status >= 200 && xhr.status < 300){
+          $('summary').innerHTML = `
+            <div>总行数：<b>${res.rows_total ?? '-'}</b>，新增：<b class=\"text-green-600\">${res.inserted ?? 0}</b>，更新：<b>${res.updated ?? 0}</b>，跳过：<b>${res.skipped ?? 0}</b>，错误：<b class=\"text-red-600\">${res.errors_count ?? 0}</b></div>
+            <div class=\"text-xs text-zinc-500\">选项：create_shop=${res.options?.create_shop}, dedupe=${res.options?.dedupe}, dry_run=${res.options?.dry_run}</div>`;
+          $('previewBox').innerHTML = renderTable(res.preview || []);
+          // 错误渲染：只显示行号与信息
+          const errRows = (res.errors || []).map(e=>({ line:e.line, errors:(e.errors||[]).join('; ') }));
+          $('errorBox').innerHTML = renderTable(errRows);
+          setStatus('完成');
+        } else {
+          $('summary').innerHTML = `<div class=\"text-red-600\">失败：${esc(res.detail || xhr.statusText || '未知错误')}</div>`;
+          setStatus('失败');
+        }
+      }catch(err){
+        $('summary').innerHTML = `<div class=\"text-red-600\">解析响应失败：${esc(err.message||err)}</div>`;
+        setStatus('失败');
+      }
+    }
+  };
+  xhr.onerror = ()=>{ $('summary').innerHTML = '<div class=\"text-red-600\">网络错误</div>'; setStatus('失败'); };
+  xhr.onabort = ()=>{ $('summary').innerHTML = '<div class=\"text-zinc-600\">已取消</div>'; setStatus('已取消'); setProgress(0); };
+
+  xhr.send(fd);
+}
+
+function cancelUpload(){ if(xhr){ xhr.abort(); } }
+
+// 拖拽
+(function setupDrag(){
+  const dz = $('dropZone');
+  const fi = $('fileInput');
+  ['dragenter','dragover'].forEach(ev=> dz.addEventListener(ev, e=>{ e.preventDefault(); dz.classList.add('ring-2','ring-black','dark:ring-white'); }));
+  ['dragleave','drop'].forEach(ev=> dz.addEventListener(ev, e=>{ e.preventDefault(); dz.classList.remove('ring-2','ring-black','dark:ring-white'); }));
+  dz.addEventListener('drop', (e)=>{ const f = e.dataTransfer.files?.[0]; if(f){ fi.files = e.dataTransfer.files; $('statusMsg').textContent = `已选择：${f.name}（${Math.round(f.size/1024)} KB）`; } });
+})();
+
+// 事件绑定与初始化
+$('uploadBtn').addEventListener('click', upload);
+$('cancelBtn').addEventListener('click', cancelUpload);
+$('saveSettings').addEventListener('click', ()=>{ saveSettings(); $('statusMsg').textContent='设置已保存'; });
+$('fileInput').addEventListener('change', ()=>{ const f=$('fileInput').files[0]; if(f){ $('statusMsg').textContent = `已选择：${f.name}（${Math.round(f.size/1024)} KB）`; }});
+
+loadSettings();
+</script>
+</body>
+</html>

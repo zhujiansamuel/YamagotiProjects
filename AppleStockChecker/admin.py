@@ -1,12 +1,12 @@
 from django.contrib import admin
-from .models import Iphone, OfficialStore, InventoryRecord
+from .models import SecondHandShop, PurchasingShopPriceRecord, Iphone, OfficialStore, InventoryRecord
 
 
 @admin.register(Iphone)
 class IphoneAdmin(admin.ModelAdmin):
-    list_display = ("part_number", "model_name", "capacity_gb", "color", "release_date")
+    list_display = ("part_number", "jan", "model_name", "capacity_gb", "color", "release_date")
+    search_fields = ("part_number", "jan", "model_name", "color")
     list_filter = ("color", "release_date")
-    search_fields = ("part_number", "model_name", "color")
     ordering = ("-release_date", "model_name", "capacity_gb")
 
 
@@ -32,3 +32,33 @@ class InventoryRecordAdmin(admin.ModelAdmin):
     date_hierarchy = "recorded_at"
     ordering = ("-recorded_at",)
     autocomplete_fields = ("store", "iphone")  # 门店/机型很多时更友好
+
+
+@admin.register(SecondHandShop)
+class SecondHandShopAdmin(admin.ModelAdmin):
+    list_display = ("name", "website", "address")
+    search_fields = ("name", "address", "website")
+    ordering = ("name",)
+
+
+@admin.register(PurchasingShopPriceRecord)
+class PurchasingShopPriceRecordAdmin(admin.ModelAdmin):
+    list_display = (
+        "recorded_at",
+        "shop",
+        "iphone",
+        "price_new",
+        "price_grade_a",
+        "price_grade_b",
+    )
+    list_filter = ("shop", "iphone")
+    search_fields = (
+        "shop__name",
+        "shop__address",
+        "iphone__part_number",
+        "iphone__model_name",
+        "iphone__color",
+    )
+    date_hierarchy = "recorded_at"
+    ordering = ("-recorded_at",)
+    autocomplete_fields = ("shop", "iphone")

@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>二手店回收价历史（按 PN → 各店）</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Chart.js & 时间轴适配器（date-fns） -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+  <script>
+    // 简易暗色模式
+    (()=>{const pref=localStorage.getItem('theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');if(pref==='dark')document.documentElement.classList.add('dark');window.__toggleTheme=()=>{document.documentElement.classList.toggle('dark');localStorage.setItem('theme',document.documentElement.classList.contains('dark')?'dark':'light');};})();
+  </script>
+  <style>
+    *{scrollbar-width:thin}::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:8px}.dark ::-webkit-scrollbar-thumb{background:#334155}
+  </style>
+</head>
+<body class="bg-zinc-50 text-zinc-900 dark:bg-zinc-900 dark:text-zinc-50 min-h-screen">
+  <div class="max-w-7xl mx-auto p-4 space-y-4">
+    <header class="flex items-center gap-3">
+      <h1 class="text-xl font-semibold">二手店回收价历史（按 PN → 各店）</h1>
+      <button class="ml-auto p-2 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800" onclick="__toggleTheme()" title="切换主题">🌓</button>
+    </header>
+
+    <!-- 查询栏 -->
+    <section class="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-3">
+      <div class="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+        <div class="md:col-span-2">
+          <label class="block text-sm mb-1">PN（唯一编码）</label>
+          <input id="pnInput" list="pnOptions" type="text" placeholder="如：MTUW3J/A"
+                 class="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 outline-none"/>
+          <datalist id="pnOptions"></datalist>
+          <p class="text-xs text-zinc-500 mt-1">从下拉建议选择，或输入完整 PN。</p>
+        </div>
+        <div>
+          <label class="block text-sm mb-1">最近 N 天</label>
+          <input id="daysInput" type="number" min="1" max="180" value="30"
+                 class="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 outline-none"/>
+        </div>
+        <div class="flex items-center gap-2">
+          <input id="showPoints" type="checkbox" class="w-4 h-4" checked>
+          <label for="showPoints" class="text-sm">显示点</label>
+        </div>
+        <div class="flex items-center gap-2 md:justify-end">
+          <button id="refreshBtn" class="px-3 py-2 bg-black text-white dark:bg-white dark:text-black rounded-lg">查询</button>
+          <span id="loading" class="text-sm text-zinc-600 dark:text-zinc-400 hidden">加载中…</span>
+        </div>
+      </div>
+      <div id="pnMeta" class="text-sm text-zinc-600 dark:text-zinc-400 mt-2"></div>
+      <p class="text-xs text-zinc-500 mt-2">说明：同一图中每条线代表一家二手店。X 轴为记录时间；Y 轴为价格（円）。A/B 价格为空的点将被跳过并形成断点。</p>
+    </section>
+
+    <!-- 三个图表：新品 / A品 / B品 -->
+    <section class="space-y-6">
+      <div class="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950">
+        <div class="px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 text-sm">新品价格</div>
+        <div class="p-3"><canvas id="chart-new"></canvas></div>
+      </div>
+      <div class="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950">
+        <div class="px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 text-sm">A 品价格</div>
+        <div class="p-3"><canvas id="chart-a"></canvas></div>
+      </div>
+      <div class="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950">
+        <div class="px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 text-sm">B 品价格</div>
+        <div class="p-3"><canvas id="chart-b"></canvas></div>
+      </div>
+    </section>
+
+    <footer class="text-xs text-zinc-500">数据来源：/api/purchasing-price-records/?iphone_part_number=…&recorded_after=…&ordering=recorded_at 与 /api/iphones/</footer>
+  </div>
+
+<script>
+const apiBase = '/AppleStockChecker';
+const $ = sel => document.querySelector(sel);
+let charts = { new: null, a: null, b: null };
+
+function esc(s){return (s??'').toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));}
+
+async function fetchAll(url, maxPages=40){
+  const out=[]; let next=url, page=0;
+  while(next && page<maxPages){
+    const r=await fetch(next); if(!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    const j=await r.json(); page++;
+    if(Array.isArray(j)) return j; // 无分页
+    out.push(...(j.results||[])); next=j.next;
+  }
+  return out;
+}
+
+// PN 建议：value=PN，label=型号 容量 颜色
+async function loadPnOptions(){
+  try{
+    const rows = await fetchAll(`${apiBase}/iphones/?ordering=model_name`);
+    const html = rows.map(x => {
+      const cap = (x.capacity_gb % 1024 === 0) ? (x.capacity_gb/1024 + 'TB') : (x.capacity_gb + 'GB');
+      return `<option value="${esc(x.part_number)}">${esc(x.model_name)} ${esc(cap)} ${esc(x.color)}</option>`;
+    }).join('');
+    $('#pnOptions').innerHTML = html;
+  }catch{}
+}
+
+function toISODate(d){ return new Date(d).toISOString(); }
+
+async function fetchPriceSeriesByPN(pn, days){
+  const recorded_after = toISODate(Date.now() - Math.max(1, days|0)*24*60*60*1000);
+  const p = new URLSearchParams({ iphone_part_number: pn.trim(), recorded_after, ordering: 'recorded_at' });
+  const rows = await fetchAll(`${apiBase}/purchasing-price-records/?${p.toString()}`);
+
+  // PN 基本信息（从一条记录推断；如需更完整可再请求 /iphones/{pn}）
+  const metaBox = $('#pnMeta');
+  if(rows.length){
+    const first = rows.find(r => r.iphone_part_number) || rows[0];
+    metaBox.innerHTML = `<span class="text-zinc-500">PN：</span><span class="font-mono">${esc(first.iphone_part_number||pn)}</span>
+      <span class="ml-3 text-zinc-500">iPhone：</span>${esc(first.iphone_label||'')}`;
+  } else {
+    metaBox.textContent = '无数据';
+  }
+
+  // 按店铺分组 → 三类价位构造时间序列
+  // datasets: [{label: 店名, data:[{x:ts,y:price},...]}]
+  const byShop = new Map(); // id -> { name, new:[], a:[], b:[] }
+  for(const r of rows){
+    const sid = r.shop;
+    if(!byShop.has(sid)) byShop.set(sid, { name: r.shop_name || `Shop #${sid}`, new: [], a: [], b: [] });
+    const t = new Date(r.recorded_at).getTime();
+    byShop.get(sid).new.push({ x: t, y: r.price_new });
+    byShop.get(sid).a.push({ x: t, y: (r.price_grade_a ?? null) });
+    byShop.get(sid).b.push({ x: t, y: (r.price_grade_b ?? null) });
+  }
+
+  const shops = Array.from(byShop.values());
+  return {
+    datasetsNew: shops.map(s => ({ label: s.name, data: s.new })),
+    datasetsA: shops.map(s => ({ label: s.name, data: s.a })),
+    datasetsB: shops.map(s => ({ label: s.name, data: s.b })),
+  };
+}
+
+function makeChart(ctx, datasets, title, showPoints){
+  if(!ctx) return null;
+  return new Chart(ctx, {
+    type: 'line',
+    data: { datasets },
+    options: {
+      parsing: false,          // data: [{x,y}] 格式
+      animation: false,
+      normalized: true,
+      spanGaps: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top' },
+        tooltip: { callbacks: { label: (it) => `${it.dataset.label}: ¥${Number(it.parsed.y).toLocaleString()}` } },
+        title: { display: false, text: title },
+      },
+      scales: {
+        x: { type: 'time', time: { unit: 'day' }, title: { display: true, text: '记录时间' } },
+        y: { beginAtZero: false, title: { display: true, text: '价格（円）' } }
+      },
+      elements: {
+        point: { radius: showPoints ? 2 : 0 },
+        line: { tension: 0.2 }
+      }
+    }
+  });
+}
+
+function destroyCharts(){ Object.values(charts).forEach(c => c?.destroy()); charts = { new: null, a: null, b: null }; }
+
+async function run(){
+  const loading = $('#loading'); loading.classList.remove('hidden');
+  try{
+    const pn = ($('#pnInput').value||'').trim();
+    if(!pn) throw new Error('请输入 PN');
+    const days = Math.max(1, parseInt($('#daysInput').value||'30', 10));
+    const showPoints = $('#showPoints').checked;
+
+    const series = await fetchPriceSeriesByPN(pn, days);
+
+    destroyCharts();
+    charts.new = makeChart(document.getElementById('chart-new'), series.datasetsNew, '新品价格', showPoints);
+    charts.a   = makeChart(document.getElementById('chart-a'),   series.datasetsA,   'A品价格',  showPoints);
+    charts.b   = makeChart(document.getElementById('chart-b'),   series.datasetsB,   'B品价格',  showPoints);
+
+    // 若某类完全没数据，则在画布下方给提示
+    if(!series.datasetsA.length || series.datasetsA.every(d=>!d.data.length)){
+      document.getElementById('chart-a').insertAdjacentHTML('afterend', '<div class="text-xs text-zinc-500 mt-2">本区间无 A 品价格记录。</div>');
+    }
+    if(!series.datasetsB.length || series.datasetsB.every(d=>!d.data.length)){
+      document.getElementById('chart-b').insertAdjacentHTML('afterend', '<div class="text-xs text-zinc-500 mt-2">本区间无 B 品价格记录。</div>');
+    }
+  }catch(e){
+    destroyCharts();
+    document.getElementById('pnMeta').textContent = '';
+    const wrapMsg = `<div class="p-3 rounded-lg bg-red-50 text-red-700">加载失败：${esc(e.message||e)}</div>`;
+    document.getElementById('chart-new').parentElement.insertAdjacentHTML('beforeend', wrapMsg);
+  }finally{
+    loading.classList.add('hidden');
+  }
+}
+
+// 事件
+$('#refreshBtn').addEventListener('click', run);
+$('#pnInput').addEventListener('keydown', e=>{ if(e.key==='Enter') run(); });
+
+// 初始化
+loadPnOptions();
+</script>
+</body>
+</html>
