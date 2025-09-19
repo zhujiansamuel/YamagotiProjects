@@ -74,6 +74,24 @@ from rest_framework import permissions, status
 from rest_framework.response import Response
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 
+from datetime import datetime
+from django.db import transaction
+from django.db.models import Q
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime, parse_date
+from rest_framework.decorators import action
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework import permissions, status
+from rest_framework.response import Response
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
+
+from .utils.tradein_pipeline import clean_and_aggregate_tradein
+from .utils.color_norm import synonyms_for_query
+from .models import Iphone, SecondHandShop, PurchasingShopPriceRecord
+
+
+
+
 # Create your views here.
 
 class HealthView(APIView):
@@ -1052,83 +1070,30 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
 
     @extend_schema(
         tags=["Resale / Price"],
-        summary="导入（清洗）四家二手店 CSV → 聚合为 PN×门店 的价格记录",
-        description=(
-                "上传任意数量的 CSV（支持モバイルミックス / モバイル一番 / 森森買取 / 買取ルデヤ）。"
-                "后端先按规则清洗统一列，再按『PN × 门店』在同一次导入中聚合为一条记录："
-                "  新品/未開封 → price_new；状态含 A/A品/Aランク → price_grade_a；含 B/B品/Bランク → price_grade_b。\n"
-                "未能识别 PN 的行会被跳过。recorded_at 默认使用当前服务器时间，也可用参数覆盖。"
-        ),
-        parameters=[
-            OpenApiParameter("create_shop", OpenApiTypes.BOOL, description="店铺不存在时自动创建（默认 true）",
-                             required=False),
-            OpenApiParameter("dedupe", OpenApiTypes.BOOL, description="同店+PN+recorded_at 去重更新（默认 true）",
-                             required=False),
-            OpenApiParameter("dry_run", OpenApiTypes.BOOL, description="仅清洗与聚合，不落库（默认 false）",
-                             required=False),
-            OpenApiParameter("recorded_at", OpenApiTypes.DATETIME,
-                             description="统一记录时间（ISO8601）；不传则使用当前时间", required=False),
-        ],
-        request={
-            "multipart/form-data": {
-                "type": "object",
-                "properties": {
-                    "files": {"type": "array", "items": {"type": "string", "format": "binary"}},
-                    "file": {"type": "string", "format": "binary"},  # 兼容单文件字段名
-                },
-                "required": ["files"],  # 或 file
-            }
-        },
-        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
-    )
-    @action(
-        detail=False,
-        methods=["post"],
-        url_path="import-tradein",
-        parser_classes=[MultiPartParser, FormParser],
-        permission_classes=[permissions.IsAdminUser],
-    )
-    @extend_schema(
-        tags=["Resale / Price"],
-        summary="导入（清洗）四家二手店 CSV → 每次上传新增回收价格记录（不覆盖历史）",
-        description=(
-                "上传一个或多个回收价 CSV（モバイルミックス/モバイル一番/森森買取/買取ルデヤ），后端先清洗统一列，"
-                "再按『PN→JAN(13位)→型号+容量(+颜色/全色)』匹配 iPhone：\n"
-                "  • 状态含『新品/未開封/new/sealed/unopened/未使用』的价格进入新品集合，取最大值→ price_new；\n"
-                "  • 其他价格进入“others”，按降序第 1、2 个 → A/B；\n"
-                "  • **无颜色/全色/任意** → 同一【型号+容量】的所有颜色一次性写同价；\n"
-                "  • 每次上传**新增**记录（不覆盖历史），recorded_at 统一为本次批量时间。"
-        ),
+        summary="导入二手店回收价（清洗逻辑已抽到 utils）——每次上传新增记录",
         parameters=[
             OpenApiParameter("create_shop", OpenApiTypes.BOOL, description="店铺不存在时自动创建（默认 true）",
                              required=False),
             OpenApiParameter("dry_run", OpenApiTypes.BOOL, description="只清洗/聚合不落库（默认 false）", required=False),
-            OpenApiParameter("recorded_at", OpenApiTypes.DATETIME,
-                             description="统一记录时间（ISO8601 或 YYYY-MM-DD），默认现在", required=False),
+            OpenApiParameter("recorded_at", OpenApiTypes.DATETIME, description="统一记录时间（ISO8601/日期），默认现在",
+                             required=False),
         ],
         request={
             "multipart/form-data": {
                 "type": "object",
-                "properties": {
-                    "files": {"type": "array", "items": {"type": "string", "format": "binary"}},
-                    "file": {"type": "string", "format": "binary"},
-                },
+                "properties": {"files": {"type": "array", "items": {"type": "string", "format": "binary"}},
+                               "file": {"type": "string", "format": "binary"}},
                 "required": ["files"],
             }
         },
-        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
     )
     @action(
-        detail=False,
-        methods=["post"],
-        url_path="import-tradein",
+        detail=False, methods=["post"], url_path="import-tradein",
         parser_classes=[MultiPartParser, FormParser],
         permission_classes=[permissions.IsAdminUser],
     )
     def import_tradein(self, request):
-        """多文件上传 → 清洗 → 价格聚合 → 匹配 → 始终新增记录"""
-
-        # ---------- 参数 ----------
+        # ---- 参数 ----
         def as_bool(v, default=False):
             if v is None: return default
             return str(v).strip().lower() in {"1", "true", "t", "yes", "y"}
@@ -1150,149 +1115,40 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
         else:
             recorded_at = timezone.now()
 
-        # ---------- 读文件 & 清洗 ----------
+        # ---- 读文件为 (bytes, name) 列表，交由 utils 清洗/聚合 ----
         files = request.FILES.getlist("files") or ([request.FILES["file"]] if request.FILES.get("file") else [])
         if not files:
             return Response({"detail": "请上传至少一个 CSV（字段 files 或 file）"}, status=status.HTTP_400_BAD_REQUEST)
 
-        cleaned, errors = [], []
+        blobs = []
         for f in files:
+            data = f.read()
+            blobs.append((data, f.name))
             try:
-                df = parse_tradein_uploaded(f.read(), f.name)
-                cleaned.append(df)
-            except Exception as e:
-                errors.append({"file": f.name, "error": str(e)})
-            finally:
-                try:
-                    if hasattr(f, "seek"): f.seek(0)
-                except Exception:
-                    pass
+                if hasattr(f, "seek"): f.seek(0)
+            except Exception:
+                pass
 
-        if not cleaned:
-            return Response({"detail": "所有文件清洗失败", "errors": errors}, status=status.HTTP_400_BAD_REQUEST)
+        result = clean_and_aggregate_tradein(blobs)
+        rows_total = result["rows_total"]
+        errors = result["errors"]
+        records = result["records"]
+        preview = result["preview"]
 
-        # 安全 concat
-        try:
-            df_merged = pd.concat(cleaned, ignore_index=True)
-        except Exception:
-            base_cols = set().union(*[set(df.columns) for df in cleaned])
-            aligned = []
-            for df in cleaned:
-                for c in base_cols:
-                    if c not in df.columns:
-                        df[c] = None
-                aligned.append(df[list(base_cols)])
-            df_merged = pd.concat(aligned, ignore_index=True)
+        if rows_total == 0 and not records:
+            return Response({"detail": "清洗失败或无有效数据", "errors": errors}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ---------- 工具 ----------
-        NEW_STATUS_RE = re.compile(r"(新品|未開封|未开封|new(?!er)|sealed|unopened|未使用)", re.I)
-
-        def parse_price_int(v):
-            if v is None: return None
-            s = str(v).strip()
-            if not s: return None
-            if "万" in s:
-                m = re.search(r"([\d\.]+)\s*万", s)
-                base = float(m.group(1)) if m else 0.0
-                tail = 0
-                m2 = re.search(r"万\s*([0-9,]+)", s)
-                if m2: tail = int(re.sub(r"[^\d]", "", m2.group(1)))
-                return int(base * 10000 + tail)
-            digits = re.sub(r"[^\d]", "", s)
-            return int(digits) if digits else None
-
-        def collect_prices(row):
-            prices = []
-            for col in ("价格", "价格2", "价格3", "price", "price1", "price2", "price3"):
-                p = parse_price_int(row.get(col))
-                if p is not None: prices.append(p)
-            return sorted(set(prices)) if prices else []
-
-        def parse_capacity_gb(text: str):
-            if not text: return None
-            m = re.search(r'(\d+(?:\.\d+)?)\s*TB', text, re.I)
-            if m: return int(float(m.group(1)) * 1024)
-            m = re.search(r'(\d{2,4})\s*GB', text, re.I)
-            if m: return int(m.group(1))
-            return None
-
-        def normalize_model(text: str):
-            if not text: return ""
-            t = re.sub(r'\d+(?:\.\d+)?\s*TB|\d{2,4}\s*GB', '', text, flags=re.I)
-            t = re.sub(r'SIMフリー|未開封|新品|中古|（.*?）|\(.*?\)', '', t)
-            t = re.sub(r'\s+', ' ', t).strip()
-            return t
-
-        # ---------- 聚合：有 PN 用 pn||shop，无 PN 用 model+capacity||shop ----------
-        agg = defaultdict(lambda: {
-            "shop_name": "",
-            "prices": {"new": set(), "others": set()},
-            "meta": {"pn": "", "jan": "", "model_name": "", "capacity_gb": None, "color_raw": "", "color_canon": "",
-                     "color_any": False},
-        })
-
-        for row in df_merged.to_dict("records"):
-            pn = (row.get("Part_number") or "").strip()
-            shop = (row.get("店铺名") or "").strip()
-            jan = re.sub(r'\D', '', str(row.get("JAN") or ""))
-            model_raw = row.get("iphone型号") or ""
-            color_raw = (row.get("颜色") or "").strip()
-            status_txt = (row.get("状态") or "").strip()
-
-            model_norm = normalize_model(model_raw)
-            cap_gb = parse_capacity_gb(model_raw)
-
-            if pn:
-                key = f"pn:{pn}||{shop}"
-            else:
-                key = f"mc:{model_norm}|{cap_gb}||{shop}"
-
-            slot = agg[key]
-            slot["shop_name"] = shop
-
-            # 元信息
-            m = slot["meta"]
-            if not m["pn"] and pn: m["pn"] = pn
-            if not m["jan"] and len(jan) == 13: m["jan"] = jan
-            if not m["model_name"]: m["model_name"] = model_norm
-            if m["capacity_gb"] is None: m["capacity_gb"] = cap_gb
-
-            if not m["color_raw"] and color_raw:
-                m["color_raw"] = color_raw
-            canon_color, is_all = normalize_color(color_raw)
-            if not m["color_canon"] and canon_color:
-                m["color_canon"] = canon_color
-            m["color_any"] = m["color_any"] or is_all or (color_raw.strip() == "")
-
-            # 价格归类
-            prices = collect_prices(row)
-            if not prices:
-                continue
-            if NEW_STATUS_RE.search(status_txt):
-                for p in prices: slot["prices"]["new"].add(p)
-            else:
-                for p in prices: slot["prices"]["others"].add(p)
-
-        # ---------- 落库：始终新增 ----------
+        # ---- 写库：匹配 iPhone 并始终新增记录（不覆盖历史） ----
         inserted = 0
         skipped_no_match = 0
-        preview = []
 
-        def extract_prices(val_dict):
-            new_list = sorted(val_dict["prices"].get("new", set()) or set(), reverse=True)
-            oth_list = sorted(val_dict["prices"].get("others", set()) or set(), reverse=True)
-            return (
-                (new_list[0] if new_list else None),
-                (oth_list[0] if len(oth_list) >= 1 else None),
-                (oth_list[1] if len(oth_list) >= 2 else None),
-            )
+        for rec in records:
+            shop_name = rec["shop_name"]
+            price_new = rec["price_new"]
+            price_a = rec["price_grade_a"]
+            price_b = rec["price_grade_b"]
+            meta = rec["meta"]
 
-        for key, val in agg.items():
-            price_new, price_a, price_b = extract_prices(val)
-
-            # 解析 key 取店名
-            shop_name = key.split("||", 1)[1]
-            meta = val.get("meta", {})
             pn = (meta.get("pn") or "").strip()
             jan_digits = (meta.get("jan") or "").strip()
             model_name = (meta.get("model_name") or "").strip()
@@ -1301,17 +1157,8 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
             color_canon = (meta.get("color_canon") or "").strip()
             color_any = bool(meta.get("color_any"))
 
-            if len(preview) < 10:
-                preview.append({
-                    "key": key, "pn": pn, "jan": jan_digits, "shop_name": shop_name,
-                    "model": model_name, "capacity_gb": capacity_gb,
-                    "color": color_raw, "color_canon": color_canon, "color_any": color_any,
-                    "price_new": price_new, "price_grade_a": price_a, "price_grade_b": price_b,
-                    "recorded_at": recorded_at.isoformat(),
-                })
-
-            # 匹配 iPhone：PN → JAN → 型号+容量(+颜色/全色)
-            iphones = []
+            # iPhone 匹配：PN → JAN → 型号+容量(+颜色/全色)
+            iphones: list[Iphone] = []
             if pn:
                 ip = Iphone.objects.filter(part_number=pn).first()
                 if ip: iphones = [ip]
@@ -1349,21 +1196,22 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
 
             for iphone in iphones:
                 with transaction.atomic():
-                    rec = PurchasingShopPriceRecord.objects.create(
+                    rec_obj = PurchasingShopPriceRecord.objects.create(
                         shop=shop, iphone=iphone,
-                        price_new=(price_new or 0),  # 模型要求必填；无新品则写 0
-                        price_grade_a=price_a, price_grade_b=price_b,
+                        price_new=(price_new or 0),
+                        price_grade_a=price_a,
+                        price_grade_b=price_b,
                     )
-                    PurchasingShopPriceRecord.objects.filter(pk=rec.pk).update(recorded_at=recorded_at)
+                    PurchasingShopPriceRecord.objects.filter(pk=rec_obj.pk).update(recorded_at=recorded_at)
                     inserted += 1
 
         return Response({
-            "rows_total": int(df_merged.shape[0]),
-            "grouped": len(agg),
+            "rows_total": rows_total,
+            "aggregated": len(records),
             "inserted": inserted,
             "skipped_no_match": skipped_no_match,
             "preview": preview,
-            "errors": errors,
+            "errors": errors[:50],
             "options": {
                 "create_shop": create_shop,
                 "dry_run": dry_run,
