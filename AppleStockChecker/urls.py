@@ -12,10 +12,10 @@ from .views import SecondHandShopViewSet, PurchasingShopPriceRecordViewSet
 from .views_frontend import StockDashboardView
 from .views_frontend import StoreLatestStockView
 from .views_frontend import DeliveryTrendView
-# from .views_frontend import ResaleTrendPNView
+from .views_frontend import ResaleTrendPNView
 from .views_frontend import ResaleTrendPNMergedView
 from .views_frontend import ImportResaleCSVView
-from .views_frontend import ImportTradeinCSVView, ImportIphoneCSVView
+from .views_frontend import ImportTradeinCSVView, ImportIphoneCSVView, ExternalIngestView
 
 router = DefaultRouter()
 router.register(r"iphones", IphoneViewSet, basename="iphone")
@@ -41,7 +41,7 @@ urlpatterns = [
 urlpatterns = [
                   path("delivery-trend/", DeliveryTrendView.as_view(), name="delivery-trend"),
               ] + urlpatterns
-# urlpatterns = [ path("resale-trend-pn/", ResaleTrendPNView.as_view(), name="resale-trend-pn"), ] + urlpatterns
+urlpatterns = [ path("resale-trend-pn/", ResaleTrendPNView.as_view(), name="resale-trend-pn"), ] + urlpatterns
 urlpatterns = ([path("resale-trend-pn-merged/", ResaleTrendPNMergedView.as_view(), name="resale-trend-pn-merged"),
                 ] + urlpatterns)
 
@@ -51,6 +51,7 @@ urlpatterns = [
 urlpatterns = [
                   path("import-tradein-csv/", ImportTradeinCSVView.as_view(), name="import-tradein-csv"),
                   path("import-iphone-csv/", ImportIphoneCSVView.as_view(), name="import-iphone-csv"),
+path("external-ingest/", ExternalIngestView.as_view(), name="external-ingest"),
               ] + urlpatterns
 
 urlpatterns += router.urls

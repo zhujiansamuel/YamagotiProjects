@@ -90,6 +90,15 @@ from .utils.color_norm import synonyms_for_query
 from .models import Iphone, SecondHandShop, PurchasingShopPriceRecord
 
 
+from rest_framework.decorators import action
+from rest_framework import permissions, status
+from rest_framework.response import Response
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
+
+from .services.external_ingest_service import ingest_external_sources
+
+
+
 
 
 # Create your views here.
@@ -1218,3 +1227,50 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
                 "recorded_at": recorded_at.isoformat(),
             },
         }, status=status.HTTP_200_OK)
+
+
+
+    @extend_schema(
+        tags=["Resale / Price"],
+        summary="从外部平台 GET 一组 CSV → 清洗 → 以 PN 定位 iPhone → 新增回收价格记录",
+        description=(
+            "请求体传入 sources 列表（每个包含 name/url/headers），或使用 settings 中预置的 EXTERNAL_TRADEIN_SOURCES 并用 names 指定子集。\n"
+            "清洗规则在 utils.external_ingest.base_cleaners 中按 name 注册（独立脚本框架）。\n"
+            "支持 ?dry_run=1 只预览不落库。"
+        ),
+        request=OpenApiTypes.OBJECT,
+        parameters=[
+            OpenApiParameter("dry_run", OpenApiTypes.BOOL, required=False, description="1=仅预览"),
+        ],
+        responses={200: OpenApiTypes.OBJECT},
+    )
+    @action(detail=False, methods=["post"], url_path="ingest-external", permission_classes=[permissions.IsAdminUser])
+    def ingest_external(self, request):
+        dry_run = str(request.query_params.get("dry_run") or "").lower() in {"1","true","t","yes","y"}
+
+        payload = request.data or {}
+        sources = payload.get("sources") or []
+        names = payload.get("names") or []
+
+        # 允许从 settings 读取预置
+        from django.conf import settings
+        preset = getattr(settings, "EXTERNAL_TRADEIN_SOURCES", [])
+        # EXTERNAL_TRADEIN_SOURCES 形式举例： [{"name":"sample_a","url":"https://...","headers":{"Authorization":"..."}}]
+
+        if not sources and names:
+            # 从 preset 里筛选
+            by_name = {it["name"]: it for it in preset}
+            sources = [by_name[n] for n in names if n in by_name]
+
+        if not sources and not names:
+            # 默认用预置全部
+            sources = preset
+
+        if not sources:
+            return Response({"detail": "未提供 sources，且 settings.EXTERNAL_TRADEIN_SOURCES 为空"}, status=status.HTTP_400_BAD_REQUEST)
+
+        result = ingest_external_sources(sources, dry_run=dry_run)
+        return Response({
+            "dry_run": dry_run,
+            **result
+        })

@@ -10,8 +10,8 @@ class StoreLatestStockView(TemplateView):
 class DeliveryTrendView(TemplateView):
     template_name = "apple_stock/delivery_trend.html"
 
-# class ResaleTrendPNView(TemplateView):
-#     template_name = "apple_stock/resale_trend_pn_merged.html"
+class ResaleTrendPNView(TemplateView):
+    template_name = "apple_stock/resale_trend_pn_merged.html"
 
 
 class ResaleTrendPNMergedView(TemplateView):
@@ -28,3 +28,6 @@ class ImportTradeinCSVView(TemplateView):
 
 class ImportIphoneCSVView(TemplateView):
     template_name = "apple_stock/import_iphone_csv.html"
+
+class ExternalIngestView(TemplateView):
+    template_name = "apple_stock/external_ingest.html"

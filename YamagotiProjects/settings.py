@@ -25,7 +25,7 @@ SECRET_KEY = 'django-insecure-3(&zari4^u-6iv$+z_2r2(oviwyj5g#cy*3c$t#x_=-w7cijv1
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["*"]
 
 # Application definition
 
@@ -106,7 +106,8 @@ CORS_ALLOWED_ORIGINS = [
     # 部署后把前端域名加进来
 ]
 # 若你在本地调试 CSRF：
-CSRF_TRUSTED_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000","http://127.0.0.1:8000/AppleStockChecker/dashboard/"]
+CSRF_TRUSTED_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000",
+                        "http://127.0.0.1:8000/AppleStockChecker/dashboard/"]
 
 TEMPLATES = [
     {
@@ -175,4 +176,42 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+EXTERNAL_TRADEIN_SOURCES = [
+    # {"name": "shop10", "url": "https://api.webscraper.io/api/v1/scraping-job/34172531/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
+    {"name": "shop9", "url": "https://api.webscraper.io/api/v1/scraping-job/34172581/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
+    # {"name": "shop8", "url": "https://api.webscraper.io/api/v1/scraping-job/34171950/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
+    # {"name": "shop7",
+    #  "url": "https://api.webscraper.io/api/v1/scraping-job/34172579/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
+    # {"name": "shop6-1",
+    #  "url": "https://api.webscraper.io/api/v1/scraping-job/34172574/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
+    # {"name": "shop6-2",
+    #  "url": "https://api.webscraper.io/api/v1/scraping-job/34172575/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
+    # {"name": "shop6-3",
+    #  "url": "https://api.webscraper.io/api/v1/scraping-job/34172576/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
+    # {"name": "shop6-6",
+    #  "url": "https://api.webscraper.io/api/v1/scraping-job/34172578/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
+    # {"name": "shop5-1",
+    #  "url": "https://api.webscraper.io/api/v1/scraping-job/34172561/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
+    # {"name": "shop5-2",
+    #  "url": "https://api.webscraper.io/api/v1/scraping-job/34172563/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
+    # {"name": "shop5-3",
+    #  "url": "https://api.webscraper.io/api/v1/scraping-job/34172572/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
+    # {"name": "shop5-4",
+    #  "url": "https://api.webscraper.io/api/v1/scraping-job/34172573/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
+    # {"name": "shop4",
+    #  "url": "https://api.webscraper.io/api/v1/scraping-job/	34172559/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
+    # {"name": "shop3",
+    #  "url": "https://api.webscraper.io/api/v1/scraping-job/34172550/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
+    # {"name": "shop2",
+    #  "url": "https://api.webscraper.io/api/v1/scraping-job/34172531/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
 
+    # # 样例：B 平台
+    # {"name": "shop10", "url": "https://api.webscraper.io/api/v1/scraping-job/34172531/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
+]
+
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+# 优先级：settings > 环境变量 > 项目内默认文件
+EXTERNAL_IPHONE17_INFO_PATH = BASE_DIR / "AppleStockChecker" / "data" / "iphone17_info.csv"

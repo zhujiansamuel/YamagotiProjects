@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>外部平台拉取 & 预览 & 入库（ingest-external）</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    (() => {
+      const pref = localStorage.getItem('theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      if (pref === 'dark') document.documentElement.classList.add('dark');
+      window.__toggleTheme = () => {
+        document.documentElement.classList.toggle('dark');
+        localStorage.setItem('theme', document.documentElement.classList.contains('dark') ? 'dark' : 'light');
+      };
+    })();
+  </script>
+  <style>
+    *{scrollbar-width:thin}::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:8px}.dark ::-webkit-scrollbar-thumb{background:#334155}
+  </style>
+</head>
+<body class="bg-zinc-50 text-zinc-900 dark:bg-zinc-900 dark:text-zinc-50 min-h-screen">
+  <div class="max-w-6xl mx-auto p-4 space-y-4">
+    <header class="flex items-center gap-3">
+      <h1 class="text-xl font-semibold">外部平台拉取 & 预览 & 入库</h1>
+      <button class="ml-auto p-2 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800" onclick="__toggleTheme()" title="切换主题">🌓</button>
+    </header>
+
+    <!-- 设置区 -->
+    <section class="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-3 space-y-3">
+      <div class="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+        <div class="md:col-span-3">
+          <label class="block text-sm mb-1">API Base（默认 /AppleStockChecker）</label>
+          <input id="apiBase" type="text" placeholder="/AppleStockChecker" class="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 outline-none"/>
+        </div>
+        <div class="md:col-span-2">
+          <label class="block text-sm mb-1">Bearer Token（/AppleStockChecker/auth/token/ 的 access）</label>
+          <input id="token" type="password" placeholder="eyJ..." class="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 outline-none"/>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+        <div class="md:col-span-2">
+          <label class="block text-sm mb-1">执行方式</label>
+          <div class="flex items-center gap-4 text-sm">
+            <label class="inline-flex items-center gap-2"><input type="radio" name="mode" value="dry" checked> 模拟执行落库（dry_run）</label>
+            <label class="inline-flex items-center gap-2"><input type="radio" name="mode" value="real"> 实际执行落库</label>
+          </div>
+        </div>
+        <div class="md:col-span-3">
+          <label class="block text-sm mb-1">使用 settings 预置的来源 names（逗号分隔）</label>
+          <input id="names" type="text" placeholder="例如：shop8, sample_a（留空=使用全部预置）" class="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 outline-none"/>
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-sm mb-1">或直接粘贴 sources JSON（优先使用此项）</label>
+        <textarea id="sourcesJson" rows="5" placeholder='例如：
+{
+  "sources": [
+    {"name":"shop8","url":"https://platform.example.com/shop8.csv"},
+    {"name":"sample_a","url":"https://platform.example.com/a.csv","headers":{"X-API-Key":"..."}}
+  ]
+}' class="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 outline-none font-mono text-xs"></textarea>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <button id="runBtn" class="px-4 py-2 rounded-lg bg-black text-white dark:bg-white dark:text-black">拉取并查看</button>
+        <button id="saveBtn" class="px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800">保存设置</button>
+        <span id="loading" class="text-sm text-zinc-500 hidden">进行中…</span>
+        <span id="statusMsg" class="text-sm text-zinc-600 dark:text-zinc-400 ml-auto"></span>
+      </div>
+      <div class="h-2 bg-zinc-200 dark:bg-zinc-800 rounded overflow-hidden"><div id="progressBar" class="h-full bg-black dark:bg-white w-0"></div></div>
+    </section>
+
+    <!-- 结果 -->
+    <section class="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-3 space-y-3">
+      <div class="flex items-center justify-between">
+        <div class="text-sm font-medium">结果</div>
+        <div class="text-xs text-zinc-500" id="timing"></div>
+      </div>
+      <div id="summary" class="text-sm text-zinc-700 dark:text-zinc-300">尚无结果。</div>
+
+      <div class="grid grid-cols-1 gap-3">
+        <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+          <div class="px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 text-sm flex items-center justify-between">
+            <span>整形后的预览（preview，前 10 条）</span>
+            <button id="downloadPreview" class="text-xs px-2 py-1 rounded border border-zinc-200 dark:border-zinc-800">导出 CSV</button>
+          </div>
+          <div id="previewBox" class="overflow-x-auto text-sm"></div>
+        </div>
+
+        <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+          <div class="px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 text-sm">未匹配明细（unmatched，最多 50 条）</div>
+          <div id="unmatchedBox" class="overflow-x-auto text-sm"></div>
+        </div>
+
+        <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+          <div class="px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 text-sm">错误（拉取/清洗）</div>
+          <div id="errorBox" class="overflow-x-auto text-sm"></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+<script>
+const $ = id => document.getElementById(id);
+let lastPreview = [];
+
+function loadSettings(){
+  $('apiBase').value = localStorage.getItem('ext:api') || '/AppleStockChecker';
+  $('token').value   = localStorage.getItem('ext:token') || '';
+  $('names').value   = localStorage.getItem('ext:names') || '';
+  $('sourcesJson').value = localStorage.getItem('ext:sources') || '';
+  const mode = localStorage.getItem('ext:mode') || 'dry';
+  document.querySelectorAll('input[name="mode"]').forEach(r => r.checked = (r.value === mode));
+}
+function saveSettings(){
+  localStorage.setItem('ext:api', $('apiBase').value.trim() || '/AppleStockChecker');
+  localStorage.setItem('ext:token', $('token').value.trim());
+  localStorage.setItem('ext:names', $('names').value.trim());
+  localStorage.setItem('ext:sources', $('sourcesJson').value);
+  const mode = document.querySelector('input[name="mode"]:checked')?.value || 'dry';
+  localStorage.setItem('ext:mode', mode);
+}
+
+function setProgress(p){ $('progressBar').style.width = Math.max(0, Math.min(100, p)) + '%'; }
+function setStatus(msg){ $('statusMsg').textContent = msg; }
+function esc(s){ return (s ?? '').toString().replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
+
+function renderTable(rows){
+  if (!rows || !rows.length) return '<div class="p-3 text-zinc-500">（无）</div>';
+  const cols = Object.keys(rows[0]);
+  let html = '<table class="min-w-full border text-xs"><thead><tr>';
+  cols.forEach(c => html += `<th class="p-2 border bg-zinc-100 dark:bg-zinc-900/50">${esc(c)}</th>`);
+  html += '</tr></thead><tbody>';
+  rows.forEach(r => {
+    html += '<tr>';
+    cols.forEach(c => html += `<td class="p-2 border">${esc(String(r[c] ?? ''))}</td>`);
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  return html;
+}
+
+function rowsFromPreview(preview){
+  // 仅展示最核心字段，便于人工验证
+  return (preview || []).map(x => ({
+    shop_name: x.shop_name ?? '',
+    part_number: x.part_number ?? '',
+    price_new: x.price_new ?? '',
+    price_grade_a: x.price_grade_a ?? '',
+    price_grade_b: x.price_grade_b ?? '',
+    recorded_at: x.recorded_at ?? ''
+  }));
+}
+
+function rowsFromUnmatched(list){
+  return (list || []).map(x => {
+    const d = x.data || {};
+    return {
+      reason: x.reason || '',
+      row: typeof x.row === 'number' ? x.row : '',
+      shop_name: (d.shop_name ?? d.Shop ?? ''),
+      part_number: (d.part_number ?? d.PartNumber ?? ''),
+      price_new: d.price_new ?? d.price ?? '',
+      recorded_at: d.recorded_at ?? d.time ?? '',
+    };
+  });
+}
+
+function rowsFromErrors(list){
+  return (list || []).map(e => ({
+    source: (e.source && (e.source.name || e.source.url)) ? `${e.source.name || ''} ${e.source.url || ''}` : '',
+    error: e.error || ''
+  }));
+}
+
+function downloadCSV(rows, filename='preview.csv'){
+  if (!rows || !rows.length) return;
+  const cols = Object.keys(rows[0]);
+  const lines = [];
+  lines.push(cols.join(','));
+  rows.forEach(r => {
+    lines.push(cols.map(c => {
+      const v = (r[c] ?? '').toString().replace(/"/g,'""');
+      return /[",\n]/.test(v) ? `"${v}"` : v;
+    }).join(','));
+  });
+  const blob = new Blob([lines.join('\n')], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function runIngest(){
+  const apiBase = ($('apiBase').value.trim() || '/AppleStockChecker').replace(/\/$/,'');
+  const token = $('token').value.trim();
+  const mode = document.querySelector('input[name="mode"]:checked')?.value || 'dry';
+  const dryRun = (mode === 'dry');
+
+  if (!token){ setStatus('缺少 Bearer Token'); return; }
+
+  // 组装请求体：优先 sources JSON；否则 names
+  let body = {};
+  const srcTxt = $('sourcesJson').value.trim();
+  if (srcTxt){
+    try{
+      const obj = JSON.parse(srcTxt);
+      if (!obj.sources || !Array.isArray(obj.sources)) { setStatus('sources JSON 必须包含 "sources" 数组'); return; }
+      body = obj;
+    }catch(e){
+      setStatus('sources JSON 解析失败：' + e.message);
+      return;
+    }
+  }else{
+    const names = $('names').value.trim();
+    if (names) body.names = names.split(',').map(s => s.trim()).filter(Boolean);
+  }
+
+  $('runBtn').disabled = true;
+  $('saveBtn').disabled = true;
+  $('loading').classList.remove('hidden');
+  setProgress(15); setStatus(dryRun ? '模拟执行（dry_run）中…' : '实际执行落库中…');
+  $('summary').textContent = '处理中…';
+  $('previewBox').innerHTML = '';
+  $('unmatchedBox').innerHTML = '';
+  $('errorBox').innerHTML = '';
+  $('timing').textContent = '';
+  lastPreview = [];
+
+  const url = `${apiBase}/purchasing-price-records/ingest-external/?dry_run=${dryRun ? 1 : 0}`;
+  const t0 = performance.now();
+
+  try{
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(()=> ({}));
+    $('timing').textContent = `用时 ${Math.round(performance.now()-t0)} ms`;
+    if (!res.ok){
+      $('summary').innerHTML = `<div class="text-red-600">失败：${esc(data.detail || res.statusText || '未知错误')}</div>`;
+      setStatus('失败');
+      return;
+    }
+
+    const rowsTotal = data.rows_total ?? '-';
+    const inserted  = data.inserted ?? 0;
+    const unmatchedCount = Array.isArray(data.unmatched) ? data.unmatched.length : (data.skipped_no_match ?? 0);
+    const errorsCount = Array.isArray(data.errors) ? data.errors.length : 0;
+
+    $('summary').innerHTML = `
+      <div>整形总行：<b>${rowsTotal}</b>；预计新增：<b class="text-green-600">${inserted}</b>；未匹配：<b class="text-red-600">${unmatchedCount}</b>；错误：<b>${errorsCount}</b></div>
+      <div class="text-xs text-zinc-500">dry_run=${dryRun}</div>`;
+
+    const pv = rowsFromPreview(data.preview || []);
+    $('previewBox').innerHTML = renderTable(pv);
+    lastPreview = pv;
+
+    const um = rowsFromUnmatched(data.unmatched || []);
+    $('unmatchedBox').innerHTML = renderTable(um);
+
+    const er = rowsFromErrors(data.errors || []);
+    $('errorBox').innerHTML = renderTable(er);
+
+    setStatus(dryRun ? '预览完成（未写库）' : '导入完成');
+    setProgress(100);
+  }catch(e){
+    $('summary').innerHTML = `<div class="text-red-600">请求失败：${esc(e.message || e)}</div>`;
+    setStatus('失败');
+  }finally{
+    $('runBtn').disabled = false;
+    $('saveBtn').disabled = false;
+    $('loading').classList.add('hidden');
+  }
+}
+
+document.getElementById('runBtn').addEventListener('click', runIngest);
+document.getElementById('saveBtn').addEventListener('click', () => { saveSettings(); setStatus('设置已保存'); });
+document.getElementById('downloadPreview').addEventListener('click', () => downloadCSV(lastPreview, 'preview.csv'));
+loadSettings();
+</script>
+</body>
+</html>
