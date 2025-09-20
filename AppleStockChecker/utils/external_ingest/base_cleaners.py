@@ -410,6 +410,278 @@ def _price_from_shop6_data7(x: object) -> Optional[int]:
            .replace("未开封", ""))
     return to_int_yen(s)
 
+
+def _extract_jan_from_data(x: object) -> Optional[str]:
+    """
+    从 'data' 文本里抽取 13 位 JAN（例如 'JAN:4549995648300'）
+    """
+    if x is None:
+        return None
+    s = str(x)
+    # 优先匹配 'JAN:XXXXXXXXXXXXX'
+    m = re.search(r"JAN[:：]?\s*(\d{13})", s)
+    if m:
+        return m.group(1)
+    # 兜底：任意 13 位数字
+    m2 = re.search(r"\b(\d{13})\b", s)
+    return m2.group(1) if m2 else None
+
+def _price_from_shop5(x: object) -> Optional[int]:
+    """
+    price 列 -> price_new：
+      - 去掉前导 '～'、'新品'、'未開封' 等修饰
+      - 支持区间 '～162,500円' / '162,500～170,000円'：取最大值
+      - 支持 '10.5万'
+    """
+    if x is None:
+        return None
+    s = str(x).strip()
+    s = s.lstrip("～")  # '～162,500円' -> '162,500円'
+    s = (s.replace("新品", "")
+           .replace("新\u54c1", "")
+           .replace("未開封", "")
+           .replace("未开封", ""))
+    return to_int_yen(s)
+
+def _price_from_shop3(x: object) -> Optional[int]:
+    """
+    data5 -> price_new
+    - 预期形如 '¥177,000'；也兼容 '～177,000円'/'10.5万' 等；取区间最大值
+    - 去除可能出现的修饰词（“新品/未開封”等）
+    """
+    if x is None:
+        return None
+    s = str(x)
+    s = (s.replace("新品", "")
+           .replace("新\u54c1", "")
+           .replace("未開封", "")
+           .replace("未开封", ""))  # 安全冗余
+    return to_int_yen(s)
+
+
+
+
+
+@register_cleaner("shop5-1")
+def clean_shop5_1(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    输入表头：web-scraper-order, web-scraper-start-url, pagination-selector, price, data, name, (time-scraped)
+    要求：删除 name 含 '中古' 的行；通过 data 的 JAN 定位 PN；price -> price_new；time-scraped -> recorded_at
+    shop_name 固定 '森森買取'
+    """
+    # 必要列检查（time-scraped 在问题描述中是必须的）
+    need_cols = ["price", "data", "name", "time-scraped"]
+    for c in need_cols:
+        if c not in df.columns:
+            raise ValueError(f"shop5-1 清洗器缺少必要列：{c}")
+
+    # 1) 过滤掉 name 含“中古”的行
+    src = df.copy()
+    mask_keep = ~src["name"].astype(str).str.contains("中古", na=False)
+    src = src[mask_keep]
+
+    # 2) 跳过 time-scraped 为空的行（避免落库时间为空）
+    mask_time_ok = src["time-scraped"].astype(str).str.strip().ne("") & src["time-scraped"].notna()
+    src = src[mask_time_ok]
+    if src.empty:
+        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
+
+    # 3) 载入 JAN -> PN 映射（允许为空字典；若 info 表无 jan 列则无法映射 PN）
+    jan_to_pn = _load_jan_to_pn()
+
+    # 4) 逐列解析
+    jan_series = src["data"].map(_extract_jan_from_data)
+    pn_series  = jan_series.map(lambda j: jan_to_pn.get(j) if j and re.fullmatch(r"\d{13}", j) else None)
+
+    price_new   = src["price"].map(_price_from_shop5)
+    recorded_at = src["time-scraped"].map(parse_dt_aware)
+
+    # 5) 组装结果：必须有 PN & 价格
+    rows: List[dict] = []
+    for i in range(len(src)):
+        pn = pn_series.iat[i]
+        p  = price_new.iat[i]
+        ts = recorded_at.iat[i]
+        if not pn or p is None:
+            continue
+        rows.append({
+            "part_number": str(pn),
+            "shop_name": "森森買取",
+            "price_new": int(p),
+            "recorded_at": ts,
+        })
+
+    out = pd.DataFrame(rows, columns=["part_number","shop_name","price_new","recorded_at"])
+    if not out.empty:
+        out = out.dropna(subset=["part_number","price_new"]).reset_index(drop=True)
+        out["part_number"] = out["part_number"].astype(str)
+    return out
+
+@register_cleaner("shop5-2")
+def clean_shop5_2(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    输入表头：web-scraper-order, web-scraper-start-url, pagination-selector, price, data, name, (time-scraped)
+    要求：删除 name 含 '中古' 的行；通过 data 的 JAN 定位 PN；price -> price_new；time-scraped -> recorded_at
+    shop_name 固定 '森森買取'
+    """
+    # 必要列检查（time-scraped 在问题描述中是必须的）
+    need_cols = ["price", "data", "name", "time-scraped"]
+    for c in need_cols:
+        if c not in df.columns:
+            raise ValueError(f"shop5-2 清洗器缺少必要列：{c}")
+
+    # 1) 过滤掉 name 含“中古”的行
+    src = df.copy()
+    mask_keep = ~src["name"].astype(str).str.contains("中古", na=False)
+    src = src[mask_keep]
+
+    # 2) 跳过 time-scraped 为空的行（避免落库时间为空）
+    mask_time_ok = src["time-scraped"].astype(str).str.strip().ne("") & src["time-scraped"].notna()
+    src = src[mask_time_ok]
+    if src.empty:
+        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
+
+    # 3) 载入 JAN -> PN 映射（允许为空字典；若 info 表无 jan 列则无法映射 PN）
+    jan_to_pn = _load_jan_to_pn()
+
+    # 4) 逐列解析
+    jan_series = src["data"].map(_extract_jan_from_data)
+    pn_series  = jan_series.map(lambda j: jan_to_pn.get(j) if j and re.fullmatch(r"\d{13}", j) else None)
+
+    price_new   = src["price"].map(_price_from_shop5)
+    recorded_at = src["time-scraped"].map(parse_dt_aware)
+
+    # 5) 组装结果：必须有 PN & 价格
+    rows: List[dict] = []
+    for i in range(len(src)):
+        pn = pn_series.iat[i]
+        p  = price_new.iat[i]
+        ts = recorded_at.iat[i]
+        if not pn or p is None:
+            continue
+        rows.append({
+            "part_number": str(pn),
+            "shop_name": "森森買取",
+            "price_new": int(p),
+            "recorded_at": ts,
+        })
+
+    out = pd.DataFrame(rows, columns=["part_number","shop_name","price_new","recorded_at"])
+    if not out.empty:
+        out = out.dropna(subset=["part_number","price_new"]).reset_index(drop=True)
+        out["part_number"] = out["part_number"].astype(str)
+    return out
+
+@register_cleaner("shop5-3")
+def clean_shop5_3(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    输入表头：web-scraper-order, web-scraper-start-url, pagination-selector, price, data, name, (time-scraped)
+    要求：删除 name 含 '中古' 的行；通过 data 的 JAN 定位 PN；price -> price_new；time-scraped -> recorded_at
+    shop_name 固定 '森森買取'
+    """
+    # 必要列检查（time-scraped 在问题描述中是必须的）
+    need_cols = ["price", "data", "name", "time-scraped"]
+    for c in need_cols:
+        if c not in df.columns:
+            raise ValueError(f"shop5-3 清洗器缺少必要列：{c}")
+
+    # 1) 过滤掉 name 含“中古”的行
+    src = df.copy()
+    mask_keep = ~src["name"].astype(str).str.contains("中古", na=False)
+    src = src[mask_keep]
+
+    # 2) 跳过 time-scraped 为空的行（避免落库时间为空）
+    mask_time_ok = src["time-scraped"].astype(str).str.strip().ne("") & src["time-scraped"].notna()
+    src = src[mask_time_ok]
+    if src.empty:
+        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
+
+    # 3) 载入 JAN -> PN 映射（允许为空字典；若 info 表无 jan 列则无法映射 PN）
+    jan_to_pn = _load_jan_to_pn()
+
+    # 4) 逐列解析
+    jan_series = src["data"].map(_extract_jan_from_data)
+    pn_series  = jan_series.map(lambda j: jan_to_pn.get(j) if j and re.fullmatch(r"\d{13}", j) else None)
+
+    price_new   = src["price"].map(_price_from_shop5)
+    recorded_at = src["time-scraped"].map(parse_dt_aware)
+
+    # 5) 组装结果：必须有 PN & 价格
+    rows: List[dict] = []
+    for i in range(len(src)):
+        pn = pn_series.iat[i]
+        p  = price_new.iat[i]
+        ts = recorded_at.iat[i]
+        if not pn or p is None:
+            continue
+        rows.append({
+            "part_number": str(pn),
+            "shop_name": "森森買取",
+            "price_new": int(p),
+            "recorded_at": ts,
+        })
+
+    out = pd.DataFrame(rows, columns=["part_number","shop_name","price_new","recorded_at"])
+    if not out.empty:
+        out = out.dropna(subset=["part_number","price_new"]).reset_index(drop=True)
+        out["part_number"] = out["part_number"].astype(str)
+    return out
+
+@register_cleaner("shop5-4")
+def clean_shop5_4(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    输入表头：web-scraper-order, web-scraper-start-url, pagination-selector, price, data, name, (time-scraped)
+    要求：删除 name 含 '中古' 的行；通过 data 的 JAN 定位 PN；price -> price_new；time-scraped -> recorded_at
+    shop_name 固定 '森森買取'
+    """
+    # 必要列检查（time-scraped 在问题描述中是必须的）
+    need_cols = ["price", "data", "name", "time-scraped"]
+    for c in need_cols:
+        if c not in df.columns:
+            raise ValueError(f"shop5-4 清洗器缺少必要列：{c}")
+
+    # 1) 过滤掉 name 含“中古”的行
+    src = df.copy()
+    mask_keep = ~src["name"].astype(str).str.contains("中古", na=False)
+    src = src[mask_keep]
+
+    # 2) 跳过 time-scraped 为空的行（避免落库时间为空）
+    mask_time_ok = src["time-scraped"].astype(str).str.strip().ne("") & src["time-scraped"].notna()
+    src = src[mask_time_ok]
+    if src.empty:
+        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
+
+    # 3) 载入 JAN -> PN 映射（允许为空字典；若 info 表无 jan 列则无法映射 PN）
+    jan_to_pn = _load_jan_to_pn()
+
+    # 4) 逐列解析
+    jan_series = src["data"].map(_extract_jan_from_data)
+    pn_series  = jan_series.map(lambda j: jan_to_pn.get(j) if j and re.fullmatch(r"\d{13}", j) else None)
+
+    price_new   = src["price"].map(_price_from_shop5)
+    recorded_at = src["time-scraped"].map(parse_dt_aware)
+
+    # 5) 组装结果：必须有 PN & 价格
+    rows: List[dict] = []
+    for i in range(len(src)):
+        pn = pn_series.iat[i]
+        p  = price_new.iat[i]
+        ts = recorded_at.iat[i]
+        if not pn or p is None:
+            continue
+        rows.append({
+            "part_number": str(pn),
+            "shop_name": "森森買取",
+            "price_new": int(p),
+            "recorded_at": ts,
+        })
+
+    out = pd.DataFrame(rows, columns=["part_number","shop_name","price_new","recorded_at"])
+    if not out.empty:
+        out = out.dropna(subset=["part_number","price_new"]).reset_index(drop=True)
+        out["part_number"] = out["part_number"].astype(str)
+    return out
+
 @register_cleaner("shop6-1")
 def clean_shop6_1(df: pd.DataFrame) -> pd.DataFrame:
     # 必要列检查
@@ -503,7 +775,6 @@ def clean_shop6_2(df: pd.DataFrame) -> pd.DataFrame:
         out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
         out["part_number"] = out["part_number"].astype(str)
     return out
-
 
 @register_cleaner("shop6-3")
 def clean_shop6_3(df: pd.DataFrame) -> pd.DataFrame:
@@ -599,7 +870,6 @@ def clean_shop6_4(df: pd.DataFrame) -> pd.DataFrame:
         out["part_number"] = out["part_number"].astype(str)
     return out
 
-
 @register_cleaner("shop7")
 def clean_shop7(df: pd.DataFrame) -> pd.DataFrame:
     info_df = _load_iphone17_info_df()  # part_number, model_name_norm, capacity_gb
@@ -661,7 +931,6 @@ def clean_shop7(df: pd.DataFrame) -> pd.DataFrame:
         out["part_number"] = out["part_number"].astype(str)
     return out
 
-
 @register_cleaner("shop8")
 def clean_shop8(df: pd.DataFrame) -> pd.DataFrame:
     # 列名容错：有些抓取器可能用不同大小写或空白
@@ -692,7 +961,6 @@ def clean_shop8(df: pd.DataFrame) -> pd.DataFrame:
     # 确保类型（避免 pandas 的 NA 类型导致后续 int() 失败）
     out["part_number"] = out["part_number"].astype(str)
     return out
-
 
 @register_cleaner("shop9")
 def clean_shop9(df: pd.DataFrame) -> pd.DataFrame:
@@ -746,7 +1014,6 @@ def clean_shop9(df: pd.DataFrame) -> pd.DataFrame:
         out = out.dropna(subset=["part_number","price_new"]).reset_index(drop=True)
         out["part_number"] = out["part_number"].astype(str)
     return out
-
 
 @register_cleaner("shop10")
 def clean_shop10(df: pd.DataFrame) -> pd.DataFrame:
