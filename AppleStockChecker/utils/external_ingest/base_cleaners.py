@@ -460,7 +460,80 @@ def _price_from_shop3(x: object) -> Optional[int]:
 
 
 
+@register_cleaner("shop3")
+def clean_shop3(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    输入列：
+      web-scraper-order, web-scraper-start-url, data4, data5, data6, data8, title, time-scraped
+    规则：
+      - shop_name 固定 '買取一丁目'
+      - title 含“机种名 + 容量” → 归一(model_norm) + 解析容量(capacity_gb)
+      - 通过 iphone17_info.csv 对应 (model_norm, capacity_gb) 获取“所有颜色”的 part_number 列表并展开
+      - data5 为新品 price_new（解析日元/区间）
+      - time-scraped 为 recorded_at（为空行直接跳过）
+    输出：
+      part_number, shop_name, price_new, recorded_at
+    """
+    info_df = _load_iphone17_info_df()  # -> part_number, model_name_norm, capacity_gb
 
+    # 必要列检查
+    need_cols = ["title", "data5", "time-scraped"]
+    for c in need_cols:
+        if c not in df.columns:
+            raise ValueError(f"shop3 清洗器缺少必要列：{c}")
+
+    src = df.copy()
+
+    # 过滤：time-scraped 为空的行跳过，避免时间解析问题
+    mask_time_ok = src["time-scraped"].astype(str).str.strip().ne("") & src["time-scraped"].notna()
+    src = src[mask_time_ok]
+    if src.empty:
+        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
+
+    # 1) 从 title 解析 机型 & 容量
+    model_norm = src["title"].map(_normalize_model_generic)
+    cap_gb     = src["title"].map(_parse_capacity_gb)
+
+    # 2) 价格 & 时间
+    price_new   = src["data5"].map(_price_from_shop3)
+    recorded_at = src["time-scraped"].map(parse_dt_aware)
+
+    # 3) (model_norm, capacity_gb) -> 所有颜色的 PN 列表
+    groups = (
+        info_df.groupby(["model_name_norm", "capacity_gb"])["part_number"]
+        .apply(list).to_dict()
+    )
+
+    # 4) 展开为多行
+    rows: List[dict] = []
+    for i in range(len(src)):
+        m = model_norm.iat[i]
+        c = cap_gb.iat[i]
+        p = price_new.iat[i]
+        t = recorded_at.iat[i]
+
+        # 缺关键字段跳过
+        if not m or pd.isna(c) or p is None:
+            continue
+
+        pn_list = groups.get((m, int(c)), [])
+        if not pn_list:
+            # info 映射中无该型号/容量，跳过（服务层 unmatched 会统计）
+            continue
+
+        for pn in pn_list:
+            rows.append({
+                "part_number": str(pn),
+                "shop_name": "買取一丁目",
+                "price_new": int(p),
+                "recorded_at": t,
+            })
+
+    out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
+    if not out.empty:
+        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
+        out["part_number"] = out["part_number"].astype(str)
+    return out
 
 @register_cleaner("shop5-1")
 def clean_shop5_1(df: pd.DataFrame) -> pd.DataFrame:
