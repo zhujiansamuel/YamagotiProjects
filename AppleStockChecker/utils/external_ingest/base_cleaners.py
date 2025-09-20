@@ -26,19 +26,68 @@ def pick_first_col(df: pd.DataFrame, *candidates: str) -> pd.Series:
 
 _NUM_MODEL_PAT = re.compile(r"(iPhone)\s*(\d{2})(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
 _AIR_PAT = re.compile(r"(iPhone)\s*(Air)(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
+_PN_REGEX = re.compile(r"\b[A-Z0-9]{4,6}\d{0,3}J/A\b")
+
+# def _normalize_model_generic(text: str) -> str:
+#     """
+#     归一型号主体：
+#       - 'iPhone17ProMax' / 'iPhone 17 Pro Max' → 'iPhone 17 Pro Max'
+#       - 'iPhone Air 256GB' / 'iPhoneエアー 256GB' → 'iPhone Air'
+#     """
+#     if not text:
+#         return ""
+#     t = str(text).replace("\u3000", " ")
+#     t = re.sub(r"\s+", " ", t)
+#
+#     # 日文后缀 → 英文词干
+#     t = (t.replace("プロマックス", "Pro Max")
+#            .replace("プロ", "Pro")
+#            .replace("プラス", "Plus")
+#            .replace("ミニ", "mini")
+#            .replace("エアー", "Air")
+#            .replace("エア", "Air"))
+#
+#     # 在 iPhone 与数字/ Air 之间补空格
+#     t = re.sub(r"(iPhone)\s*(\d{2})", r"\1 \2", t, flags=re.I)
+#     t = re.sub(r"(iPhone)\s*(Air)", r"\1 \2", t, flags=re.I)
+#
+#     # 去容量/括号/SIM 标记等噪声
+#     t = re.sub(r"(\d+(?:\.\d+)?\s*TB|\d{2,4}\s*GB)", "", t, flags=re.I)
+#     t = re.sub(r"SIMフリ[ーｰ–-]?|シムフリ[ーｰ–-]?|sim\s*free", "", t, flags=re.I)
+#     t = re.sub(r"[（）\(\)\[\]【】].*?[（）\(\)\[\]【】]", "", t)
+#     t = re.sub(r"\s+", " ", t).strip()
+#
+#     # 1) 数字代号机型
+#     m = _NUM_MODEL_PAT.search(t)
+#     if m:
+#         base = f"{m.group(1)} {m.group(2)}"
+#         suf = m.group(3) or ""
+#         suf = re.sub(r"\s+", " ", suf).strip()
+#         return f"{base} {suf}".strip()
+#
+#     # 2) iPhone Air（含后缀容错，当前返回 'iPhone Air'）
+#     m2 = _AIR_PAT.search(t)
+#     if m2:
+#         # 如果将来有 'Air Plus' 等，可以改为返回包含后缀；目前返回主体即可
+#         return "iPhone Air"
+#
+#     return ""
+
 
 def _normalize_model_generic(text: str) -> str:
     """
-    归一型号主体：
-      - 'iPhone17ProMax' / 'iPhone 17 Pro Max' → 'iPhone 17 Pro Max'
-      - 'iPhone Air 256GB' / 'iPhoneエアー 256GB' → 'iPhone Air'
+    统一型号主体：
+      - iPhone17/16 + 后缀（Pro/Pro Max/Plus/mini）
+      - iPhone Air（含“17 air”→ Air）
+      - 允许紧凑写法：17pro / 17promax / 16Pro / 16Plus ...
+    输出：'iPhone 17 Pro Max' / 'iPhone 17 Pro' / 'iPhone Air' / ...
     """
     if not text:
         return ""
     t = str(text).replace("\u3000", " ")
     t = re.sub(r"\s+", " ", t)
 
-    # 日文后缀 → 英文词干
+    # 日文别名到英文
     t = (t.replace("プロマックス", "Pro Max")
            .replace("プロ", "Pro")
            .replace("プラス", "Plus")
@@ -46,11 +95,23 @@ def _normalize_model_generic(text: str) -> str:
            .replace("エアー", "Air")
            .replace("エア", "Air"))
 
-    # 在 iPhone 与数字/ Air 之间补空格
-    t = re.sub(r"(iPhone)\s*(\d{2})", r"\1 \2", t, flags=re.I)
-    t = re.sub(r"(iPhone)\s*(Air)", r"\1 \2", t, flags=re.I)
+    # ❗ 在“数字后立即跟英文”的位置补一个空格：17pro -> 17 pro
+    t = re.sub(r"(\d{2})(?=[A-Za-z])", r"\1 ", t)
 
-    # 去容量/括号/SIM 标记等噪声
+    # 标准化大小写/形态：pro-max / ProMax / promáx → Pro Max；pro → Pro；plus → Plus；mini → mini
+    t = re.sub(r"(?i)\bpro\s*max\b", "Pro Max", t)
+    t = re.sub(r"(?i)\bpro\b", "Pro", t)
+    t = re.sub(r"(?i)\bplus\b", "Plus", t)
+    t = re.sub(r"(?i)\bmini\b", "mini", t)
+
+    # 若没有 iPhone 前缀但出现纯数字代号，补上
+    if "iPhone" not in t and re.search(r"\b1[0-9]\b", t):
+        t = re.sub(r"\b(1[0-9])\b", r"iPhone \1", t, count=1)
+
+    # 特例：'17 air' → iPhone Air（防止被当成 iPhone 17）
+    t = re.sub(r"(?i)\biPhone\s+17\s+Air\b", "iPhone Air", t)
+
+    # 去容量/SIM/括号噪声
     t = re.sub(r"(\d+(?:\.\d+)?\s*TB|\d{2,4}\s*GB)", "", t, flags=re.I)
     t = re.sub(r"SIMフリ[ーｰ–-]?|シムフリ[ーｰ–-]?|sim\s*free", "", t, flags=re.I)
     t = re.sub(r"[（）\(\)\[\]【】].*?[（）\(\)\[\]【】]", "", t)
@@ -60,14 +121,13 @@ def _normalize_model_generic(text: str) -> str:
     m = _NUM_MODEL_PAT.search(t)
     if m:
         base = f"{m.group(1)} {m.group(2)}"
-        suf = m.group(3) or ""
-        suf = re.sub(r"\s+", " ", suf).strip()
+        suf  = (m.group(3) or "").strip()
         return f"{base} {suf}".strip()
 
-    # 2) iPhone Air（含后缀容错，当前返回 'iPhone Air'）
+    # 2) Air
     m2 = _AIR_PAT.search(t)
     if m2:
-        # 如果将来有 'Air Plus' 等，可以改为返回包含后缀；目前返回主体即可
+        # 当前返回主体 'iPhone Air'；若以后真有 Air Plus 等可在此扩展
         return "iPhone Air"
 
     return ""
@@ -208,25 +268,25 @@ def _extract_part_number(text: str) -> str | None:
 # ------------------------------
 # 载入 iphone17_info.csv（part_number 映射）
 # ------------------------------
-def _load_iphone17_info(path: str) -> pd.DataFrame:
-    """
-    期望列至少包含：part_number, model_name, capacity_gb
-    允许存在其他列（color、JAN 等），会被忽略。
-    """
-    # 兼容 CSV/Excel
-    if re.search(r"\.(xlsx|xlsm|xls|ods)$", path, re.I):
-        df = pd.read_excel(path)
-    else:
-        df = pd.read_csv(path, encoding="utf-8-sig")
-    for col in ("part_number", "model_name", "capacity_gb"):
-        if col not in df.columns:
-            raise ValueError(f"iphone17_info 缺少必要列：{col}")
-    # 归一：model_name 同框架的规范；capacity 转 int
-    df = df.copy()
-    df["model_name_norm"] = df["model_name"].map(_normalize_model_17)
-    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
-    df = df.dropna(subset=["model_name_norm", "capacity_gb", "part_number"])
-    return df[["part_number", "model_name_norm", "capacity_gb"]]
+# def _load_iphone17_info(path: str) -> pd.DataFrame:
+#     """
+#     期望列至少包含：part_number, model_name, capacity_gb
+#     允许存在其他列（color、JAN 等），会被忽略。
+#     """
+#     # 兼容 CSV/Excel
+#     if re.search(r"\.(xlsx|xlsm|xls|ods)$", path, re.I):
+#         df = pd.read_excel(path)
+#     else:
+#         df = pd.read_csv(path, encoding="utf-8-sig")
+#     for col in ("part_number", "model_name", "capacity_gb"):
+#         if col not in df.columns:
+#             raise ValueError(f"iphone17_info 缺少必要列：{col}")
+#     # 归一：model_name 同框架的规范；capacity 转 int
+#     df = df.copy()
+#     df["model_name_norm"] = df["model_name"].map(_normalize_model_17)
+#     df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
+#     df = df.dropna(subset=["model_name_norm", "capacity_gb", "part_number"])
+#     return df[["part_number", "model_name_norm", "capacity_gb"]]
 
 
 def _extract_price_new(raw: object) -> Optional[int]:
@@ -244,6 +304,363 @@ def _extract_price_new(raw: object) -> Optional[int]:
     # 常见前缀也清理一下
     s = s.replace("未開封", "").replace("未开封", "")
     return to_int_yen(s)
+
+def _price_from_shop7(x: object) -> Optional[int]:
+    """data2 -> price_new：去掉“新品/未開封/货币符号/逗号”，区间取最大"""
+    if x is None:
+        return None
+    s = str(x)
+    s = s.replace("新品", "").replace("新\u54c1", "")
+    s = s.replace("未開封", "").replace("未开封", "")
+    return to_int_yen(s)
+
+def _norm_model_for_shop7(text: str) -> str:
+    """
+    在 _normalize_model_generic 之前做一点“shop7 特有”的宽松处理：
+      - ‘promax/ProMax/pro-max’ → ‘Pro Max’
+      - ‘17 air’ → ‘iPhone Air’
+      - 没有 iPhone 前缀但有 '17' 的，补成 ‘iPhone 17 ...’
+    然后交给 _normalize_model_generic 做最终归一。
+    """
+    if not text:
+        return ""
+    t = str(text).replace("\u3000", " ")
+    t = re.sub(r"\s+", " ", t)
+
+    # 日文/英文后缀标准化
+    t = (t.replace("プロマックス", "Pro Max")
+           .replace("プロ", "Pro")
+           .replace("プラス", "Plus")
+           .replace("ミニ", "mini")
+           .replace("エアー", "Air")
+           .replace("エア", "Air"))
+
+    # promax 连写/大小写
+    t = re.sub(r"(?i)pro[-\s]?max", "Pro Max", t)
+
+    # 若没有 iPhone 前缀但出现 "17 air" / "17 pro max" / "17 pro" / "17 plus"
+    # 先把 "17 air" 显式改成 "iPhone Air"（Air 没有数字后缀）
+    if re.search(r"(?i)\b17\s+air\b", t):
+        # 去掉“17 ”，以免 _normalize_model_generic 误识别为 iPhone 17
+        t = re.sub(r"(?i)\b17\s+air\b", "iPhone Air", t)
+
+    # 若没有 iPhone 单词但有纯数字代号（例如 "17 Pro Max 256GB"）
+    if "iPhone" not in t and re.search(r"\b1[0-9]\b", t):
+        t = re.sub(r"\b(1[0-9])\b", r"iPhone \1", t, count=1)
+
+    return _normalize_model_generic(t)
+
+def _resolve_info_path() -> Path:
+    try:
+        from django.conf import settings
+        p = getattr(settings, "EXTERNAL_IPHONE17_INFO_PATH", None)
+        if p:
+            return Path(p)
+    except Exception:
+        pass
+    envp = os.getenv("IPHONE17_INFO_CSV")
+    if envp and Path(envp).exists():
+        return Path(envp)
+    return Path(__file__).resolve().parents[2] / "data" / "iphone17_info.csv"
+
+
+@lru_cache(maxsize=1)
+def _load_jan_to_pn() -> Dict[str, str]:
+    """
+    返回 { jan(13位字符串) : part_number } 的字典。
+    若 info 文件没有 jan 列，则返回空字典（后续走 data8 的 PN 兜底）。
+    """
+    path = _resolve_info_path()
+    if not path.exists():
+        # 没找到映射文件时，仍允许仅走 data8 的 PN 兜底
+        return {}
+    if re.search(r"\.(xlsx|xlsm|xls|ods)$", str(path), re.I):
+        df = pd.read_excel(path)
+    else:
+        df = pd.read_csv(path, encoding="utf-8-sig")
+
+    if "part_number" not in df.columns:
+        # 没有 PN 列，无法映射
+        return {}
+
+    # 允许 info 表没有 jan；有则清洗为 13 位
+    if "jan" in df.columns:
+        df = df.copy()
+        df["jan"] = df["jan"].astype(str).str.replace(r"[^\d]", "", regex=True)
+        df = df[df["jan"].str.fullmatch(r"\d{13}", na=False)]
+        mapping = dict(zip(df["jan"].astype(str), df["part_number"].astype(str)))
+        return mapping
+    return {}
+
+def _extract_pn_from_text(text: object) -> Optional[str]:
+    if text is None:
+        return None
+    s = str(text).replace("\u3000", " ")
+    m = _PN_REGEX.search(s)
+    return m.group(0) if m else None
+
+def _price_from_shop6_data7(x: object) -> Optional[int]:
+    if x is None:
+        return None
+    s = str(x)
+    # 去一些修饰词
+    s = (s.replace("新品", "")
+           .replace("新\u54c1", "")
+           .replace("未開封", "")
+           .replace("未开封", ""))
+    return to_int_yen(s)
+
+@register_cleaner("shop6-1")
+def clean_shop6_1(df: pd.DataFrame) -> pd.DataFrame:
+    # 必要列检查
+    need_cols = ["data7", "phone", "data8", "time-scraped"]
+    for c in need_cols:
+        if c not in df.columns:
+            raise ValueError(f"shop6-1 清洗器缺少必要列：{c}")
+
+    # 跳过 time-scraped 为空的行
+    src = df.copy()
+    mask_time = src["time-scraped"].astype(str).str.strip().ne("") & src["time-scraped"].notna()
+    src = src[mask_time]
+    if src.empty:
+        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
+
+    jan_to_pn = _load_jan_to_pn()  # 可能为空字典（允许）
+
+    # 解析列
+    jan_series = src["phone"].astype(str).str.replace(r"[^\d]", "", regex=True)
+    pn_by_jan = jan_series.map(lambda j: jan_to_pn.get(j) if re.fullmatch(r"\d{13}", j or "") else None)
+    pn_fallback = src["data8"].map(_extract_pn_from_text)  # 从 data8 兜底提取 PN
+
+    # 价格/时间
+    price_new = src["data7"].map(_price_from_shop6_data7)
+    recorded_at = src["time-scraped"].map(parse_dt_aware)
+
+    # 组装：优先 JAN→PN；无则 data8 提取；再无则丢弃
+    rows: List[dict] = []
+    for i in range(len(src)):
+        pn = pn_by_jan.iat[i] or pn_fallback.iat[i]
+        p  = price_new.iat[i]
+        ts = recorded_at.iat[i]
+        if not pn or p is None:
+            continue
+        rows.append({
+            "part_number": str(pn),
+            "shop_name": "買取ルデヤ",
+            "price_new": int(p),
+            "recorded_at": ts,
+        })
+
+    out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
+    if not out.empty:
+        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
+        out["part_number"] = out["part_number"].astype(str)
+    return out
+
+@register_cleaner("shop6-2")
+def clean_shop6_2(df: pd.DataFrame) -> pd.DataFrame:
+    # 必要列检查
+    need_cols = ["data7", "phone", "data8", "time-scraped"]
+    for c in need_cols:
+        if c not in df.columns:
+            raise ValueError(f"shop6-2 清洗器缺少必要列：{c}")
+
+    # 跳过 time-scraped 为空的行
+    src = df.copy()
+    mask_time = src["time-scraped"].astype(str).str.strip().ne("") & src["time-scraped"].notna()
+    src = src[mask_time]
+    if src.empty:
+        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
+
+    jan_to_pn = _load_jan_to_pn()  # 可能为空字典（允许）
+
+    # 解析列
+    jan_series = src["phone"].astype(str).str.replace(r"[^\d]", "", regex=True)
+    pn_by_jan = jan_series.map(lambda j: jan_to_pn.get(j) if re.fullmatch(r"\d{13}", j or "") else None)
+    pn_fallback = src["data8"].map(_extract_pn_from_text)  # 从 data8 兜底提取 PN
+
+    # 价格/时间
+    price_new = src["data7"].map(_price_from_shop6_data7)
+    recorded_at = src["time-scraped"].map(parse_dt_aware)
+
+    # 组装：优先 JAN→PN；无则 data8 提取；再无则丢弃
+    rows: List[dict] = []
+    for i in range(len(src)):
+        pn = pn_by_jan.iat[i] or pn_fallback.iat[i]
+        p  = price_new.iat[i]
+        ts = recorded_at.iat[i]
+        if not pn or p is None:
+            continue
+        rows.append({
+            "part_number": str(pn),
+            "shop_name": "買取ルデヤ",
+            "price_new": int(p),
+            "recorded_at": ts,
+        })
+
+    out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
+    if not out.empty:
+        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
+        out["part_number"] = out["part_number"].astype(str)
+    return out
+
+
+@register_cleaner("shop6-3")
+def clean_shop6_3(df: pd.DataFrame) -> pd.DataFrame:
+    # 必要列检查
+    need_cols = ["data7", "phone", "data8", "time-scraped"]
+    for c in need_cols:
+        if c not in df.columns:
+            raise ValueError(f"shop6-3 清洗器缺少必要列：{c}")
+
+    # 跳过 time-scraped 为空的行
+    src = df.copy()
+    mask_time = src["time-scraped"].astype(str).str.strip().ne("") & src["time-scraped"].notna()
+    src = src[mask_time]
+    if src.empty:
+        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
+
+    jan_to_pn = _load_jan_to_pn()  # 可能为空字典（允许）
+
+    # 解析列
+    jan_series = src["phone"].astype(str).str.replace(r"[^\d]", "", regex=True)
+    pn_by_jan = jan_series.map(lambda j: jan_to_pn.get(j) if re.fullmatch(r"\d{13}", j or "") else None)
+    pn_fallback = src["data8"].map(_extract_pn_from_text)  # 从 data8 兜底提取 PN
+
+    # 价格/时间
+    price_new = src["data7"].map(_price_from_shop6_data7)
+    recorded_at = src["time-scraped"].map(parse_dt_aware)
+
+    # 组装：优先 JAN→PN；无则 data8 提取；再无则丢弃
+    rows: List[dict] = []
+    for i in range(len(src)):
+        pn = pn_by_jan.iat[i] or pn_fallback.iat[i]
+        p  = price_new.iat[i]
+        ts = recorded_at.iat[i]
+        if not pn or p is None:
+            continue
+        rows.append({
+            "part_number": str(pn),
+            "shop_name": "買取ルデヤ",
+            "price_new": int(p),
+            "recorded_at": ts,
+        })
+
+    out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
+    if not out.empty:
+        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
+        out["part_number"] = out["part_number"].astype(str)
+    return out
+
+@register_cleaner("shop6-4")
+def clean_shop6_4(df: pd.DataFrame) -> pd.DataFrame:
+    # 必要列检查
+    need_cols = ["data7", "phone", "data8", "time-scraped"]
+    for c in need_cols:
+        if c not in df.columns:
+            raise ValueError(f"shop6-4 清洗器缺少必要列：{c}")
+
+    # 跳过 time-scraped 为空的行
+    src = df.copy()
+    mask_time = src["time-scraped"].astype(str).str.strip().ne("") & src["time-scraped"].notna()
+    src = src[mask_time]
+    if src.empty:
+        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
+
+    jan_to_pn = _load_jan_to_pn()  # 可能为空字典（允许）
+
+    # 解析列
+    jan_series = src["phone"].astype(str).str.replace(r"[^\d]", "", regex=True)
+    pn_by_jan = jan_series.map(lambda j: jan_to_pn.get(j) if re.fullmatch(r"\d{13}", j or "") else None)
+    pn_fallback = src["data8"].map(_extract_pn_from_text)  # 从 data8 兜底提取 PN
+
+    # 价格/时间
+    price_new = src["data7"].map(_price_from_shop6_data7)
+    recorded_at = src["time-scraped"].map(parse_dt_aware)
+
+    # 组装：优先 JAN→PN；无则 data8 提取；再无则丢弃
+    rows: List[dict] = []
+    for i in range(len(src)):
+        pn = pn_by_jan.iat[i] or pn_fallback.iat[i]
+        p  = price_new.iat[i]
+        ts = recorded_at.iat[i]
+        if not pn or p is None:
+            continue
+        rows.append({
+            "part_number": str(pn),
+            "shop_name": "買取ルデヤ",
+            "price_new": int(p),
+            "recorded_at": ts,
+        })
+
+    out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
+    if not out.empty:
+        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
+        out["part_number"] = out["part_number"].astype(str)
+    return out
+
+
+@register_cleaner("shop7")
+def clean_shop7(df: pd.DataFrame) -> pd.DataFrame:
+    info_df = _load_iphone17_info_df()  # part_number, model_name_norm, capacity_gb
+
+    # 必要列检查
+    need_cols = ["data", "data2", "time-scraped"]
+    for c in need_cols:
+        if c not in df.columns:
+            raise ValueError(f"shop7 清洗器缺少必要列：{c}")
+
+    # 先把 time-scraped 为空的行排除，避免时间解析报错
+    df = df.copy()
+    mask_time_ok = df["time-scraped"].astype(str).str.strip().ne("") & df["time-scraped"].notna()
+    df = df[mask_time_ok]
+    if df.empty:
+        return pd.DataFrame(columns=["part_number","shop_name","price_new","recorded_at"])
+
+    # data -> 机型&容量
+    model_norm = df["data"].map(_norm_model_for_shop7)
+    cap_gb     = df["data"].map(_parse_capacity_gb)
+
+    # 价格/时间
+    price_new  = df["data2"].map(_price_from_shop7)
+    recorded_at= df["time-scraped"].map(parse_dt_aware)
+
+    # (model, cap) -> [PN] 映射
+    groups = (
+        info_df.groupby(["model_name_norm", "capacity_gb"])["part_number"]
+        .apply(list).to_dict()
+    )
+
+    rows: List[dict] = []
+    for i in range(len(df)):
+        m = model_norm.iat[i]
+        c = cap_gb.iat[i]
+        p = price_new.iat[i]
+        t = recorded_at.iat[i]
+
+        # 关键信息缺失跳过
+        if not m or pd.isna(c) or p is None:
+            continue
+
+        pnlst = groups.get((m, int(c)), [])
+        if not pnlst:
+            # 未在 info 映射中找到同型号同容量的 PN 组，跳过
+            continue
+
+        for pn in pnlst:
+            rows.append({
+                "part_number": str(pn),
+                "shop_name": "買取ホムラ",
+                "price_new": int(p),
+                "recorded_at": t,
+            })
+
+    out = pd.DataFrame(rows, columns=["part_number","shop_name","price_new","recorded_at"])
+    if not out.empty:
+        out = out.dropna(subset=["part_number","price_new"]).reset_index(drop=True)
+        out["part_number"] = out["part_number"].astype(str)
+    return out
+
 
 @register_cleaner("shop8")
 def clean_shop8(df: pd.DataFrame) -> pd.DataFrame:
