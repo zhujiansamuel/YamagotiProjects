@@ -54,3 +54,6 @@ http://127.0.0.1:8080/AppleStockChecker/external-ingest/
 docker run -d --name redis  -p 6379:6379  -e REDIS_ARGS="--appendonly yes --save 900 1 --save 300 10"  redis:7-alpine
 celery -A YamagotiProjects worker -l info
 celery -A YamagotiProjects worker -l info -P solo --concurrency=1
+
+
+http://localhost:8080/AppleStockChecker/auth/token/

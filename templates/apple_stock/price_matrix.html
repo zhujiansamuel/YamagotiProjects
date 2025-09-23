@@ -40,7 +40,7 @@
         <div class="md:col-span-1 flex items-end gap-2">
           <button id="btnPrev" class="px-3 py-2 rounded-lg border border-zinc-200">← -15 分</button>
           <button id="btnNext" class="px-3 py-2 rounded-lg border border-zinc-200">+15 分 →</button>
-          <button id="btnRefresh" class="px-3 py-2 rounded-lg bg-black text-white">加载</button>
+          <button id="btnRefresh" class="px-3 py-2 rounded-lg bg-black text-white">刷新</button>
         </div>
       </div>
       <div class="flex items-center gap-4 text-sm">
@@ -67,7 +67,7 @@ const $ = s => document.querySelector(s);
 const fmt = (n) => (n==null || Number.isNaN(n)) ? "-" : Number(n).toLocaleString();
 const esc = (s) => (s??"").toString().replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 
-// 固定列（显示名 & 实际 shop 名字）
+// 列（固定顺序）
 const SHOPS = [
   { code: "shop3",  display: "買取一丁目",     name: "買取一丁目" },
   { code: "shop5",  display: "森森買取",       name: "森森買取" },
@@ -83,18 +83,32 @@ let TOKEN = "";
 let ROWS = [];                // [{pn,label,model_name,capacity_gb,color}]
 let SHOP_ID_MAP = {};         // name -> id
 
-// —— 混合内容防护：规范化 API Base —— //
+// —— 规范化 API Base：自动把 http 升级为 https，推荐相对前缀 —— //
 function normalizeApiBase(v) {
   let s = (v || "").trim();
-  if (!s) return "/AppleStockChecker";          // 推荐相对前缀
+  if (!s) return "/AppleStockChecker";
   if (s.startsWith("http://") && location.protocol === "https:") {
-    s = "https://" + s.slice(7);                // https 页面上自动升级 http
+    s = "https://" + s.slice(7);
   }
   if (s.startsWith("//")) {
-    s = location.protocol + s;                  // 协议相对 → 具体协议
+    s = location.protocol + s;
   }
-  s = s.replace(/\/+$/, "");                    // 去尾部斜杠
-  return s;
+  return s.replace(/\/+$/, "");
+}
+
+// —— 把 DRF 分页的 next 链接“强制同域同协议” —— //
+function toSameOriginHttps(u) {
+  if (!u) return null;
+  try {
+    const obj = new URL(u, location.origin);
+    // 强制使用当前页面的协议与主机（解决 http://... 混合内容）
+    obj.protocol = location.protocol;
+    obj.host = location.host;
+    return obj.toString();
+  } catch (e) {
+    // 若是相对路径，保持相对
+    return u;
+  }
 }
 
 // 请求头（注入 Bearer）
@@ -120,7 +134,8 @@ async function loadShops() {
     const j = await r.json();
     const rows = j.results || j;
     rows.forEach(s => { SHOP_ID_MAP[s.name] = s.id; });
-    url = j.next || null;
+    // —— 关键：把 next 换成同域 https —— //
+    url = j.next ? toSameOriginHttps(j.next) : null;
   }
   SHOPS.forEach(s => { if (!SHOP_ID_MAP[s.name]) console.warn("未找到店铺：", s.name); });
 }
@@ -138,7 +153,8 @@ async function loadIphones() {
       const j = await r.json();
       const rows = j.results || j;
       all.push(...rows);
-      url = j.next || null;
+      // —— 关键：把 next 换成同域 https —— //
+      url = j.next ? toSameOriginHttps(j.next) : null;
     }
     return all;
   }
@@ -244,7 +260,7 @@ async function loadMatrix(ts) {
 
 // 事件绑定 / 初始化
 function initControls() {
-  // 读取本地保存（默认用相对前缀，避免混合内容）
+  // 读取本地保存（默认相对前缀，避免混合内容）
   const savedBase = localStorage.getItem("price_matrix:api") || "/AppleStockChecker";
   API_BASE = normalizeApiBase(savedBase);
   $("#apiBase").value = API_BASE;
@@ -281,24 +297,27 @@ function initControls() {
     el.value = toLocalInputValue(nd);
   });
 
-  $("#btnRefresh").addEventListener("click", async ()=>{
-    try {
-      $("#status").textContent = "准备数据…";
-      await loadShops();
-      $("#status").textContent = "加载机型…";
-      await loadIphones();
-      // 渲染表头
-      const tr = $("#thead-row");
-      tr.innerHTML = `<th class="p-2 text-left sticky-col z-20">机型 / 容量 / 颜色 (PN)</th>` +
-        SHOPS.map(s => `<th class="p-2 text-center w-36">${esc(s.display)}</th>`).join("");
-      renderSkeleton();
-      const ts = new Date($("#ts").value);
-      await loadMatrix(ts);
-    } catch (e) {
-      $("#status").textContent = "失败：" + (e.message||e);
-      console.error(e);
-    }
-  });
+$("#btnRefresh").addEventListener("click", async ()=>{
+  if (!TOKEN.trim()) {
+    $("#status").textContent = "请先在上方输入 Bearer Token";
+    return;
+  }
+  try {
+    $("#status").textContent = "准备数据…";
+    await loadShops();
+    $("#status").textContent = "加载机型…";
+    await loadIphones();
+    const tr = $("#thead-row");
+    tr.innerHTML = `<th class="p-2 text-left sticky-col z-20">机型 / 容量 / 颜色 (PN)</th>` +
+      SHOPS.map(s => `<th class="p-2 text-center w-36">${esc(s.display)}</th>`).join("");
+    renderSkeleton();
+    const ts = new Date($("#ts").value);
+    await loadMatrix(ts);
+  } catch (e) {
+    $("#status").textContent = "失败：" + (e.message||e);
+    console.error(e);
+  }
+});
 }
 
 // 首次自动加载

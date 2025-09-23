@@ -144,7 +144,7 @@ from AppleStockChecker.utils.external_ingest.webscraper import fetch_webscraper_
 from AppleStockChecker.services.external_ingest_service import ingest_external_dataframe
 from AppleStockChecker.utils.external_ingest.registry import get_cleaner
 from AppleStockChecker.tasks.webscraper_tasks import task_process_webscraper_job
-
+from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 
 def _get_bool_param(request, name: str, default=False):
     return str(request.query_params.get(name) or request.data.get(name) or "").lower() in {"1","true","t","yes","y"} or default
@@ -768,7 +768,7 @@ class SecondHandShopViewSet(viewsets.ModelViewSet):
     list=extend_schema(
         tags=["Resale / Price"],
         summary="回收价格记录列表（支持过滤/搜索/排序）",
-        auth=[],
+        # auth=[],
         parameters=[
             OpenApiParameter("shop", OpenApiTypes.INT, description="按二手店ID", required=False),
             OpenApiParameter("shop_name", OpenApiTypes.STR, description="按二手店名（模糊）", required=False),
@@ -791,7 +791,7 @@ class SecondHandShopViewSet(viewsets.ModelViewSet):
             ),
         ],
     ),
-    retrieve=extend_schema(tags=["Resale / Price"], summary="回收价格记录详情", auth=[]),
+    retrieve=extend_schema(tags=["Resale / Price"], summary="回收价格记录详情"),
     create=extend_schema(tags=["Resale / Price"], summary="新增回收价格记录"),
     update=extend_schema(tags=["Resale / Price"], summary="更新回收价格记录（整体）"),
     partial_update=extend_schema(tags=["Resale / Price"], summary="更新回收价格记录（部分）"),
@@ -807,13 +807,14 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
     ordering = ["-recorded_at"]
 
     def get_permissions(self):
-        # 优先：若动作显式声明了 permission_classes（装饰器设置的），就用它
+        # 优先使用装饰器上的 permission_classes（如果某 action 单独声明了）
         if hasattr(getattr(self, self.action, None), 'permission_classes'):
             return [perm() for perm in getattr(self, self.action).permission_classes]
-        # 也可明确放行我们定义的 webhook 动作名（双保险）
-        if self.action in ["list","retrieve","ingest_webscraper","ingest_webscraper_with_path_token","ingest_webscraper_result"]:
+        # 仅放行 Webhook & 任务结果查询（我们用共享密钥校验 token）
+        if self.action in ["ingest_webscraper", "ingest_webscraper_with_path_token", "ingest_webscraper_result"]:
             return [AllowAny()]
-        return [IsAdminUser()]
+        # 其余动作（list/retrieve/import_csv/import_tradein/ingest-external/...）全部需要登录
+        return [IsAuthenticated()]
 
     def get_queryset(self):
         qs = super().get_queryset()
