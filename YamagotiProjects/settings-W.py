@@ -20,15 +20,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-3(&zari4^u-6iv$+z_2r2(oviwyj5g#cy*3c$t#x_=-w7cijv1'
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv("DJANGO_DEBUG", "False").lower() in {"1","true","t","yes","y"}
 
-ALLOWED_HOSTS = [
-    "127.0.0.1",
-    "localhost",
-    ".ngrok-free.app",]
+ALLOWED_HOSTS = [h for h in os.getenv("DJANGO_ALLOWED_HOSTS","").split(",") if h]
 
 
 
@@ -113,8 +110,7 @@ CORS_ALLOWED_ORIGINS = [
     # 部署后把前端域名加进来
 ]
 # 若你在本地调试 CSRF：
-CSRF_TRUSTED_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000",
-                        "http://127.0.0.1:8000/AppleStockChecker/dashboard/"]
+CSRF_TRUSTED_ORIGINS = [os.getenv("DJANGO_CSRF_TRUSTED_ORIGINS","")]
 
 TEMPLATES = [
     {
@@ -138,37 +134,31 @@ WSGI_APPLICATION = 'YamagotiProjects.wsgi.application'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+
+USE_SQLITE = os.getenv("USE_SQLITE", "0").lower() in {"1", "true", "t", "yes", "y"}
+SQLITE_PATH = os.getenv("SQLITE_PATH", str(BASE_DIR / "db.sqlite3"))
+
+if USE_SQLITE:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": SQLITE_PATH,   # 例如 /app/data/db.sqlite3
+        }
     }
-}
-#
-# USE_SQLITE = os.getenv("USE_SQLITE", "0").lower() in {"1", "true", "t", "yes", "y"}
-# SQLITE_PATH = os.getenv("SQLITE_PATH", str(BASE_DIR / "db.sqlite3"))
-#
-# if USE_SQLITE:
-#     DATABASES = {
-#         "default": {
-#             "ENGINE": "django.db.backends.sqlite3",
-#             "NAME": SQLITE_PATH,   # 例如 /app/data/db.sqlite3
-#         }
-#     }
-# else:
-#     DATABASES = {
-#         "default": {
-#             "ENGINE": "django.db.backends.postgresql",
-#             "NAME": os.getenv("POSTGRES_DB"),
-#             "USER": os.getenv("POSTGRES_USER"),
-#             "PASSWORD": os.getenv("POSTGRES_PASSWORD"),
-#             "HOST": os.getenv("POSTGRES_HOST", "127.0.0.1"),
-#             "PORT": int(os.getenv("POSTGRES_PORT", "5432")),
-#         }
-#     }
-#
-# # 小建议：开启原子请求（SQLite 写入更稳）
-# DATABASES["default"]["ATOMIC_REQUESTS"] = True
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": os.getenv("POSTGRES_DB"),
+            "USER": os.getenv("POSTGRES_USER"),
+            "PASSWORD": os.getenv("POSTGRES_PASSWORD"),
+            "HOST": os.getenv("POSTGRES_HOST", "127.0.0.1"),
+            "PORT": int(os.getenv("POSTGRES_PORT", "5432")),
+        }
+    }
+
+# 小建议：开启原子请求（SQLite 写入更稳）
+DATABASES["default"]["ATOMIC_REQUESTS"] = True
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
@@ -202,7 +192,10 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = f"{os.getenv('URL_PREFIX','')}/static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+MEDIA_URL = f"{os.getenv('URL_PREFIX','')}/media/"
+MEDIA_ROOT = BASE_DIR / "media"
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

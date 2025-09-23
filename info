@@ -61,3 +61,6 @@ http://localhost:8080/AppleStockChecker/auth/token/
 
 
 git clone https://github.com/zhujiansamuel/YamagotiProjects.git src
+scp ./db.sqlite3 root@47.111.136.177:/opt/apple/db/db.sqlite3
+
+
