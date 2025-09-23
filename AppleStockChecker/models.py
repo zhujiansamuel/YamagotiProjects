@@ -170,6 +170,13 @@ class PurchasingShopPriceRecord(models.Model):
     - 可空：A品卖取价格、B品卖取价格
     价格单位默认按日元计（整数）
     """
+    batch_id = models.UUIDField(
+        "批次ID",
+        null=True, blank=True, db_index=True, editable=False,
+        help_text="一次导入/任务的批次标识（uuid4）"
+    )
+
+
     shop = models.ForeignKey(
         "SecondHandShop",
         on_delete=models.PROTECT,        # 保留历史记录，防止误删门店
@@ -197,6 +204,12 @@ class PurchasingShopPriceRecord(models.Model):
             models.Index(fields=["shop", "iphone", "-recorded_at"], name="idx_pspr_shop_phone_time"),
             models.Index(fields=["iphone", "-recorded_at"], name="idx_pspr_phone_time"),
             models.Index(fields=["shop", "-recorded_at"], name="idx_pspr_shop_time"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["shop", "iphone", "recorded_at"],
+                name="uniq_shop_iphone_recorded_at",
+            )
         ]
 
     def __str__(self) -> str:

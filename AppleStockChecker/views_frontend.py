@@ -31,3 +31,6 @@ class ImportIphoneCSVView(TemplateView):
 
 class ExternalIngestView(TemplateView):
     template_name = "apple_stock/external_ingest.html"
+
+class PriceMatrixView(TemplateView):
+    template_name = "apple_stock/price_matrix.html"

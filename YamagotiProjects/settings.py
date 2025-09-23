@@ -12,7 +12,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 from datetime import timedelta
-
+import os
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -25,7 +25,12 @@ SECRET_KEY = 'django-insecure-3(&zari4^u-6iv$+z_2r2(oviwyj5g#cy*3c$t#x_=-w7cijv1
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ["*"]
+ALLOWED_HOSTS = [
+    "127.0.0.1",
+    "localhost",
+    ".ngrok-free.app",]
+
+
 
 # Application definition
 
@@ -178,7 +183,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 EXTERNAL_TRADEIN_SOURCES = [
     # {"name": "shop10", "url": "https://api.webscraper.io/api/v1/scraping-job/34172531/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
-    # {"name": "shop9", "url": "https://api.webscraper.io/api/v1/scraping-job/34172581/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
+    {"name": "shop9", "url": "https://api.webscraper.io/api/v1/scraping-job/34172581/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
     # {"name": "shop8", "url": "https://api.webscraper.io/api/v1/scraping-job/34171950/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
     # {"name": "shop7", "url": "https://api.webscraper.io/api/v1/scraping-job/34172579/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
     # {"name": "shop6-1", "url": "https://api.webscraper.io/api/v1/scraping-job/34172574/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
@@ -210,3 +215,50 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # 优先级：settings > 环境变量 > 项目内默认文件
 EXTERNAL_IPHONE17_INFO_PATH = BASE_DIR / "AppleStockChecker" / "data" / "iphone17_info.csv"
+
+
+# WebScraper Cloud API 访问令牌（在 Web Scraper Cloud 的 API 页面可见）
+WEB_SCRAPER_API_TOKEN = "vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"
+
+# 导出地址模板（如官方变更，可在这里改）
+# WEB_SCRAPER_EXPORT_URL_TEMPLATE = "https://api.webscraper.io/api/v1/scraping-job/{job_id}/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"
+WEB_SCRAPER_EXPORT_URL_TEMPLATE = "https://api.webscraper.io/api/v1/scraping-job/{job_id}/csv"
+
+# Webhook 共享密钥：在 WebScraper Cloud 的 webhook URL 上带 ?token=XXXX，或在 Header 里带 X-Webhook-Token
+WEB_SCRAPER_WEBHOOK_TOKEN = "0BkhVQJQPDe4IPfxfnw9bX8hYzxY29D48uGi8zq8TcjbsMIvXShEzaEJFFAj"
+
+# 可选：把 WebScraper 的 sitemap 名 或 job 上的 custom_id 映射为清洗器名（shop3/shop4…）
+WEB_SCRAPER_SOURCE_MAP = {
+    "shop10": "shop10",
+    "shop3": "shop3",
+    "shop4": "shop4",
+    "shop5-1": "shop5-1",
+    "shop5-2": "shop5-2",
+    "shop5-3": "shop5-3",
+    "shop5-4": "shop5-4",
+    "shop6-1": "shop6-1",
+    "shop6-2": "shop6-2",
+    "shop6-3": "shop6-3",
+    "shop6-4": "shop6-4",
+    "shop7": "shop7",
+    "shop8": "shop8",
+    "shop9": "shop9",
+}
+
+# 部属用
+# WEB_SCRAPER_WEBHOOK_TOKEN = os.getenv("WEB_SCRAPER_WEBHOOK_TOKEN", "")
+
+# 开发用
+WEB_SCRAPER_WEBHOOK_TOKEN = "XNgCZCQN7dvkSP7K17xmK8aq-6_bjvI_"
+
+
+# Celery/Redis
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://127.0.0.1:6379/0")
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
+CELERY_TASK_TIME_LIMIT = 600
+CELERY_TASK_SOFT_TIME_LIMIT = 540
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = "Asia/Tokyo"
+CELERY_ENABLE_UTC = False

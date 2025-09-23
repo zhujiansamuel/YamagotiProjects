@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+
+import uuid
 from django.shortcuts import render
 
 from rest_framework.permissions import AllowAny
@@ -97,11 +101,81 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 
 from .services.external_ingest_service import ingest_external_sources
 
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
+from rest_framework.decorators import action
+from rest_framework import permissions, status
+from rest_framework.response import Response
+
+from django.conf import settings
+import asyncio
+
+from AppleStockChecker.utils.external_ingest.webscraper import fetch_webscraper_export, to_dataframe_from_request
+from AppleStockChecker.services.external_ingest_service import ingest_external_dataframe
+from AppleStockChecker.utils.external_ingest.registry import get_cleaner
+
+from rest_framework.permissions import AllowAny
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework import status
+from django.conf import settings
+
+# from celery.result import AsyncResult
+# from AppleStockChecker.tasks.webscraper_tasks import task_process_webscraper_job
+from AppleStockChecker.utils.external_ingest.webscraper import fetch_webscraper_export_sync,to_dataframe_from_request
+from AppleStockChecker.services.external_ingest_service import ingest_external_dataframe
+from AppleStockChecker.utils.external_ingest.registry import get_cleaner
+import pandas as pd
+import io
+from rest_framework.permissions import AllowAny, IsAdminUser
 
 
 
+import io, pandas as pd
+from rest_framework.permissions import AllowAny
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework import status
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
+from django.conf import settings
+from celery.result import AsyncResult
 
-# Create your views here.
+from AppleStockChecker.utils.external_ingest.webscraper import fetch_webscraper_export_sync, to_dataframe_from_request
+from AppleStockChecker.services.external_ingest_service import ingest_external_dataframe
+from AppleStockChecker.utils.external_ingest.registry import get_cleaner
+from AppleStockChecker.tasks.webscraper_tasks import task_process_webscraper_job
+
+
+def _get_bool_param(request, name: str, default=False):
+    return str(request.query_params.get(name) or request.data.get(name) or "").lower() in {"1","true","t","yes","y"} or default
+
+
+
+def _check_token(request, path_token=None):
+    shared = settings.WEB_SCRAPER_WEBHOOK_TOKEN
+    incoming = request.headers.get("X-Webhook-Token") \
+        or request.query_params.get("token") \
+        or request.query_params.get("t") \
+        or (path_token or "") \
+        or ""
+    return (not shared) or (incoming == shared)
+
+
+def _resolve_source(request) -> str | None:
+    """优先 body/query 的 source；否则用 sitemap_name/custom_id → WEB_SCRAPER_SOURCE_MAP"""
+    source_name = request.query_params.get("source")
+    if not source_name and isinstance(request.data, dict):
+        source_name = request.data.get("source")
+    if source_name:
+        return source_name
+    # 映射
+    sitemap_name = (request.data.get("sitemap_name") or request.data.get("sitemap") or "") if isinstance(
+        request.data, dict) else ""
+    custom_id = (request.data.get("custom_id") or "") if isinstance(request.data, dict) else ""
+    mp = getattr(settings, "WEB_SCRAPER_SOURCE_MAP", {})
+    return mp.get(sitemap_name) or mp.get(custom_id)
+
+
 
 class HealthView(APIView):
     permission_classes = [AllowAny]
@@ -733,9 +807,13 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
     ordering = ["-recorded_at"]
 
     def get_permissions(self):
-        if self.action in ["list", "retrieve"]:
-            return [permissions.AllowAny()]
-        return [permissions.IsAdminUser()]
+        # 优先：若动作显式声明了 permission_classes（装饰器设置的），就用它
+        if hasattr(getattr(self, self.action, None), 'permission_classes'):
+            return [perm() for perm in getattr(self, self.action).permission_classes]
+        # 也可明确放行我们定义的 webhook 动作名（双保险）
+        if self.action in ["list","retrieve","ingest_webscraper","ingest_webscraper_with_path_token","ingest_webscraper_result"]:
+            return [AllowAny()]
+        return [IsAdminUser()]
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -867,108 +945,56 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
         permission_classes=[permissions.IsAdminUser],
     )
     def import_csv(self, request):
-        def _to_int_yen(val):
-            """
-            将 '¥105,000' / '105000' / '105,000.0' / '' / None → int 或 None
-            规则：
-              - 去掉货币符号与逗号、空格
-              - 有小数点则取整数部分
-              - 空字符串 / 无数字 → None
-            """
-            if val is None:
-                return None
-            s = str(val).strip()
-            if not s:
-                return None
-            # 去除常见符号
-            s = s.replace("¥", "").replace(",", "").replace("円", "").replace(" ", "")
-            # 仅保留 0-9 和小数点
-            s = re.sub(r"[^0-9.]", "", s)
-            if not s:
-                return None
-            if "." in s:
-                s = s.split(".", 1)[0] or "0"
-            try:
-                return int(s)
-            except ValueError:
-                return None
+        # —— 参数解析 —— #
+        def as_bool(v, default=False):
+            if v is None:
+                return default
+            return str(v).strip().lower() in {"1", "true", "t", "yes", "y"}
 
-        def _norm_key(d):
-            """将 DictReader 的列名统一为小写去空格"""
-            return {(k or "").strip().lower(): v for k, v in d.items()}
-        """
-        导入规则：
-          - 必需：pn/part_number、shop_name、price_new
-          - 若 shop 不存在且 create_shop=true -> 自动创建（按 name+address 判定唯一）
-          - recorded_at 为空则使用服务器当前时间
-          - dedupe: (shop, iphone, recorded_at) 相同则 update，否则 create
-          - 每行单独原子性；允许部分成功
-        """
+        create_shop = as_bool(request.data.get("create_shop"), True)
+        dedupe = as_bool(request.data.get("dedupe"), True)
+        upsert = as_bool(request.data.get("upsert"), False)
+        dry_run = as_bool(request.data.get("dry_run"), False)
+
+        # 批次 ID：Header 优先，其次 Query/Body；非法则自动生成
+        bid = request.headers.get("X-Batch-Id") or request.query_params.get("batch_id") or request.data.get("batch_id")
+        try:
+            batch_uuid = uuid.UUID(str(bid)) if bid else uuid.uuid4()
+        except Exception:
+            batch_uuid = uuid.uuid4()
+
+        # —— 读取 CSV —— #
         f = request.FILES.get("file")
         if not f:
             return Response({"detail": "缺少文件字段 file"}, status=status.HTTP_400_BAD_REQUEST)
 
-        def as_bool(v, default=False):
-            if v is None:
-                return default
-            s = str(v).strip().lower()
-            return s in {"1", "true", "t", "yes", "y"}
-
-        def _parse_recorded_at(val):
-            """
-            解析 recorded_at：
-              - 支持 ISO8601 字符串，如 '2025-09-06T10:00:00+09:00'
-              - 支持 'YYYY-MM-DD'（视为本地时区 00:00）
-              - 为空则返回 None（上层以 now() 填充）
-            返回：timezone-aware datetime
-            """
-            if not val:
-                return None
-            s = str(val).strip()
-            dt = parse_datetime(s)
-            if dt is None:
-                d = parse_date(s)
-                if d is not None:
-                    dt = datetime(d.year, d.month, d.day)
-            if dt is None:
-                return None
-            if timezone.is_naive(dt):
-                dt = timezone.make_aware(dt, timezone.get_current_timezone())
-            return dt
-
-        create_shop = as_bool(request.data.get("create_shop"), True)
-        dedupe = as_bool(request.data.get("dedupe"), True)
-        dry_run = as_bool(request.data.get("dry_run"), False)
-
-        # 读取 CSV（自动处理 UTF-8 BOM）
         try:
             text = io.TextIOWrapper(f.file, encoding="utf-8-sig", newline="")
             reader = csv.DictReader(text)
         except Exception as e:
             return Response({"detail": f"无法读取CSV: {e}"}, status=status.HTTP_400_BAD_REQUEST)
 
-        total = 0
-        inserted = 0
-        updated = 0
-        skipped = 0
+        # —— 计数器 —— #
+        total = inserted = updated = skipped = dedup_skipped = 0
         errors = []
         preview = []
 
-        for lineno, row in enumerate(reader, start=2):  # 从第2行起（跳过表头）
+        # —— 主循环 —— #
+        for lineno, row in enumerate(reader, start=2):
             total += 1
-            data = _norm_key(row)
+            data = self._norm_key(row)
 
-            # 列名映射
+            # 映射列名
             pn = data.get("pn") or data.get("part_number") or data.get("iphone_pn")
             shop_name = data.get("shop_name") or data.get("shop")
             shop_addr = data.get("shop_address") or data.get("address") or ""
             shop_site = data.get("shop_website") or data.get("website") or ""
 
-            price_new = _to_int_yen(data.get("price_new"))
-            price_a = _to_int_yen(data.get("price_grade_a") or data.get("a") or data.get("grade_a"))
-            price_b = _to_int_yen(data.get("price_grade_b") or data.get("b") or data.get("grade_b"))
+            price_new = self._to_int_yen(data.get("price_new"))
+            price_a = self._to_int_yen(data.get("price_grade_a") or data.get("a") or data.get("grade_a"))
+            price_b = self._to_int_yen(data.get("price_grade_b") or data.get("b") or data.get("grade_b"))
 
-            rec_at = _parse_recorded_at(data.get("recorded_at") or data.get("time") or data.get("date"))
+            rec_at = self._parse_recorded_at(data.get("recorded_at") or data.get("time") or data.get("date"))
             if rec_at is None:
                 rec_at = timezone.now()
 
@@ -980,14 +1006,12 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
                 line_errors.append("缺少 shop_name")
             if price_new is None or price_new <= 0:
                 line_errors.append("price_new 非法或缺失")
-
-            # 早发现错误
             if line_errors:
                 errors.append({"line": lineno, "errors": line_errors, "row": row})
                 skipped += 1
                 continue
 
-            # 匹配 iPhone
+            # 匹配 iPhone（只用 PN）
             iphone = Iphone.objects.filter(part_number=str(pn).strip()).first()
             if not iphone:
                 errors.append({"line": lineno, "errors": [f"未找到 iPhone PN: {pn}"], "row": row})
@@ -998,16 +1022,17 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
             shop = SecondHandShop.objects.filter(name=shop_name.strip(), address=shop_addr.strip()).first()
             if not shop:
                 if create_shop and not dry_run:
-                    shop = SecondHandShop.objects.create(name=shop_name.strip(), address=shop_addr.strip(), website=shop_site.strip())
+                    shop = SecondHandShop.objects.create(
+                        name=shop_name.strip(), address=shop_addr.strip(), website=shop_site.strip()
+                    )
                 elif create_shop and dry_run:
-                    # dry_run 时仅模拟
-                    shop = None  # 不创建实体
+                    shop = None  # 仅模拟
                 else:
                     errors.append({"line": lineno, "errors": [f"未找到店铺: {shop_name} / {shop_addr}"], "row": row})
                     skipped += 1
                     continue
 
-            # 预览（最多记录前 5 条）
+            # 预览（最多 5 条）
             if len(preview) < 5:
                 preview.append({
                     "pn": str(pn).strip(),
@@ -1017,51 +1042,49 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
                     "price_grade_a": price_a,
                     "price_grade_b": price_b,
                     "recorded_at": rec_at.isoformat(),
+                    "batch_id": str(batch_uuid),
                 })
 
             if dry_run:
-                # 仅校验不落库
+                # 仅校验，不落库
                 continue
 
-            # 单行原子操作
+            # —— 幂等/更新/新建 —— #
             with transaction.atomic():
-                # 去重键：同店 + 同 iPhone + 相同 recorded_at（精确到秒）
+                existed = None
                 if dedupe and shop is not None:
                     existed = PurchasingShopPriceRecord.objects.filter(
                         shop=shop, iphone=iphone, recorded_at=rec_at
                     ).first()
-                else:
-                    existed = None
 
                 if existed:
-                    # 更新
-                    changed = False
-                    if existed.price_new != price_new:
-                        existed.price_new = price_new; changed = True
-                    if price_a is not None and existed.price_grade_a != price_a:
-                        existed.price_grade_a = price_a; changed = True
-                    if price_b is not None and existed.price_grade_b != price_b:
-                        existed.price_grade_b = price_b; changed = True
-                    if changed:
-                        existed.save(update_fields=["price_new", "price_grade_a", "price_grade_b"])
-                        updated += 1
+                    if upsert:
+                        changed = False
+                        if existed.price_new != price_new:
+                            existed.price_new = price_new; changed = True
+                        if price_a is not None and existed.price_grade_a != price_a:
+                            existed.price_grade_a = price_a; changed = True
+                        if price_b is not None and existed.price_grade_b != price_b:
+                            existed.price_grade_b = price_b; changed = True
+                        if changed:
+                            existed.batch_id = batch_uuid
+                            existed.save(update_fields=["price_new", "price_grade_a", "price_grade_b", "batch_id"])
+                            updated += 1
+                        else:
+                            dedup_skipped += 1
                     else:
-                        skipped += 1
+                        dedup_skipped += 1
                 else:
-                    # 创建（注意覆盖 auto_now_add 的 recorded_at）
                     if shop is None:
-                        # dry_run + create_shop 情况不会到这里
                         errors.append({"line": lineno, "errors": ["内部错误：shop 为空"], "row": row})
                         skipped += 1
                         continue
                     rec = PurchasingShopPriceRecord.objects.create(
-                        shop=shop,
-                        iphone=iphone,
+                        shop=shop, iphone=iphone,
                         price_new=price_new,
-                        price_grade_a=price_a,
-                        price_grade_b=price_b,
+                        price_grade_a=price_a, price_grade_b=price_b,
+                        batch_id=batch_uuid,
                     )
-                    # 覆盖 recorded_at
                     PurchasingShopPriceRecord.objects.filter(pk=rec.pk).update(recorded_at=rec_at)
                     inserted += 1
 
@@ -1069,13 +1092,21 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
             "rows_total": total,
             "inserted": inserted,
             "updated": updated,
-            "skipped": skipped,
+            "dedup_skipped": dedup_skipped,  # 幂等跳过的行数
+            "skipped": skipped,              # 其它原因（校验失败/店铺缺失等）
             "errors_count": len(errors),
-            "errors": errors[:50],   # 防止回包过大，最多返回前 50 条错误
-            "preview": preview,      # 前 5 条预览
-            "options": {"create_shop": create_shop, "dedupe": dedupe, "dry_run": dry_run},
+            "errors": errors[:50],           # 防止回包过大
+            "preview": preview,              # 前 5 条预览
+            "options": {
+                "create_shop": create_shop,
+                "dedupe": dedupe,
+                "upsert": upsert,
+                "dry_run": dry_run,
+                "batch_id": str(batch_uuid),
+            },
         }
         return Response(resp, status=status.HTTP_200_OK)
+
 
     @extend_schema(
         tags=["Resale / Price"],
@@ -1106,6 +1137,15 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
         def as_bool(v, default=False):
             if v is None: return default
             return str(v).strip().lower() in {"1", "true", "t", "yes", "y"}
+
+        updated = 0
+        bid = request.query_params.get("batch_id") or request.headers.get("X-Batch-Id")
+        try:
+            batch_uuid = uuid.UUID(str(bid)) if bid else uuid.uuid4()
+        except Exception:
+            batch_uuid = uuid.uuid4()
+        dedupe = as_bool(request.query_params.get("dedupe"), True)
+        upsert = as_bool(request.query_params.get("upsert"), False)
 
         create_shop = as_bool(request.query_params.get("create_shop"), True)
         dry_run = as_bool(request.query_params.get("dry_run"), False)
@@ -1204,12 +1244,44 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
                 continue
 
             for iphone in iphones:
+                if dry_run:
+                    inserted += 1
+                    continue
                 with transaction.atomic():
+                    existed = None
+                    if dedupe:
+                        existed = PurchasingShopPriceRecord.objects.filter(
+                            shop=shop, iphone=iphone, recorded_at=recorded_at
+                        ).first()
+                    if existed:
+                        if upsert:
+                            changed = False
+                            if (price_new is not None) and existed.price_new != int(price_new):
+                                existed.price_new = int(price_new);
+                                changed = True
+                            if (price_a is not None) and (existed.price_grade_a or None) != (
+                            None if pd.isna(price_a) else int(price_a)):
+                                existed.price_grade_a = None if pd.isna(price_a) else int(price_a);
+                                changed = True
+                            if (price_b is not None) and (existed.price_grade_b or None) != (
+                            None if pd.isna(price_b) else int(price_b)):
+                                existed.price_grade_b = None if pd.isna(price_b) else int(price_b);
+                                changed = True
+                            if changed:
+                                existed.batch_id = batch_uuid
+                                existed.save(update_fields=["price_new", "price_grade_a", "price_grade_b", "batch_id"])
+                                updated += 1
+                            else:
+                                skipped_no_match += 1  # 或另设 dedup_skipped
+                        else:
+                            skipped_no_match += 1
+                        continue
+
                     rec_obj = PurchasingShopPriceRecord.objects.create(
                         shop=shop, iphone=iphone,
                         price_new=(price_new or 0),
-                        price_grade_a=price_a,
-                        price_grade_b=price_b,
+                        price_grade_a=price_a, price_grade_b=price_b,
+                        batch_id=batch_uuid,
                     )
                     PurchasingShopPriceRecord.objects.filter(pk=rec_obj.pk).update(recorded_at=recorded_at)
                     inserted += 1
@@ -1228,8 +1300,6 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
             },
         }, status=status.HTTP_200_OK)
 
-
-
     @extend_schema(
         tags=["Resale / Price"],
         summary="从外部平台 GET 一组 CSV → 清洗 → 以 PN 定位 iPhone → 新增回收价格记录",
@@ -1246,6 +1316,7 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
     )
     @action(detail=False, methods=["post"], url_path="ingest-external", permission_classes=[permissions.IsAdminUser])
     def ingest_external(self, request):
+
         dry_run = str(request.query_params.get("dry_run") or "").lower() in {"1","true","t","yes","y"}
 
         payload = request.data or {}
@@ -1274,3 +1345,186 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
             "dry_run": dry_run,
             **result
         })
+
+    #
+    # @extend_schema(
+    #     tags=["Resale / Price"],
+    #     summary="WebScraper Webhook/直传（非 Celery，同步清洗与落库）",
+    #     description=(
+    #             "两种用法：\n"
+    #             "1) Webhook 通知：POST 里带 scrapingjob_id/job_id；我们同步用 API 拉取导出 → 清洗器 → 落库；\n"
+    #             "   - URL 可用 ?t=<token>（短参），或 Header: X-Webhook-Token: <token>，或 Path Token（见下方变体）\n"
+    #             "   - source：优先 body/query；否则 sitemap_name/custom_id 走 settings.WEB_SCRAPER_SOURCE_MAP 映射\n"
+    #             "2) 直传数据：CSV/JSON 正文 + source=shopX，同步清洗并落库（用于调试或其它来源直接推送）。\n"
+    #             "通用：?dry_run=1 仅预览不落库。"
+    #     ),
+    #     parameters=[
+    #         OpenApiParameter("dry_run", OpenApiTypes.BOOL, required=False),
+    #         OpenApiParameter("t", OpenApiTypes.STR, required=False, description="短 token（可替代 token）"),
+    #         OpenApiParameter("source", OpenApiTypes.STR, required=False),
+    #     ],
+    #     request=OpenApiTypes.BYTE,
+    #     responses={200: OpenApiTypes.OBJECT}
+    # )
+    # @action(
+    #     detail=False, methods=["post"],
+    #     url_path="ingest-webscraper",
+    #     permission_classes=[AllowAny],  # 外部回调需匿名可达，用 token 校验
+    # )
+    # def ingest_webscraper(self, request):
+    #     dry_run = str(request.query_params.get("dry_run") or "").lower() in {"1", "true", "t", "yes", "y"}
+    #     if not _check_token(request, path_token=None):
+    #         return Response({"detail": "Webhook token 不匹配"}, status=status.HTTP_403_FORBIDDEN)
+    #
+    #     ct = (request.content_type or "").lower()
+    #
+    #     # A) 直传 CSV/JSON → 同步处理
+    #     if ("csv" in ct) or ("json" in ct) or ct.startswith("text/plain"):
+    #         source_name = _resolve_source(request)
+    #         if not source_name:
+    #             return Response({"detail": "直传数据必须提供 source（或通过 sitemap/custom_id 映射）"},
+    #                             status=status.HTTP_400_BAD_REQUEST)
+    #         # 校验清洗器存在
+    #         try:
+    #             get_cleaner(source_name)
+    #         except Exception:
+    #             return Response({"detail": f"未知清洗器: {source_name}"}, status=status.HTTP_400_BAD_REQUEST)
+    #
+    #         try:
+    #             df = to_dataframe_from_request(request.content_type, request.body or b"")
+    #         except Exception as e:
+    #             return Response({"detail": f"载入数据失败: {e}"}, status=status.HTTP_400_BAD_REQUEST)
+    #
+    #         result = ingest_external_dataframe(source_name, df, dry_run=dry_run, pn_only=True, create_shop=True)
+    #         return Response({"mode": "direct", "dry_run": dry_run, "source": source_name, **result},
+    #                         status=status.HTTP_200_OK)
+    #
+    #     # B) Webhook 通知 → job_id + source → 同步拉取导出并处理
+    #
+    #     job_id = request.data.get("scrapingjob_id") or request.data.get("job_id")
+    #     source_name = _resolve_source(request)
+    #     if not job_id or not source_name:
+    #         return Response({"detail": "Webhook 需要 job_id(scrapingjob_id) 与 source（或提供映射）"},
+    #                         status=status.HTTP_400_BAD_REQUEST)
+    #
+    #     try:
+    #         get_cleaner(source_name)
+    #     except Exception:
+    #         return Response({"detail": f"未知清洗器: {source_name}"}, status=status.HTTP_400_BAD_REQUEST)
+    #
+    #     try:
+    #         content = fetch_webscraper_export_sync(str(job_id), format="csv")
+    #         df = pd.read_csv(io.BytesIO(content), encoding="utf-8-sig")
+    #     except Exception as e:
+    #         return Response({"detail": f"拉取导出失败: {e}"}, status=status.HTTP_502_BAD_GATEWAY)
+    #
+    #     result = ingest_external_dataframe(source_name, df, dry_run=dry_run, pn_only=True, create_shop=True)
+    #     return Response({"mode": "webhook", "dry_run": dry_run, "job_id": job_id, "source": source_name, **result},
+    #                     status=status.HTTP_200_OK)
+
+
+    # # —— Path Token 版（更短的 URL）：/ingest-webscraper/<token>/ —— #
+    # # 最短路径：/.../ingest-webscraper/<token>/
+    # @action(detail=False, methods=["post"],
+    #         url_path=r"ingest-webscraper/(?P<ptoken>[-A-Za-z0-9_]+)",
+    #         permission_classes=[AllowAny])
+    # def ingest_webscraper_with_path_token(self, request, ptoken=""):
+    #     if not _check_token(request, path_token=ptoken):
+    #         return Response({"detail": "Webhook token 不匹配"}, status=403)
+    #     return self.ingest_webscraper(request)  # 复用主体逻辑
+    #
+    #
+    # —— Webhook/直传入口（异步：Webhook 入队；直传：仍同步） —— #
+    @extend_schema(
+        tags=["Resale / Price"],
+        summary="(Celery) WebScraper Webhook/直传：Webhook 入队，直传同步",
+        parameters=[
+            OpenApiParameter("dry_run", OpenApiTypes.BOOL, required=False),
+            OpenApiParameter("t", OpenApiTypes.STR, required=False, description="短 token（可替代 token）"),
+            OpenApiParameter("source", OpenApiTypes.STR, required=False),
+        ],
+        request=OpenApiTypes.BYTE,
+        responses={202: OpenApiTypes.OBJECT, 200: OpenApiTypes.OBJECT}
+    )
+    @action(detail=False, methods=["post"], url_path="ingest-webscraper", permission_classes=[AllowAny])
+    def ingest_webscraper(self, request):
+        dry_run = str(request.query_params.get("dry_run") or "").lower() in {"1","true","t","yes","y"}
+        dedupe = _get_bool_param(request, "dedupe", True)
+        upsert = _get_bool_param(request, "upsert", False)
+        # batch_id: Header 优先，其次 query，再次 body；合法 uuid4，否则自动生成
+        bid = request.headers.get("X-Batch-Id") or request.query_params.get("batch_id") or request.data.get("batch_id")
+        try:
+            batch_uuid = uuid.UUID(str(bid)) if bid else uuid.uuid4()
+        except Exception:
+            batch_uuid = uuid.uuid4()
+
+        if not _check_token(request, path_token=None):
+            return Response({"detail": "Webhook token 不匹配"}, status=status.HTTP_403_FORBIDDEN)
+
+        # 只在 finished 时处理（可选优化）
+        status_str = (request.data.get("status") or request.query_params.get("status") or "").lower()
+        if status_str and status_str != "finished":
+            return Response({"accepted": True, "reason": f"skip status={status_str}"}, status=status.HTTP_202_ACCEPTED)
+
+        ct = (request.content_type or "").lower()
+
+        # A) 直传 CSV/JSON：同步处理（便于调试或第三方直推）
+        if ("csv" in ct) or ("json" in ct) or ct.startswith("text/plain"):
+            source_name = _resolve_source(request)
+            if not source_name:
+                return Response({"detail": "直传数据必须提供 source（或映射）"}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                get_cleaner(source_name)
+            except Exception:
+                return Response({"detail": f"未知清洗器: {source_name}"}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                df = to_dataframe_from_request(request.content_type, request.body or b"")
+            except Exception as e:
+                return Response({"detail": f"载入数据失败: {e}"}, status=status.HTTP_400_BAD_REQUEST)
+
+            result = ingest_external_dataframe(source_name, df, dry_run=dry_run, pn_only=True, create_shop=True,
+                                               dedupe=dedupe, upsert=upsert, batch_id=str(batch_uuid))
+            return Response(
+                {"mode": "direct", "dry_run": dry_run, "source": source_name, "batch_id": str(batch_uuid), **result},
+                status=200)
+
+        # B) Webhook：job_id + source → 入队 Celery，立即 202
+        job_id = request.data.get("scrapingjob_id") or request.data.get("job_id") \
+                 or request.query_params.get("scrapingjob_id") or request.query_params.get("job_id")
+        source_name = _resolve_source(request) or request.query_params.get("source")
+        if not job_id or not source_name:
+            return Response({"detail":"Webhook 需要 job_id(scrapingjob_id) 与 source（或提供映射）"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            get_cleaner(source_name)
+        except Exception:
+            return Response({"detail": f"未知清洗器: {source_name}"}, status=status.HTTP_400_BAD_REQUEST)
+
+        task = task_process_webscraper_job.delay(str(job_id), source_name,
+                                                 dry_run=dry_run, create_shop=True,
+                                                 dedupe=dedupe, upsert=upsert, batch_id=str(batch_uuid))
+        return Response({"mode": "webhook", "accepted": True, "task_id": task.id, "job_id": job_id,
+                         "source": source_name, "dry_run": dry_run, "dedupe": dedupe, "upsert": upsert,
+                         "batch_id": str(batch_uuid)}, status=202)
+
+    # —— 极短 URL：/ingest-webscraper/<token>/ —— #
+    @extend_schema(tags=["Resale / Price"], summary="Webhook（Path Token 版）")
+    @action(detail=False, methods=["post"], url_path=r"ingest-webscraper/(?P<ptoken>[-A-Za-z0-9_]+)", permission_classes=[AllowAny])
+    def ingest_webscraper_with_path_token(self, request, ptoken: str = ""):
+        if not _check_token(request, path_token=ptoken):
+            return Response({"detail": "Webhook token 不匹配"}, status=status.HTTP_403_FORBIDDEN)
+        return self.ingest_webscraper(request)
+
+    # —— 任务查询 —— #
+    @extend_schema(tags=["Resale / Price"], summary="查询 Celery 任务结果", parameters=[OpenApiParameter("task_id", OpenApiTypes.STR, required=True)])
+    @action(detail=False, methods=["get"], url_path="ingest-webscraper/result", permission_classes=[AllowAny])
+    def ingest_webscraper_result(self, request):
+        task_id = request.query_params.get("task_id")
+        if not task_id:
+            return Response({"detail":"缺少 task_id"}, status=status.HTTP_400_BAD_REQUEST)
+        res = AsyncResult(task_id)
+        data = {"task_id": task_id, "state": res.state}
+        if res.state == "SUCCESS":
+            data["result"] = res.result
+        elif res.state == "FAILURE":
+            data["error"] = str(res.result)
+        return Response(data, status=status.HTTP_200_OK)

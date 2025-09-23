@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>二手店价格矩阵（按时间戳截断）</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    *{scrollbar-width:thin}::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:8px}
+    .sticky-col { position: sticky; left: 0; background: #fff; }
+    .cell-loading::after{ content: "…"; animation: dots 1s steps(5,end) infinite; }
+    @keyframes dots { 0%,20%{content:""} 40%{content:"."} 60%{content:".."} 80%,100%{content:"..."} }
+  </style>
+</head>
+<body class="bg-zinc-50 text-zinc-900 min-h-screen">
+  <div class="max-w-[120rem] mx-auto p-4 space-y-4">
+    <header class="flex items-center gap-3">
+      <h1 class="text-xl font-semibold">二手店价格矩阵（15 分钟时间戳截断）</h1>
+      <div class="ml-auto text-sm text-zinc-600">
+        每格显示 <b>所选时间戳之前</b>、<b>距离最近</b> 的价格。
+      </div>
+    </header>
+
+    <!-- 控件：API、Token、时间戳、刷新 -->
+    <section class="rounded-2xl border border-zinc-200 bg-white p-3 space-y-3">
+      <div class="grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
+        <div class="md:col-span-2">
+          <label class="block text-sm mb-1">API Base（/AppleStockChecker 或 /api）</label>
+          <input id="apiBase" type="text" placeholder="/AppleStockChecker" class="w-full px-3 py-2 rounded-lg border border-zinc-200 outline-none"/>
+        </div>
+        <div class="md:col-span-2">
+          <label class="block text-sm mb-1">Bearer Token（/api/auth/token/ 的 access）</label>
+          <input id="token" type="password" placeholder="eyJ..." class="w-full px-3 py-2 rounded-lg border border-zinc-200 outline-none"/>
+          <div id="tokenHint" class="text-[11px] mt-1 text-zinc-500"></div>
+        </div>
+        <div class="md:col-span-1">
+          <label class="block text-sm mb-1">时间戳（15 分步进）</label>
+          <input id="ts" type="datetime-local" step="900" class="w-full px-3 py-2 rounded-lg border border-zinc-200 outline-none"/>
+        </div>
+        <div class="md:col-span-1 flex items-end gap-2">
+          <button id="btnPrev" class="px-3 py-2 rounded-lg border border-zinc-200">← -15 分</button>
+          <button id="btnNext" class="px-3 py-2 rounded-lg border border-zinc-200">+15 分 →</button>
+          <button id="btnRefresh" class="px-3 py-2 rounded-lg bg-black text-white">加载</button>
+        </div>
+      </div>
+      <div class="flex items-center gap-4 text-sm">
+        <div>列顺序：買取一丁目（shop3）→ 森森買取（shop5）→ 買取ルデヤ（shop6）→ 買取ホムラ（shop7）→ 買取wiki（shop8）→ アキモバ（shop9）→ ドラゴンモバイル（shop10）</div>
+        <div id="status" class="ml-auto text-zinc-500"></div>
+      </div>
+    </section>
+
+    <!-- 表格 -->
+    <section class="rounded-2xl border border-zinc-200 bg-white p-0 overflow-auto">
+      <table id="matrix" class="min-w-full text-xs">
+        <thead class="bg-zinc-100 sticky top-0 z-10">
+        <tr id="thead-row">
+          <th class="p-2 text-left sticky-col z-20">机型 / 容量 / 颜色 (PN)</th>
+        </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </section>
+  </div>
+
+<script>
+const $ = s => document.querySelector(s);
+const fmt = (n) => (n==null || Number.isNaN(n)) ? "-" : Number(n).toLocaleString();
+const esc = (s) => (s??"").toString().replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+
+// 固定列（显示名 & 实际 shop 名字）
+const SHOPS = [
+  { code: "shop3",  display: "買取一丁目",     name: "買取一丁目" },
+  { code: "shop5",  display: "森森買取",       name: "森森買取" },
+  { code: "shop6",  display: "買取ルデヤ",     name: "買取ルデヤ" },
+  { code: "shop7",  display: "買取ホムラ",     name: "買取ホムラ" },
+  { code: "shop8",  display: "買取wiki",       name: "買取wiki" },
+  { code: "shop9",  display: "アキモバ",       name: "アキモバ" },
+  { code: "shop10", display: "ドラゴンモバイル", name: "ドラゴンモバイル" }
+];
+
+let API_BASE = "/AppleStockChecker";  // 默认相对前缀，避免混合内容
+let TOKEN = "";
+let ROWS = [];                // [{pn,label,model_name,capacity_gb,color}]
+let SHOP_ID_MAP = {};         // name -> id
+
+// —— 混合内容防护：规范化 API Base —— //
+function normalizeApiBase(v) {
+  let s = (v || "").trim();
+  if (!s) return "/AppleStockChecker";          // 推荐相对前缀
+  if (s.startsWith("http://") && location.protocol === "https:") {
+    s = "https://" + s.slice(7);                // https 页面上自动升级 http
+  }
+  if (s.startsWith("//")) {
+    s = location.protocol + s;                  // 协议相对 → 具体协议
+  }
+  s = s.replace(/\/+$/, "");                    // 去尾部斜杠
+  return s;
+}
+
+// 请求头（注入 Bearer）
+function buildHeaders(extra={}) {
+  const h = {...extra};
+  const tok = (TOKEN||"").trim();
+  if (tok) h["Authorization"] = `Bearer ${tok}`;
+  return h;
+}
+
+// 15 分钟对齐
+function snap15(date) { const d=new Date(date); d.setSeconds(0,0); const m=d.getMinutes(); d.setMinutes(m-(m%15)); return d; }
+function toLocalInputValue(d) { const z=new Date(d.getTime()-d.getTimezoneOffset()*60000); return z.toISOString().slice(0,16); }
+
+// 载入店铺
+async function loadShops() {
+  SHOP_ID_MAP = {};
+  let url = `${API_BASE}/secondhand-shops/?ordering=name`;
+  while (url) {
+    const r = await fetch(url, { headers: buildHeaders() });
+    if (r.status === 401 || r.status === 403) throw new Error("未授权（Token 无效或未设置）");
+    if (!r.ok) throw new Error("加载门店失败");
+    const j = await r.json();
+    const rows = j.results || j;
+    rows.forEach(s => { SHOP_ID_MAP[s.name] = s.id; });
+    url = j.next || null;
+  }
+  SHOPS.forEach(s => { if (!SHOP_ID_MAP[s.name]) console.warn("未找到店铺：", s.name); });
+}
+
+// 载入 iPhone 17 与 iPhone Air 全部变体
+async function loadIphones() {
+  ROWS = [];
+  async function fetchAll(q) {
+    let url = `${API_BASE}/iphones/?search=${encodeURIComponent(q)}&ordering=model_name`;
+    const all = [];
+    while (url) {
+      const r = await fetch(url, { headers: buildHeaders() });
+      if (r.status === 401 || r.status === 403) throw new Error("未授权（Token 无效或未设置）");
+      if (!r.ok) throw new Error("加载 iPhone 列表失败");
+      const j = await r.json();
+      const rows = j.results || j;
+      all.push(...rows);
+      url = j.next || null;
+    }
+    return all;
+  }
+  const list17 = await fetchAll("iPhone 17");
+  const listAir = await fetchAll("iPhone Air");
+  const all = [...list17, ...listAir];
+
+  const filtered = all.filter(x => {
+    const m = (x.model_name||"").trim();
+    return m.startsWith("iPhone 17") || m === "iPhone Air";
+  });
+
+  ROWS = filtered.map(x => {
+    const cap = (x.capacity_gb % 1024 === 0) ? `${x.capacity_gb/1024}TB` : `${x.capacity_gb}GB`;
+    return {
+      pn: x.part_number,
+      label: `${x.model_name} ${cap} ${x.color} (${x.part_number})`,
+      model_name: x.model_name,
+      capacity_gb: x.capacity_gb,
+      color: x.color,
+    };
+  });
+
+  const orderOfModel = (m) => m === "iPhone Air" ? 1 : 0;
+  ROWS.sort((a,b) => {
+    if (orderOfModel(a.model_name) !== orderOfModel(b.model_name)) return orderOfModel(a.model_name)-orderOfModel(b.model_name);
+    if (a.model_name !== b.model_name) return a.model_name.localeCompare(b.model_name);
+    if (a.capacity_gb !== b.capacity_gb) return a.capacity_gb - b.capacity_gb;
+    return a.color.localeCompare(b.color);
+  });
+}
+
+// 渲染表头与骨架
+function renderSkeleton() {
+  const tr = $("#thead-row");
+  tr.innerHTML = `<th class="p-2 text-left sticky-col z-20">机型 / 容量 / 颜色 (PN)</th>` +
+    SHOPS.map(s => `<th class="p-2 text-center w-36">${esc(s.display)}</th>`).join("");
+  const tbody = $("#tbody");
+  tbody.innerHTML = "";
+  ROWS.forEach((r, idx) => {
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td class="p-2 sticky-col z-10 bg-white border-b">${esc(r.label)}</td>
+      ${SHOPS.map((s, j) => `<td class="p-2 text-center align-middle border-b" data-cell="${idx}-${j}" title="加载中…"><span class="cell-loading"></span></td>`).join("")}
+    `;
+    tbody.appendChild(row);
+  });
+}
+
+// 取单格：某 PN、某 shop、某时间戳之前最近记录
+async function fetchCell(pn, shopId, tsISO) {
+  if (!shopId) return null;
+  const url = `${API_BASE}/purchasing-price-records/?iphone_part_number=${encodeURIComponent(pn)}&shop=${shopId}&recorded_before=${encodeURIComponent(tsISO)}&ordering=-recorded_at`;
+  const r = await fetch(url, { headers: buildHeaders() });
+  if (r.status === 401 || r.status === 403) throw new Error("未授权");
+  if (!r.ok) return null;
+  const j = await r.json();
+  const rows = j.results || j;
+  return rows && rows.length ? rows[0] : null;
+}
+
+// 批量加载矩阵
+async function loadMatrix(ts) {
+  const tsISO = new Date(ts.getTime() - ts.getTimezoneOffset()*60000).toISOString();
+  const tbody = $("#tbody");
+  const tasks = [];
+  for (let r = 0; r < ROWS.length; r++) {
+    for (let c = 0; c < SHOPS.length; c++) tasks.push({r, c});
+  }
+  const concurrency = 10;
+  let done = 0;
+  const status = $("#status");
+  function tick(){ status.textContent = `载入 ${done}/${tasks.length}`; }
+
+  const queue = tasks.slice();
+  const runners = Array.from({length: Math.min(concurrency, queue.length)}, async () => {
+    while (queue.length) {
+      const {r,c} = queue.shift();
+      const cell = tbody.querySelector(`[data-cell="${r}-${c}"]`);
+      const s = SHOPS[c];
+      const shopId = SHOP_ID_MAP[s.name] || null;
+      const pn = ROWS[r].pn;
+      try {
+        const rec = await fetchCell(pn, shopId, tsISO);
+        if (rec) {
+          const price = rec.price_new;
+          const recordedAt = rec.recorded_at || "";
+          cell.innerHTML = `<span title="${esc(recordedAt)}">¥${fmt(price)}</span>`;
+        } else {
+          cell.innerHTML = `<span class="text-zinc-400">-</span>`;
+        }
+      } catch (e) {
+        cell.innerHTML = `<span class="text-red-600" title="${esc(e.message||e)}">401</span>`;
+      }
+      done++; tick();
+    }
+  });
+
+  const t0 = performance.now(); tick();
+  await Promise.all(runners);
+  status.textContent = `完成 ${done}/${tasks.length}，耗时 ${Math.round(performance.now()-t0)} ms`;
+}
+
+// 事件绑定 / 初始化
+function initControls() {
+  // 读取本地保存（默认用相对前缀，避免混合内容）
+  const savedBase = localStorage.getItem("price_matrix:api") || "/AppleStockChecker";
+  API_BASE = normalizeApiBase(savedBase);
+  $("#apiBase").value = API_BASE;
+
+  const savedToken = localStorage.getItem("price_matrix:token") || "";
+  TOKEN = savedToken;
+  $("#token").value = savedToken;
+  $("#tokenHint").textContent = TOKEN ? "已设置 Token（请求将带 Authorization 头）" : "未设置 Token（若接口要求鉴权会 401）";
+
+  const now = snap15(new Date());
+  $("#ts").value = toLocalInputValue(now);
+
+  $("#apiBase").addEventListener("change", (e)=> {
+    API_BASE = normalizeApiBase(e.target.value);
+    $("#apiBase").value = API_BASE;
+    localStorage.setItem("price_matrix:api", API_BASE);
+  });
+  $("#token").addEventListener("change", (e)=> {
+    TOKEN = e.target.value.trim();
+    localStorage.setItem("price_matrix:token", TOKEN);
+    $("#tokenHint").textContent = TOKEN ? "已设置 Token（请求将带 Authorization 头）" : "未设置 Token（若接口要求鉴权会 401）";
+  });
+
+  $("#btnPrev").addEventListener("click", ()=>{
+    const el = $("#ts");
+    const d = new Date(el.value);
+    const nd = new Date(d.getTime() - 15*60*1000);
+    el.value = toLocalInputValue(nd);
+  });
+  $("#btnNext").addEventListener("click", ()=>{
+    const el = $("#ts");
+    const d = new Date(el.value);
+    const nd = new Date(d.getTime() + 15*60*1000);
+    el.value = toLocalInputValue(nd);
+  });
+
+  $("#btnRefresh").addEventListener("click", async ()=>{
+    try {
+      $("#status").textContent = "准备数据…";
+      await loadShops();
+      $("#status").textContent = "加载机型…";
+      await loadIphones();
+      // 渲染表头
+      const tr = $("#thead-row");
+      tr.innerHTML = `<th class="p-2 text-left sticky-col z-20">机型 / 容量 / 颜色 (PN)</th>` +
+        SHOPS.map(s => `<th class="p-2 text-center w-36">${esc(s.display)}</th>`).join("");
+      renderSkeleton();
+      const ts = new Date($("#ts").value);
+      await loadMatrix(ts);
+    } catch (e) {
+      $("#status").textContent = "失败：" + (e.message||e);
+      console.error(e);
+    }
+  });
+}
+
+// 首次自动加载
+(async function main(){
+  initControls();
+  $("#btnRefresh").click();
+})();
+</script>
+</body>
+</html>

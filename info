@@ -40,3 +40,17 @@ https://www.1-chome.com/api/index/getPopularCategories
 https://www.1-chome.com/api/keitai/getAllCateTreeList?cateCode=R0000001
 
 AppleStockChecker
+
+
+
+http://127.0.0.1:8080/AppleStockChecker/auth/token/
+http://127.0.0.1:8080/AppleStockChecker/import-iphone-csv/
+http://127.0.0.1:8080/AppleStockChecker/delivery-trend/
+http://127.0.0.1:8080/AppleStockChecker/dashboard/
+http://127.0.0.1:8080/AppleStockChecker/store-latest/
+http://127.0.0.1:8080/AppleStockChecker/resale-trend-pn-merged/
+http://127.0.0.1:8080/AppleStockChecker/external-ingest/
+
+docker run -d --name redis  -p 6379:6379  -e REDIS_ARGS="--appendonly yes --save 900 1 --save 300 10"  redis:7-alpine
+celery -A YamagotiProjects worker -l info
+celery -A YamagotiProjects worker -l info -P solo --concurrency=1
