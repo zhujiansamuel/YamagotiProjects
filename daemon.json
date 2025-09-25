@@ -1,0 +1,11 @@
+sudo mkdir -p /etc/docker
+cat | sudo tee /etc/docker/daemon.json <<'JSON'
+{
+  "registry-mirrors": [
+    "https://<你的阿里云加速器ID>.mirror.aliyuncs.com",
+    "https://mirror.ccs.tencentyun.com",
+    "https://docker.mirrors.sjtug.sjtu.edu.cn"
+  ],
+  "max-concurrent-downloads": 10
+}
+JSON

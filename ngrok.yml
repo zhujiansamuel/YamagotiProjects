@@ -1,0 +1,9 @@
+version: "3"
+authtoken: 3329Bw43Zb7oCp7Ae0xgJqdtibS_5fwYDYENw4N1Hm8RE1mn1
+tunnels:
+  apple:
+    proto: http
+    addr: 127.0.0.1:80
+    domain: yamaguti.ngrok.io
+    schemes: [https]
+    inspect: false
