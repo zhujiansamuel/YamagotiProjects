@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 from pathlib import Path
 from datetime import timedelta
 import os
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -23,15 +24,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv("DJANGO_DEBUG", "False").lower() in {"1","true","t","yes","y"}
+DEBUG = os.getenv("DJANGO_DEBUG", "False").lower() in {"1", "true", "t", "yes", "y"}
 
-ALLOWED_HOSTS = [h for h in os.getenv("DJANGO_ALLOWED_HOSTS","").split(",") if h]
-
-
+ALLOWED_HOSTS = [h for h in os.getenv("DJANGO_ALLOWED_HOSTS", "").split(",") if h]
 
 # Application definition
 
 INSTALLED_APPS = [
+    'simplepro',
+    'simpleui',
+    'import_export',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -54,6 +56,8 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+
+    'simplepro.middlewares.SimpleMiddleware'
 ]
 
 ROOT_URLCONF = 'YamagotiProjects.urls'
@@ -99,7 +103,7 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "Django REST Framework + JWT",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
-    "SECURITY": [{"BearerAuth": []}],   # 文档右上角 Authorize 会显示 BearerAuth
+    "SECURITY": [{"BearerAuth": []}],  # 文档右上角 Authorize 会显示 BearerAuth
     "COMPONENT_SPLIT_REQUEST": True,
 }
 
@@ -110,7 +114,7 @@ CORS_ALLOWED_ORIGINS = [
     # 部署后把前端域名加进来
 ]
 # 若你在本地调试 CSRF：
-CSRF_TRUSTED_ORIGINS = [os.getenv("DJANGO_CSRF_TRUSTED_ORIGINS","")]
+CSRF_TRUSTED_ORIGINS = [os.getenv("DJANGO_CSRF_TRUSTED_ORIGINS", "")]
 
 TEMPLATES = [
     {
@@ -134,7 +138,6 @@ WSGI_APPLICATION = 'YamagotiProjects.wsgi.application'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
 
-
 USE_SQLITE = os.getenv("USE_SQLITE", "0").lower() in {"1", "true", "t", "yes", "y"}
 SQLITE_PATH = os.getenv("SQLITE_PATH", str(BASE_DIR / "db.sqlite3"))
 
@@ -142,7 +145,7 @@ if USE_SQLITE:
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
-            "NAME": SQLITE_PATH,   # 例如 /app/data/db.sqlite3
+            "NAME": SQLITE_PATH,  # 例如 /app/data/db.sqlite3
         }
     }
 else:
@@ -192,9 +195,9 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = f"{os.getenv('URL_PREFIX','')}/static/"
+STATIC_URL = f"{os.getenv('URL_PREFIX', '')}/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
-MEDIA_URL = f"{os.getenv('URL_PREFIX','')}/media/"
+MEDIA_URL = f"{os.getenv('URL_PREFIX', '')}/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 # Default primary key field type
@@ -204,7 +207,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 EXTERNAL_TRADEIN_SOURCES = [
     # {"name": "shop10", "url": "https://api.webscraper.io/api/v1/scraping-job/34172531/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
-    {"name": "shop9", "url": "https://api.webscraper.io/api/v1/scraping-job/34172581/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
+    {"name": "shop9",
+     "url": "https://api.webscraper.io/api/v1/scraping-job/34172581/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
     # {"name": "shop8", "url": "https://api.webscraper.io/api/v1/scraping-job/34171950/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
     # {"name": "shop7", "url": "https://api.webscraper.io/api/v1/scraping-job/34172579/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
     # {"name": "shop6-1", "url": "https://api.webscraper.io/api/v1/scraping-job/34172574/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
@@ -236,7 +240,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # 优先级：settings > 环境变量 > 项目内默认文件
 EXTERNAL_IPHONE17_INFO_PATH = BASE_DIR / "AppleStockChecker" / "data" / "iphone17_info.csv"
-
 
 # WebScraper Cloud API 访问令牌（在 Web Scraper Cloud 的 API 页面可见）
 WEB_SCRAPER_API_TOKEN = "vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"
@@ -272,7 +275,6 @@ WEB_SCRAPER_SOURCE_MAP = {
 # 开发用
 WEB_SCRAPER_WEBHOOK_TOKEN = "XNgCZCQN7dvkSP7K17xmK8aq-6_bjvI_"
 
-
 # Celery/Redis
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://127.0.0.1:6379/0")
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
@@ -286,3 +288,169 @@ CELERY_ENABLE_UTC = False
 
 USE_X_FORWARDED_HOST = True
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+customColorPalette = [
+    {
+        'color': 'hsl(4, 90%, 58%)',
+        'label': 'Red'
+    },
+    {
+        'color': 'hsl(340, 82%, 52%)',
+        'label': 'Pink'
+    },
+    {
+        'color': 'hsl(291, 64%, 42%)',
+        'label': 'Purple'
+    },
+    {
+        'color': 'hsl(262, 52%, 47%)',
+        'label': 'Deep Purple'
+    },
+    {
+        'color': 'hsl(231, 48%, 48%)',
+        'label': 'Indigo'
+    },
+    {
+        'color': 'hsl(207, 90%, 54%)',
+        'label': 'Blue'
+    },
+]
+
+CKEDITOR_5_CONFIGS = {
+    'default': {
+        'toolbar': ['heading', '|', 'bold', 'italic', 'link',
+                    'bulletedList', 'numberedList', 'blockQuote', 'imageUpload', ],
+
+    },
+    'extends': {
+        'blockToolbar': [
+            'paragraph', 'heading1', 'heading2', 'heading3',
+            '|',
+            'bulletedList', 'numberedList',
+            '|',
+            'blockQuote',
+        ],
+        'toolbar': ['heading', '|', 'outdent', 'indent', '|', 'bold', 'italic', 'link', 'underline', 'strikethrough',
+        'code','subscript', 'superscript', 'highlight', '|', 'codeBlock', 'sourceEditing', 'insertImage',
+                    'bulletedList', 'numberedList', 'todoList', '|',  'blockQuote', 'imageUpload', '|',
+                    'fontSize', 'fontFamily', 'fontColor', 'fontBackgroundColor', 'mediaEmbed', 'removeFormat',
+                    'insertTable',],
+        'image': {
+            'toolbar': ['imageTextAlternative', '|', 'imageStyle:alignLeft',
+                        'imageStyle:alignRight', 'imageStyle:alignCenter', 'imageStyle:side',  '|'],
+            'styles': [
+                'full',
+                'side',
+                'alignLeft',
+                'alignRight',
+                'alignCenter',
+            ]
+
+        },
+        'table': {
+            'contentToolbar': [ 'tableColumn', 'tableRow', 'mergeTableCells',
+            'tableProperties', 'tableCellProperties' ],
+            'tableProperties': {
+                'borderColors': customColorPalette,
+                'backgroundColors': customColorPalette
+            },
+            'tableCellProperties': {
+                'borderColors': customColorPalette,
+                'backgroundColors': customColorPalette
+            }
+        },
+        'heading' : {
+            'options': [
+                { 'model': 'paragraph', 'title': 'Paragraph', 'class': 'ck-heading_paragraph' },
+                { 'model': 'heading1', 'view': 'h1', 'title': 'Heading 1', 'class': 'ck-heading_heading1' },
+                { 'model': 'heading2', 'view': 'h3', 'title': 'Heading 2', 'class': 'ck-heading_heading2' },
+                { 'model': 'heading3', 'view': 'h5', 'title': 'Heading 3', 'class': 'ck-heading_heading3' }
+            ]
+        }
+    },
+    'list': {
+        'properties': {
+            'styles': 'true',
+            'startIndex': 'true',
+            'reversed': 'true',
+        }
+    }
+}
+
+
+
+# AUTH_USER_MODEL = "dashboards.ApplicationUser"
+LOGIN_URL = "/accounts/login/"
+LOGIN_REDIRECT_URL = "/AppleStockChecker/"          # 登录后跳这里（按需改）
+LOGOUT_REDIRECT_URL = "/accounts/login/"
+
+SESSION_ENGINE = "django.contrib.sessions.backends.cached_db"
+
+SIMPLEUI_CONFIG = {
+    'system_keep': False,
+    'menu_display': ['調査のグローバル設定', 'ユーザー', '調査セット', '回答のセット','Request記録'],
+    'dynamic': True,
+    'menus':
+    [
+        {
+            'name': '調査のグローバル設定',
+            'icon': 'fa-solid fa-gear',
+            'url': '/dashboards/global-setup-page/',
+            'newTab': False,
+        },
+
+        {
+            'name': 'ユーザー',
+            'icon': 'fas fa-user-shield',
+            'url': '/admin/dashboards/applicationuser/',
+            'newTab': False,
+        },
+
+        {
+            'name': '調査セット',
+            'icon': 'fa-solid fa-square-poll-horizontal',
+            'url': '/admin/survey/survey/',
+            'newTab': False,
+        },
+
+        {
+            'name': '回答のセット',
+            'icon': 'fa-regular fa-comment-dots',
+            'url': '/admin/survey/response/',
+            'newTab': False,
+        },
+        {
+            'name': 'Request記録',
+            'icon': 'fa-solid fa-camera-retro',
+            'url': '/admin/easyaudit/requestevent/',
+        },
+
+    ]
+}
+
+
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
+        'LOCATION': 'my_cache_table',
+    }
+}
+
+
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+
+DJANGO_EASY_AUDIT_WATCH_MODEL_EVENTS = True
+DJANGO_EASY_AUDIT_WATCH_AUTH_EVENTS = True
+DJANGO_EASY_AUDIT_WATCH_REQUEST_EVENTS = True
+DJANGO_EASY_AUDIT_UNREGISTERED_URLS_DEFAULT = [r'^/admin/',
+                                               r'^/ajax/',
+                                               r'^/dashboards/',
+                                               r'^/static/',
+                                               r'^/favicon.ico$',
+                                               r'^/media/',
+                                               r'^/sp/',
+                                               r'^/__debug__/',
+                                               r'^/ckeditor5/',
+                                               r'^/api-auth/',
+                                               ]
+

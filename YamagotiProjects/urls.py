@@ -26,8 +26,9 @@ from drf_spectacular.views import (
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('sp/', include('simplepro.urls')),
     path("AppleStockChecker/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("AppleStockChecker/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="docs"),
     path("AppleStockChecker/redoc/", SpectacularRedocView.as_view(url_name="schema"), name="redoc"),
-path("AppleStockChecker/", include("AppleStockChecker.urls")),
+    path("AppleStockChecker/", include("AppleStockChecker.urls")),
 ]
