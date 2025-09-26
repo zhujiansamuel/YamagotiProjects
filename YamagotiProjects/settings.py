@@ -409,9 +409,13 @@ SIMPLEUI_CONFIG = {
             {
                 'name': 'iPhone関連データ',
                 'icon': 'fa-solid fa-mobile-screen-button',
-                'models': [{'name': '中古店価格推移',
+                'models': [{'name': '中古店価格推移(PN別)',
                             'icon': 'fa-solid fa-chart-line',
                             'url': '/AppleStockChecker/resale-trend-pn-merged/',
+                            },
+                           {'name': '中古店価格推移(Model別)',
+                            'icon': 'fa-solid fa-chart-line',
+                            'url': '/AppleStockChecker/resale-trend-colors-merged/',
                             },
                            {'name': '中古店価格ボード',
                             'icon': 'fa-solid fa-table-columns',
@@ -456,8 +460,6 @@ SIMPLEUI_CONFIG = {
             },
 
         ]}
-
-
 
 # --- 本地开发：允许 Session 认证 + JWT；生产保持只有 JWT ---
 if os.getenv("DJANGO_ENV", "dev") == "dev":

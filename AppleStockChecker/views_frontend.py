@@ -18,7 +18,6 @@ class ResaleTrendPNMergedView(TemplateView):
     template_name = "apple_stock/resale_trend_pn_merged.html"
 
 
-
 class ImportResaleCSVView(TemplateView):
     template_name = "apple_stock/import_price_csv.html"
 
@@ -34,3 +33,6 @@ class ExternalIngestView(TemplateView):
 
 class PriceMatrixView(TemplateView):
     template_name = "apple_stock/price_matrix.html"
+
+class ResaleTrendColorsMergedView(TemplateView):
+    template_name = "apple_stock/model_capacity_colors_trend.html"

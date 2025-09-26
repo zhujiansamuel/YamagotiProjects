@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>机型容量 → 各颜色新品价格趋势</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <!-- Chart.js & 时间轴适配器 -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+  <style>
+    *{scrollbar-width:thin}
+    ::-webkit-scrollbar{width:8px;height:8px}
+    ::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:8px}
+  </style>
+</head>
+<body class="bg-zinc-50 text-zinc-900 min-h-screen">
+<div class="max-w-7xl mx-auto p-4 space-y-4">
+  <header class="flex items-center gap-3">
+    <h1 class="text-xl font-semibold">机型 + 容量 → 各颜色新品价格趋势</h1>
+  </header>
+
+  <!-- 查询栏 -->
+  <section class="rounded-2xl border border-zinc-200 bg-white p-3">
+    <div class="grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
+      <div class="md:col-span-3">
+        <label class="block text-sm mb-1">机型 + 容量</label>
+        <select id="comboSelect" class="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white"></select>
+        <p class="text-xs text-zinc-500 mt-1">例如：iPhone 17 256GB</p>
+      </div>
+      <div>
+        <label class="block text-sm mb-1">最近 N 天</label>
+        <input id="daysInput" type="number" min="1" max="180" value="30"
+               class="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white"/>
+      </div>
+      <div class="flex items-center gap-2">
+        <input id="showPoints" type="checkbox" class="w-4 h-4" checked>
+        <label for="showPoints" class="text-sm">显示点</label>
+      </div>
+      <div class="flex items-center gap-2 md:justify-end">
+        <button id="refreshBtn" class="px-3 py-2 bg-black text-white rounded-lg">查询</button>
+        <span id="loading" class="text-sm text-zinc-600 hidden">加载中…</span>
+      </div>
+    </div>
+
+    <!-- 参与平均的门店 -->
+    <div class="mt-3">
+      <label class="text-sm font-medium">平均线参与门店：</label>
+      <div class="text-xs text-zinc-500">按 30 分钟分桶；勾选后“重算平均”更新平均线（每张图表都会用同一套选择）。</div>
+      <div id="shopChecks" class="flex flex-wrap gap-3 mt-2"></div>
+      <div class="flex items-center gap-2 mt-2">
+        <input id="toggleAvg" type="checkbox" class="w-4 h-4" checked>
+        <label for="toggleAvg" class="text-sm">显示平均线</label>
+        <button id="recalcAvgBtn" class="px-2 py-1 border rounded">重算平均</button>
+        <span id="avgHint" class="text-xs text-zinc-500"></span>
+      </div>
+    </div>
+
+    <div id="comboMeta" class="text-sm text-zinc-600 mt-3"></div>
+    <p class="text-xs text-zinc-500 mt-2">说明：仅显示“新品价格”。同一颜色=一张图；图中每条曲线=一家二手店；平均线为黑色。</p>
+  </section>
+
+  <!-- 视图控制（按钮缩放/平移） -->
+  <section class="rounded-2xl border border-zinc-200 bg-white p-3">
+    <div class="flex flex-wrap gap-2 items-center">
+      <span class="text-sm text-zinc-600 mr-2">视图控制：</span>
+      <button id="panLeftBtn"  class="px-3 py-1.5 border rounded">← 平移</button>
+      <button id="zoomInBtn"   class="px-3 py-1.5 border rounded">放大</button>
+      <button id="zoomOutBtn"  class="px-3 py-1.5 border rounded">缩小</button>
+      <button id="panRightBtn" class="px-3 py-1.5 border rounded">平移 →</button>
+      <button id="resetZoomBtn" class="px-3 py-1.5 border rounded">重置缩放</button>
+      <span class="text-xs text-zinc-500 ml-2">作用于下方所有图</span>
+    </div>
+  </section>
+
+  <!-- 动态图表容器：每种颜色生成一个图块 -->
+  <section id="chartsHost" class="space-y-6"></section>
+
+  <footer class="text-xs text-zinc-500">数据来源：/AppleStockChecker/iphones/ 与 /AppleStockChecker/purchasing-price-records/（需登录）</footer>
+</div>
+
+<script>
+const apiBase = '/AppleStockChecker';
+const $ = s => document.querySelector(s);
+let charts = [];  // 动态生成的 Chart 实例数组
+let COMBOS = new Map(); // key: "model|capacity_gb" -> [{color, pn}]
+const FETCH_INIT = { credentials: "same-origin" };
+
+// —— 登录保护：未登录跳转 —— //
+function handleAuth(resp){
+  if (resp.status === 401 || resp.status === 403 || (resp.redirected && resp.url.includes('/accounts/login'))){
+    const next = encodeURIComponent(location.pathname + location.search);
+    location.href = `/accounts/login/?next=${next}`; return false;
+  }
+  return true;
+}
+
+// —— 实用函数 —— //
+function esc(s){return (s??'').toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));}
+function toISODate(d){ return new Date(d).toISOString(); }
+function normalizeNext(u){ return u ? new URL(u, location.origin).toString() : null; }
+function slot30Key(ts){ const d=new Date(ts); d.setSeconds(0,0); const mins=d.getHours()*60+d.getMinutes(); const slot=Math.floor(mins/30)*30; d.setHours(Math.floor(slot/60),slot%60,0,0); return d.getTime(); }
+
+// —— 颜色名 → 近似色（用于图标题）—— //
+function colorHex(colorName){
+  const name = (colorName||'').toLowerCase();
+  const map = {
+    'black titanium':'#3b3b3b','black':'#111111','midnight':'#0a0b0d','space gray':'#4b4b4b','graphite':'#4a4a4a',
+    'white titanium':'#e6e6e6','white':'#f5f5f5','starlight':'#f2efe6','silver':'#e8e8e8',
+    'blue titanium':'#2a4e7f','blue':'#2563eb','deep blue':'#1e3a8a',
+    'natural titanium':'#9a8772','desert titanium':'#c9a86a','gold':'#e0c066',
+    'green':'#16a34a','purple':'#7e22ce','pink':'#f472b6','yellow':'#eab308',
+    'cosmic orange':'#ff7a32','orange':'#ff7a32','red':'#ef4444'
+  };
+  for (const key of Object.keys(map)) if (name.includes(key)) return map[key];
+  return '#0ea5e9'; // 默认青色
+}
+
+// —— 分页拉取 —— //
+async function fetchAll(url, maxPages=80){
+  const out=[]; let next=url, page=0;
+  while(next && page<maxPages){
+    const r=await fetch(next, FETCH_INIT); if(!handleAuth(r)) throw "未登录";
+    if(!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    const j=await r.json(); page++;
+    if(Array.isArray(j)) return j;
+    out.push(...(j.results||[]));
+    next = normalizeNext(j.next);
+  }
+  return out;
+}
+
+// —— 构建“机型+容量”下拉 —— //
+async function buildCombos(){
+  COMBOS.clear();
+  let url = `${apiBase}/iphones/?ordering=model_name`;
+  while (url){
+    const r = await fetch(url, FETCH_INIT); if(!handleAuth(r)) throw "未登录";
+    const j = await r.json(); const rows = j.results||j;
+    for (const x of rows){
+      const key = `${x.model_name}|${x.capacity_gb}`;
+      const arr = COMBOS.get(key) || [];
+      arr.push({ color: x.color, pn: x.part_number });
+      COMBOS.set(key, arr);
+    }
+    url = normalizeNext(j.next);
+  }
+  const sel = $('#comboSelect'); sel.innerHTML='';
+  Array.from(COMBOS.keys())
+    .sort((a,b)=>{ const [mA,cA]=a.split('|'),[mB,cB]=b.split('|'); if(mA!==mB) return mA.localeCompare(mB); return Number(cA)-Number(cB); })
+    .forEach(key=>{
+      const [m,c]=key.split('|'); const cap=(Number(c)%1024===0)?`${Number(c)/1024}TB`:`${c}GB`;
+      const opt=document.createElement('option'); opt.value=key; opt.textContent=`${m} ${cap}`; sel.appendChild(opt);
+    });
+}
+
+// —— 载入店铺并渲染勾选 —— //
+async function loadShops(){
+  const names = [];
+  let url=`${apiBase}/secondhand-shops/?ordering=name`;
+  while(url){
+    const r=await fetch(url, FETCH_INIT); if(!handleAuth(r)) throw "未登录";
+    const j=await r.json(); (j.results||j).forEach(s=>names.push(s.name));
+    url = normalizeNext(j.next);
+  }
+  names.sort((a,b)=>a.localeCompare(b));
+  const host=$('#shopChecks'); host.innerHTML='';
+  const allId='shop_all';
+  host.insertAdjacentHTML('beforeend', `<label class="inline-flex items-center gap-1"><input id="${allId}" type="checkbox" class="w-4 h-4" checked> <span>全选</span></label>`);
+  document.getElementById(allId).addEventListener('change', e=>{
+    const on=e.target.checked; host.querySelectorAll('input[type="checkbox"][data-shop]').forEach(cb=>cb.checked=on);
+  });
+  for (const name of names){
+    const id=`shop_${btoa(unescape(encodeURIComponent(name))).replace(/=/g,'')}`;
+    host.insertAdjacentHTML('beforeend', `<label class="inline-flex items-center gap-1"><input id="${id}" data-shop type="checkbox" class="w-4 h-4" checked> <span>${esc(name)}</span></label>`);
+  }
+  $('#avgHint').textContent = `（已载入门店：${names.length}）`;
+}
+function getSelectedShops(){
+  const set=new Set();
+  document.querySelectorAll('#shopChecks input[type="checkbox"][data-shop]').forEach(cb=>{
+    if(cb.checked) set.add(cb.nextElementSibling?.textContent||'');
+  });
+  return set;
+}
+
+// —— 计算平均（30 分钟桶，跨“选定门店”算术平均）—— //
+function calcAvgSlot30(datasetsByShop, selectedShops){
+  const acc = new Map(); // slot -> {sum,n}
+  for (const ds of datasetsByShop){  // ds 一条线 = 一个“店”的序列
+    if (!selectedShops.has(ds.label)) continue;
+    for (const p of ds.data || []){
+      if (p==null || p.y==null || Number.isNaN(p.y)) continue;
+      const k=slot30Key(p.x);
+      const cur=acc.get(k)||{sum:0,n:0};
+      cur.sum+=Number(p.y); cur.n+=1; acc.set(k,cur);
+    }
+  }
+  return Array.from(acc.entries()).sort((a,b)=>a[0]-b[0]).map(([k,v])=>({x:k,y:v.n?v.sum/v.n:null}));
+}
+
+// —— 颜色 → 每店一条线（仅新品价） —— //
+async function fetchSeriesForColor(pn, days){
+  const recorded_after = toISODate(Date.now() - Math.max(1, days|0)*24*60*60*1000);
+  const params = new URLSearchParams({ iphone_part_number: pn, recorded_after, ordering: 'recorded_at' });
+  const rows = await fetchAll(`${apiBase}/purchasing-price-records/?${params.toString()}`);
+
+  // 分店聚合
+  const byShop = new Map(); // shop -> [{x,y}]
+  const shopNames = new Set();
+  for (const r of rows){
+    const name = r.shop_name || `Shop#${r.shop}`;
+    shopNames.add(name);
+    const t=new Date(r.recorded_at).getTime();
+    const arr = byShop.get(name) || [];
+    arr.push({x:t, y:r.price_new});
+    byShop.set(name, arr);
+  }
+  // 生成每店一条曲线
+  const datasets = Array.from(byShop.entries()).map(([name, pts])=>({
+    label: name, data: pts
+  }));
+  return { datasets, shopNames: Array.from(shopNames).sort((a,b)=>a.localeCompare(b)) };
+}
+
+// —— 调色板（区分不同“店”的线色；平均线始终黑色）—— //
+const LINE_PALETTE = [
+  "#2563eb","#16a34a","#f59e0b","#ef4444","#8b5cf6","#06b6d4","#a855f7","#f97316","#22c55e","#3b82f6",
+  "#e11d48","#14b8a6","#7c3aed","#0ea5e9","#84cc16"
+];
+
+// —— 画一张“颜色”的图：每店一条线 + 黑色平均 —— //
+function makeChartForColor(colorName, datasetsPerShop, showPoints){
+  // 根据店数量给线分配颜色
+  const dsLines = datasetsPerShop.map((d, i)=>({
+    label: d.label,
+    data: d.data,
+    borderWidth: 1,
+    borderColor: LINE_PALETTE[i % LINE_PALETTE.length],
+    backgroundColor: LINE_PALETTE[i % LINE_PALETTE.length],
+    pointRadius: showPoints ? 2 : 0,
+    spanGaps: true
+  }));
+  const selectedShops = getSelectedShops();
+  const avgData = calcAvgSlot30(dsLines, selectedShops);
+  const avgDataset = {
+    label: '平均(选中门店)',
+    data: avgData,
+    borderColor: '#000',
+    backgroundColor: '#000',
+    borderWidth: 3,
+    pointRadius: 0,
+    spanGaps: true,
+    order: 0
+  };
+
+  const canvas = document.createElement('canvas');
+  const chart = new Chart(canvas, {
+    type: 'line',
+    data: { datasets: [...dsLines, ...( $('#toggleAvg').checked ? [avgDataset] : [] )] },
+    options: {
+      parsing: false, animation: false, normalized: true, spanGaps: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top' },
+        tooltip: { callbacks: { label: (it)=> `${it.dataset.label}: ¥${Number(it.parsed.y).toLocaleString()}` } }
+      },
+      scales: {
+        x: { type:'time', time:{unit:'hour'}, title:{display:true,text:'记录时间'} },
+        y: { beginAtZero:false, title:{display:true,text:'价格（円）'} }
+      },
+      elements: { line:{ tension:0.2 } }
+    }
+  });
+  chart.__baseDatasets = dsLines;  // 用于锁定 y 域 / 重算平均
+  return { canvas, chart };
+}
+
+// —— 锁定 y 轴（只做横向缩放/平移）—— //
+function initDomain(c){
+  if (!c || c.__domain) return;
+  const base=c.__baseDatasets||[], pts=base.flatMap(ds=>ds.data||[]);
+  const xs=pts.map(p=>p?.x).filter(v=>typeof v==='number'&&!Number.isNaN(v));
+  const ys=pts.map(p=>p?.y).filter(v=>typeof v==='number'&&!Number.isNaN(v));
+  if(!xs.length||!ys.length) return;
+  const xMin=Math.min(...xs), xMax=Math.max(...xs);
+  const yMin0=Math.min(...ys), yMax0=Math.max(...ys), pad=(yMax0-yMin0)*0.05;
+  const yMin=yMin0-pad, yMax=yMax0+pad;
+  c.__domain={xMin,xMax,yMin,yMax};
+  if(c.options.scales?.y){ c.options.scales.y.min=yMin; c.options.scales.y.max=yMax; }
+}
+function getRange(c){
+  const dom=c.__domain||{}; const s=c.options.scales?.x||{};
+  let min=s.min??c.scales?.x?.min??dom.xMin, max=s.max??c.scales?.x?.max??dom.xMax;
+  return {min,max};
+}
+function zoomAll(factor){
+  for (const c of charts){
+    if(!c) continue; initDomain(c); const dom=c.__domain; if(!dom) continue;
+    const r=getRange(c); if(!(r.min<r.max)) continue;
+    const mid=(r.min+r.max)/2, range=(r.max-r.min)/factor;
+    let newMin=mid-range/2, newMax=mid+range/2;
+    if(newMin<dom.xMin){ newMin=dom.xMin; newMax=dom.xMin+range; }
+    if(newMax>dom.xMax){ newMax=dom.xMax; newMin=dom.xMax-range; }
+    if(!(newMin<newMax)){ newMin=dom.xMin; newMax=dom.xMax; }
+    c.options.scales.x.min=Math.floor(newMin);
+    c.options.scales.x.max=Math.ceil(newMax);
+    c.update('none');
+  }
+}
+function panAll(frac){
+  for (const c of charts){
+    if(!c) continue; initDomain(c); const dom=c.__domain; if(!dom) continue;
+    const r=getRange(c); if(!(r.min<r.max)) continue;
+    const width=(r.max-r.min), delta=width*frac;
+    let newMin=r.min+delta, newMax=r.max+delta;
+    if(newMin<dom.xMin){ newMin=dom.xMin; newMax=dom.xMin+width; }
+    if(newMax>dom.xMax){ newMax=dom.xMax; newMin=dom.xMax-width; }
+    c.options.scales.x.min=Math.floor(newMin);
+    c.options.scales.x.max=Math.ceil(newMax);
+    c.update('none');
+  }
+}
+function resetAllZoom(){
+  for (const c of charts){
+    if(!c) continue; initDomain(c); const dom=c.__domain; if(!dom) continue;
+    c.options.scales.x.min=dom.xMin; c.options.scales.x.max=dom.xMax; c.update('none');
+  }
+}
+
+// —— 主流程 —— //
+function destroyAllCharts(){ charts.forEach(c=>c?.destroy()); charts = []; }
+function getSelectedShops(){ const set=new Set(); document.querySelectorAll('#shopChecks input[data-shop]').forEach(cb=>{ if(cb.checked) set.add(cb.nextElementSibling?.textContent||''); }); return set; }
+
+async function run(){
+  const loading=$('#loading'); loading.classList.remove('hidden');
+  try{
+    const key = $('#comboSelect').value;
+    if (!key) throw new Error('请选择 机型 + 容量');
+    const days = Math.max(1, parseInt($('#daysInput').value||'30',10));
+    const showPoints = $('#showPoints').checked;
+
+    // 载入/渲染门店（一次性）
+    await loadShops();
+
+    // 清空图表容器
+    destroyAllCharts();
+    $('#chartsHost').innerHTML = '';
+
+    // 遍历该组合下的所有颜色（每色一个图）
+    const parts = COMBOS.get(key) || [];
+    // 用颜色名去重保持顺序
+    const colors = Array.from(new Map(parts.map(p=>[p.color, p.pn])).entries()); // [ [color,pn], ... ]
+    $('#comboMeta').textContent = `该组合包含颜色 ${colors.length} 种`;
+
+    for (const [colorName, pn] of colors){
+      // 拉该颜色（该 PN）的数据，按“店”分线
+      const { datasets, shopNames } = await fetchSeriesForColor(pn, days);
+
+      // 生成图块 + 标题（用近似色）
+      const hex = colorHex(colorName);
+      const card = document.createElement('div');
+      card.className = 'rounded-2xl border border-zinc-200 bg-white';
+      const head = document.createElement('div');
+      head.className = 'px-3 py-2 border-b border-zinc-200 text-sm flex items-center gap-2';
+      head.innerHTML = `<span class="inline-block w-3 h-3 rounded" style="background:${hex}"></span>
+                        <span style="color:${hex};font-weight:600">${esc(colorName)}</span>`;
+      const body = document.createElement('div'); body.className = 'p-3';
+
+      const { canvas, chart } = makeChartForColor(colorName, datasets, showPoints);
+      body.appendChild(canvas);
+      card.appendChild(head); card.appendChild(body);
+      $('#chartsHost').appendChild(card);
+
+      // 锁定 y 轴 & 汇入集合
+      initDomain(chart);
+      charts.push(chart);
+    }
+
+    // 初次计算平均线（基于当前门店勾选）
+    recalcAvgAllCharts();
+
+  }catch(e){
+    if(e==="未登录") return;
+    destroyAllCharts();
+    $('#comboMeta').textContent='';
+    const div = document.createElement('div');
+    div.className = 'p-3 rounded bg-red-50 text-red-700';
+    div.textContent = `加载失败：${e.message||e}`;
+    $('#chartsHost').appendChild(div);
+  }finally{
+    loading.classList.add('hidden');
+  }
+}
+
+function recalcAvgAllCharts(){
+  const showAvg = $('#toggleAvg').checked;
+  const selShops = getSelectedShops();
+  charts.forEach(c=>{
+    // 保留“店线”数据，去掉旧平均
+    const base = (c.__baseDatasets||[]);
+    c.data.datasets = base.map((d,i)=>({
+      label:d.label, data:d.data,
+      borderWidth:1, borderColor: d.borderColor, backgroundColor: d.backgroundColor,
+      pointRadius: $('#showPoints').checked?2:0, spanGaps:true
+    }));
+    if (showAvg){
+      const avgData = calcAvgSlot30(base, selShops);
+      c.data.datasets.push({
+        label:'平均(选中门店)', data:avgData,
+        borderColor:'#000', backgroundColor:'#000', borderWidth:3, pointRadius:0, spanGaps:true, order:0
+      });
+    }
+    initDomain(c);
+    c.update('none');
+  });
+}
+
+// —— 事件 —— //
+$('#refreshBtn').addEventListener('click', run);
+$('#recalcAvgBtn').addEventListener('click', recalcAvgAllCharts);
+$('#toggleAvg').addEventListener('change', recalcAvgAllCharts);
+$('#zoomInBtn').addEventListener('click', ()=> zoomAll(1.2));
+$('#zoomOutBtn').addEventListener('click', ()=> zoomAll(0.833));
+$('#panLeftBtn').addEventListener('click', ()=> panAll(-0.2));
+$('#panRightBtn').addEventListener('click', ()=> panAll(0.2));
+$('#resetZoomBtn').addEventListener('click', resetAllZoom);
+
+// —— 初始化：构建“机型+容量”下拉 —— //
+(async function init(){
+  await buildCombos();
+})();
+</script>
+</body>
+</html>

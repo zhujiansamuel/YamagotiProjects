@@ -16,7 +16,7 @@ from .views_frontend import ResaleTrendPNView
 from .views_frontend import ResaleTrendPNMergedView
 from .views_frontend import ImportResaleCSVView
 from .views_frontend import ImportTradeinCSVView, ImportIphoneCSVView, ExternalIngestView
-from .views_frontend import PriceMatrixView
+from .views_frontend import PriceMatrixView, ResaleTrendColorsMergedView
 router = DefaultRouter()
 router.register(r"iphones", IphoneViewSet, basename="iphone")
 router.register(r"stores", OfficialStoreViewSet, basename="store")
@@ -53,6 +53,8 @@ urlpatterns = [
                   path("import-iphone-csv/", ImportIphoneCSVView.as_view(), name="import-iphone-csv"),
 path("external-ingest/", ExternalIngestView.as_view(), name="external-ingest"),
 path("price-matrix/", PriceMatrixView.as_view(), name="price-matrix"),
+path("resale-trend-colors-merged/", ResaleTrendColorsMergedView.as_view(), name="resale-trend-colors-merged"),
               ] + urlpatterns
+
 
 urlpatterns += router.urls
