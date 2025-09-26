@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>二手店价格矩阵（按时间戳截断）</title>
+  <title>二手店价格矩阵（登录后可见）</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     *{scrollbar-width:thin}::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:8px}
@@ -17,23 +17,18 @@
     <header class="flex items-center gap-3">
       <h1 class="text-xl font-semibold">二手店价格矩阵（15 分钟时间戳截断）</h1>
       <div class="ml-auto text-sm text-zinc-600">
-        每格显示 <b>所选时间戳之前</b>、<b>距离最近</b> 的价格。
+        已登录后可查看；未登录将跳转到 <code>/accounts/login/</code>。
       </div>
     </header>
 
-    <!-- 控件：API、Token、时间戳、刷新 -->
+    <!-- 控件：API Base、时间戳、刷新（不再需要 Token） -->
     <section class="rounded-2xl border border-zinc-200 bg-white p-3 space-y-3">
-      <div class="grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
+      <div class="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
         <div class="md:col-span-2">
           <label class="block text-sm mb-1">API Base（/AppleStockChecker 或 /api）</label>
           <input id="apiBase" type="text" placeholder="/AppleStockChecker" class="w-full px-3 py-2 rounded-lg border border-zinc-200 outline-none"/>
         </div>
         <div class="md:col-span-2">
-          <label class="block text-sm mb-1">Bearer Token（/api/auth/token/ 的 access）</label>
-          <input id="token" type="password" placeholder="eyJ..." class="w-full px-3 py-2 rounded-lg border border-zinc-200 outline-none"/>
-          <div id="tokenHint" class="text-[11px] mt-1 text-zinc-500"></div>
-        </div>
-        <div class="md:col-span-1">
           <label class="block text-sm mb-1">时间戳（15 分步进）</label>
           <input id="ts" type="datetime-local" step="900" class="w-full px-3 py-2 rounded-lg border border-zinc-200 outline-none"/>
         </div>
@@ -66,8 +61,6 @@
 const $ = s => document.querySelector(s);
 const fmt = (n) => (n==null || Number.isNaN(n)) ? "-" : Number(n).toLocaleString();
 const esc = (s) => (s??"").toString().replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-
-// 列（固定顺序）
 const SHOPS = [
   { code: "shop3",  display: "買取一丁目",     name: "買取一丁目" },
   { code: "shop5",  display: "森森買取",       name: "森森買取" },
@@ -78,249 +71,159 @@ const SHOPS = [
   { code: "shop10", display: "ドラゴンモバイル", name: "ドラゴンモバイル" }
 ];
 
-let API_BASE = "/AppleStockChecker";  // 默认相对前缀，避免混合内容
-let TOKEN = "";
-let ROWS = [];                // [{pn,label,model_name,capacity_gb,color}]
-let SHOP_ID_MAP = {};         // name -> id
+let API_BASE = "/AppleStockChecker";
+let ROWS = [];
+let SHOP_ID_MAP = {};
 
-// —— 规范化 API Base：自动把 http 升级为 https，推荐相对前缀 —— //
-function normalizeApiBase(v) {
-  let s = (v || "").trim();
-  if (!s) return "/AppleStockChecker";
-  if (s.startsWith("http://") && location.protocol === "https:") {
-    s = "https://" + s.slice(7);
+// —— 辅助：若 401/未登录，跳转登录页 —— //
+function handleAuth(resp) {
+  if (resp.status === 401 || resp.status === 403) {
+    const next = encodeURIComponent(location.pathname + location.search);
+    location.href = `/accounts/login/?next=${next}`;
+    return false;
   }
-  if (s.startsWith("//")) {
-    s = location.protocol + s;
+  // 部分站点会 302 到登录页；fetch 不跟随跨域重定向的 body，此处简单处理：
+  if (resp.redirected && resp.url.includes("/accounts/login")) {
+    const next = encodeURIComponent(location.pathname + location.search);
+    location.href = `/accounts/login/?next=${next}`;
+    return false;
   }
-  return s.replace(/\/+$/, "");
+  return true;
 }
 
-// —— 把 DRF 分页的 next 链接“强制同域同协议” —— //
-function toSameOriginHttps(u) {
-  if (!u) return null;
-  try {
-    const obj = new URL(u, location.origin);
-    // 强制使用当前页面的协议与主机（解决 http://... 混合内容）
-    obj.protocol = location.protocol;
-    obj.host = location.host;
-    return obj.toString();
-  } catch (e) {
-    // 若是相对路径，保持相对
-    return u;
-  }
-}
-
-// 请求头（注入 Bearer）
-function buildHeaders(extra={}) {
-  const h = {...extra};
-  const tok = (TOKEN||"").trim();
-  if (tok) h["Authorization"] = `Bearer ${tok}`;
-  return h;
-}
+// 同域请求必须带上 Cookie
+const FETCH_INIT = { credentials: "same-origin" };
 
 // 15 分钟对齐
 function snap15(date) { const d=new Date(date); d.setSeconds(0,0); const m=d.getMinutes(); d.setMinutes(m-(m%15)); return d; }
 function toLocalInputValue(d) { const z=new Date(d.getTime()-d.getTimezoneOffset()*60000); return z.toISOString().slice(0,16); }
+
+function normalizeApiBase(v){
+  let s=(v||"").trim(); if(!s) return "/AppleStockChecker";
+  if (s.startsWith("//")) s = location.protocol + s;
+  return s.replace(/\/+$/,"");
+}
 
 // 载入店铺
 async function loadShops() {
   SHOP_ID_MAP = {};
   let url = `${API_BASE}/secondhand-shops/?ordering=name`;
   while (url) {
-    const r = await fetch(url, { headers: buildHeaders() });
-    if (r.status === 401 || r.status === 403) throw new Error("未授权（Token 无效或未设置）");
+    const r = await fetch(url, FETCH_INIT);
+    if (!handleAuth(r)) return Promise.reject("未登录");
     if (!r.ok) throw new Error("加载门店失败");
     const j = await r.json();
-    const rows = j.results || j;
-    rows.forEach(s => { SHOP_ID_MAP[s.name] = s.id; });
-    // —— 关键：把 next 换成同域 https —— //
-    url = j.next ? toSameOriginHttps(j.next) : null;
+    (j.results||j).forEach(s => SHOP_ID_MAP[s.name]=s.id);
+    url = j.next ? new URL(j.next, location.origin).toString() : null;
   }
-  SHOPS.forEach(s => { if (!SHOP_ID_MAP[s.name]) console.warn("未找到店铺：", s.name); });
 }
 
-// 载入 iPhone 17 与 iPhone Air 全部变体
+// 载入 iPhone 17 & Air
 async function loadIphones() {
   ROWS = [];
   async function fetchAll(q) {
     let url = `${API_BASE}/iphones/?search=${encodeURIComponent(q)}&ordering=model_name`;
     const all = [];
     while (url) {
-      const r = await fetch(url, { headers: buildHeaders() });
-      if (r.status === 401 || r.status === 403) throw new Error("未授权（Token 无效或未设置）");
+      const r = await fetch(url, FETCH_INIT);
+      if (!handleAuth(r)) return Promise.reject("未登录");
       if (!r.ok) throw new Error("加载 iPhone 列表失败");
       const j = await r.json();
-      const rows = j.results || j;
-      all.push(...rows);
-      // —— 关键：把 next 换成同域 https —— //
-      url = j.next ? toSameOriginHttps(j.next) : null;
+      all.push(...(j.results||j));
+      url = j.next ? new URL(j.next, location.origin).toString() : null;
     }
     return all;
   }
   const list17 = await fetchAll("iPhone 17");
   const listAir = await fetchAll("iPhone Air");
-  const all = [...list17, ...listAir];
-
-  const filtered = all.filter(x => {
-    const m = (x.model_name||"").trim();
-    return m.startsWith("iPhone 17") || m === "iPhone Air";
+  const all = [...list17, ...listAir].filter(x=>{
+    const m=(x.model_name||"").trim(); return m.startsWith("iPhone 17") || m==="iPhone Air";
   });
-
-  ROWS = filtered.map(x => {
+  ROWS = all.map(x=>{
     const cap = (x.capacity_gb % 1024 === 0) ? `${x.capacity_gb/1024}TB` : `${x.capacity_gb}GB`;
-    return {
-      pn: x.part_number,
-      label: `${x.model_name} ${cap} ${x.color} (${x.part_number})`,
-      model_name: x.model_name,
-      capacity_gb: x.capacity_gb,
-      color: x.color,
-    };
+    return { pn:x.part_number, label:`${x.model_name} ${cap} ${x.color} (${x.part_number})`,
+      model_name:x.model_name, capacity_gb:x.capacity_gb, color:x.color };
   });
-
-  const orderOfModel = (m) => m === "iPhone Air" ? 1 : 0;
-  ROWS.sort((a,b) => {
-    if (orderOfModel(a.model_name) !== orderOfModel(b.model_name)) return orderOfModel(a.model_name)-orderOfModel(b.model_name);
-    if (a.model_name !== b.model_name) return a.model_name.localeCompare(b.model_name);
-    if (a.capacity_gb !== b.capacity_gb) return a.capacity_gb - b.capacity_gb;
+  const orderOfModel = m => m==="iPhone Air"?1:0;
+  ROWS.sort((a,b)=>{
+    if(orderOfModel(a.model_name)!==orderOfModel(b.model_name)) return orderOfModel(a.model_name)-orderOfModel(b.model_name);
+    if(a.model_name!==b.model_name) return a.model_name.localeCompare(b.model_name);
+    if(a.capacity_gb!==b.capacity_gb) return a.capacity_gb-b.capacity_gb;
     return a.color.localeCompare(b.color);
   });
 }
 
-// 渲染表头与骨架
+// 渲染骨架
 function renderSkeleton() {
-  const tr = $("#thead-row");
-  tr.innerHTML = `<th class="p-2 text-left sticky-col z-20">机型 / 容量 / 颜色 (PN)</th>` +
-    SHOPS.map(s => `<th class="p-2 text-center w-36">${esc(s.display)}</th>`).join("");
-  const tbody = $("#tbody");
-  tbody.innerHTML = "";
-  ROWS.forEach((r, idx) => {
-    const row = document.createElement("tr");
-    row.innerHTML = `
-      <td class="p-2 sticky-col z-10 bg-white border-b">${esc(r.label)}</td>
-      ${SHOPS.map((s, j) => `<td class="p-2 text-center align-middle border-b" data-cell="${idx}-${j}" title="加载中…"><span class="cell-loading"></span></td>`).join("")}
-    `;
-    tbody.appendChild(row);
+  $("#thead-row").innerHTML = `<th class="p-2 text-left sticky-col z-20">机型 / 容量 / 颜色 (PN)</th>` +
+    SHOPS.map(s=>`<th class="p-2 text-center w-36">${esc(s.display)}</th>`).join("");
+  const tb=$("#tbody"); tb.innerHTML="";
+  ROWS.forEach((r, idx)=>{
+    const tr=document.createElement("tr");
+    tr.innerHTML = `<td class="p-2 sticky-col z-10 bg-white border-b">${esc(r.label)}</td>` +
+      SHOPS.map((s,j)=>`<td class="p-2 text-center align-middle border-b" data-cell="${idx}-${j}"><span class="cell-loading"></span></td>`).join("");
+    tb.appendChild(tr);
   });
 }
 
-// 取单格：某 PN、某 shop、某时间戳之前最近记录
+// 单元格
 async function fetchCell(pn, shopId, tsISO) {
   if (!shopId) return null;
   const url = `${API_BASE}/purchasing-price-records/?iphone_part_number=${encodeURIComponent(pn)}&shop=${shopId}&recorded_before=${encodeURIComponent(tsISO)}&ordering=-recorded_at`;
-  const r = await fetch(url, { headers: buildHeaders() });
-  if (r.status === 401 || r.status === 403) throw new Error("未授权");
+  const r = await fetch(url, FETCH_INIT);
+  if (!handleAuth(r)) return Promise.reject("未登录");
   if (!r.ok) return null;
-  const j = await r.json();
-  const rows = j.results || j;
+  const j = await r.json(); const rows=j.results||j;
   return rows && rows.length ? rows[0] : null;
 }
 
-// 批量加载矩阵
 async function loadMatrix(ts) {
-  const tsISO = new Date(ts.getTime() - ts.getTimezoneOffset()*60000).toISOString();
-  const tbody = $("#tbody");
-  const tasks = [];
-  for (let r = 0; r < ROWS.length; r++) {
-    for (let c = 0; c < SHOPS.length; c++) tasks.push({r, c});
-  }
-  const concurrency = 10;
-  let done = 0;
-  const status = $("#status");
-  function tick(){ status.textContent = `载入 ${done}/${tasks.length}`; }
-
-  const queue = tasks.slice();
-  const runners = Array.from({length: Math.min(concurrency, queue.length)}, async () => {
-    while (queue.length) {
-      const {r,c} = queue.shift();
-      const cell = tbody.querySelector(`[data-cell="${r}-${c}"]`);
-      const s = SHOPS[c];
-      const shopId = SHOP_ID_MAP[s.name] || null;
-      const pn = ROWS[r].pn;
-      try {
-        const rec = await fetchCell(pn, shopId, tsISO);
-        if (rec) {
-          const price = rec.price_new;
-          const recordedAt = rec.recorded_at || "";
-          cell.innerHTML = `<span title="${esc(recordedAt)}">¥${fmt(price)}</span>`;
-        } else {
-          cell.innerHTML = `<span class="text-zinc-400">-</span>`;
-        }
-      } catch (e) {
-        cell.innerHTML = `<span class="text-red-600" title="${esc(e.message||e)}">401</span>`;
-      }
+  const tsISO=new Date(ts.getTime()-ts.getTimezoneOffset()*60000).toISOString();
+  const tb=$("#tbody");
+  const tasks=[];
+  for(let r=0;r<ROWS.length;r++) for(let c=0;c<SHOPS.length;c++) tasks.push({r,c});
+  const concurrency=10; let done=0; const status=$("#status"); const queue=tasks.slice();
+  function tick(){status.textContent=`载入 ${done}/${tasks.length}`;}
+  const runners=Array.from({length:Math.min(concurrency,queue.length)}, async ()=>{
+    while(queue.length){
+      const {r,c}=queue.shift(); const cell=tb.querySelector(`[data-cell="${r}-${c}"]`);
+      const s=SHOPS[c]; const shopId=SHOP_ID_MAP[s.name]||null; const pn=ROWS[r].pn;
+      try{
+        const rec=await fetchCell(pn, shopId, tsISO);
+        if(rec){ cell.innerHTML=`<span title="${esc(rec.recorded_at||"")}">¥${fmt(rec.price_new)}</span>`; }
+        else { cell.innerHTML=`<span class="text-zinc-400">-</span>`; }
+      }catch(e){ if(e!=="未登录") cell.innerHTML=`<span class="text-red-600">ERR</span>`; }
       done++; tick();
     }
   });
-
-  const t0 = performance.now(); tick();
-  await Promise.all(runners);
+  const t0=performance.now(); tick(); await Promise.all(runners);
   status.textContent = `完成 ${done}/${tasks.length}，耗时 ${Math.round(performance.now()-t0)} ms`;
 }
 
-// 事件绑定 / 初始化
-function initControls() {
-  // 读取本地保存（默认相对前缀，避免混合内容）
-  const savedBase = localStorage.getItem("price_matrix:api") || "/AppleStockChecker";
-  API_BASE = normalizeApiBase(savedBase);
-  $("#apiBase").value = API_BASE;
-
-  const savedToken = localStorage.getItem("price_matrix:token") || "";
-  TOKEN = savedToken;
-  $("#token").value = savedToken;
-  $("#tokenHint").textContent = TOKEN ? "已设置 Token（请求将带 Authorization 头）" : "未设置 Token（若接口要求鉴权会 401）";
-
-  const now = snap15(new Date());
-  $("#ts").value = toLocalInputValue(now);
-
-  $("#apiBase").addEventListener("change", (e)=> {
-    API_BASE = normalizeApiBase(e.target.value);
-    $("#apiBase").value = API_BASE;
-    localStorage.setItem("price_matrix:api", API_BASE);
+// 绑定
+function initControls(){
+  const savedBase=localStorage.getItem("price_matrix:api")||"/AppleStockChecker";
+  API_BASE=normalizeApiBase(savedBase); $("#apiBase").value=API_BASE;
+  const now=snap15(new Date()); $("#ts").value=toLocalInputValue(now);
+  $("#apiBase").addEventListener("change", (e)=>{ API_BASE=normalizeApiBase(e.target.value); $("#apiBase").value=API_BASE; localStorage.setItem("price_matrix:api", API_BASE); });
+  $("#btnPrev").addEventListener("click", ()=>{ const el=$("#ts"); const d=new Date(el.value); el.value=toLocalInputValue(new Date(d.getTime()-15*60*1000)); });
+  $("#btnNext").addEventListener("click", ()=>{ const el=$("#ts"); const d=new Date(el.value); el.value=toLocalInputValue(new Date(d.getTime()+15*60*1000)); });
+  $("#btnRefresh").addEventListener("click", async ()=>{
+    try{
+      $("#status").textContent="准备数据…";
+      await loadShops();
+      $("#status").textContent="加载机型…";
+      await loadIphones();
+      renderSkeleton();
+      const ts=new Date($("#ts").value);
+      await loadMatrix(ts);
+    }catch(e){
+      if(e==="未登录") return;
+      $("#status").textContent="失败："+(e.message||e);
+    }
   });
-  $("#token").addEventListener("change", (e)=> {
-    TOKEN = e.target.value.trim();
-    localStorage.setItem("price_matrix:token", TOKEN);
-    $("#tokenHint").textContent = TOKEN ? "已设置 Token（请求将带 Authorization 头）" : "未设置 Token（若接口要求鉴权会 401）";
-  });
-
-  $("#btnPrev").addEventListener("click", ()=>{
-    const el = $("#ts");
-    const d = new Date(el.value);
-    const nd = new Date(d.getTime() - 15*60*1000);
-    el.value = toLocalInputValue(nd);
-  });
-  $("#btnNext").addEventListener("click", ()=>{
-    const el = $("#ts");
-    const d = new Date(el.value);
-    const nd = new Date(d.getTime() + 15*60*1000);
-    el.value = toLocalInputValue(nd);
-  });
-
-$("#btnRefresh").addEventListener("click", async ()=>{
-  if (!TOKEN.trim()) {
-    $("#status").textContent = "请先在上方输入 Bearer Token";
-    return;
-  }
-  try {
-    $("#status").textContent = "准备数据…";
-    await loadShops();
-    $("#status").textContent = "加载机型…";
-    await loadIphones();
-    const tr = $("#thead-row");
-    tr.innerHTML = `<th class="p-2 text-left sticky-col z-20">机型 / 容量 / 颜色 (PN)</th>` +
-      SHOPS.map(s => `<th class="p-2 text-center w-36">${esc(s.display)}</th>`).join("");
-    renderSkeleton();
-    const ts = new Date($("#ts").value);
-    await loadMatrix(ts);
-  } catch (e) {
-    $("#status").textContent = "失败：" + (e.message||e);
-    console.error(e);
-  }
-});
 }
 
-// 首次自动加载
 (async function main(){
   initControls();
   $("#btnRefresh").click();

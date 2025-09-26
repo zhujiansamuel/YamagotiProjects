@@ -454,3 +454,24 @@ DJANGO_EASY_AUDIT_UNREGISTERED_URLS_DEFAULT = [r'^/admin/',
                                                r'^/api-auth/',
                                                ]
 
+
+# --- 本地开发：允许 Session 认证 + JWT；生产保持只有 JWT ---
+if os.getenv("DJANGO_ENV", "dev") == "dev":
+    REST_FRAMEWORK = {
+        "DEFAULT_AUTHENTICATION_CLASSES": [
+            "rest_framework.authentication.SessionAuthentication",        # 浏览器登录态
+            "rest_framework_simplejwt.authentication.JWTAuthentication",  # 保留 JWT
+        ],
+        "DEFAULT_PERMISSION_CLASSES": [
+            "rest_framework.permissions.IsAuthenticated",
+        ],
+    }
+else:
+    REST_FRAMEWORK = {
+        "DEFAULT_AUTHENTICATION_CLASSES": [
+            "rest_framework_simplejwt.authentication.JWTAuthentication",
+        ],
+        "DEFAULT_PERMISSION_CLASSES": [
+            "rest_framework.permissions.IsAuthenticated",
+        ],
+    }

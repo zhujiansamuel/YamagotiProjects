@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 from pathlib import Path
 from datetime import timedelta
 import os
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -28,9 +29,7 @@ DEBUG = True
 ALLOWED_HOSTS = [
     "127.0.0.1",
     "localhost",
-    ".ngrok-free.app",]
-
-
+    ".ngrok-free.app", ]
 
 # Application definition
 
@@ -58,10 +57,11 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    "YamagotiProjects.middleware.login_required.LoginRequiredMiddleware",
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 
-'simplepro.middlewares.SimpleMiddleware'
+    'simplepro.middlewares.SimpleMiddleware'
 ]
 
 ROOT_URLCONF = 'YamagotiProjects.urls'
@@ -107,7 +107,7 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "Django REST Framework + JWT",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
-    "SECURITY": [{"BearerAuth": []}],   # 文档右上角 Authorize 会显示 BearerAuth
+    "SECURITY": [{"BearerAuth": []}],  # 文档右上角 Authorize 会显示 BearerAuth
     "COMPONENT_SPLIT_REQUEST": True,
 }
 
@@ -136,6 +136,9 @@ TEMPLATES = [
         },
     },
 ]
+
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+MEDIA_URL = '/media/'
 
 WSGI_APPLICATION = 'YamagotiProjects.wsgi.application'
 
@@ -216,7 +219,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 EXTERNAL_TRADEIN_SOURCES = [
     # {"name": "shop10", "url": "https://api.webscraper.io/api/v1/scraping-job/34172531/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
-    {"name": "shop9", "url": "https://api.webscraper.io/api/v1/scraping-job/34172581/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
+    {"name": "shop9",
+     "url": "https://api.webscraper.io/api/v1/scraping-job/34172581/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
     # {"name": "shop8", "url": "https://api.webscraper.io/api/v1/scraping-job/34171950/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
     # {"name": "shop7", "url": "https://api.webscraper.io/api/v1/scraping-job/34172579/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
     # {"name": "shop6-1", "url": "https://api.webscraper.io/api/v1/scraping-job/34172574/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
@@ -248,7 +252,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # 优先级：settings > 环境变量 > 项目内默认文件
 EXTERNAL_IPHONE17_INFO_PATH = BASE_DIR / "AppleStockChecker" / "data" / "iphone17_info.csv"
-
 
 # WebScraper Cloud API 访问令牌（在 Web Scraper Cloud 的 API 页面可见）
 WEB_SCRAPER_API_TOKEN = "vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"
@@ -284,7 +287,6 @@ WEB_SCRAPER_SOURCE_MAP = {
 # 开发用
 WEB_SCRAPER_WEBHOOK_TOKEN = "XNgCZCQN7dvkSP7K17xmK8aq-6_bjvI_"
 
-
 # Celery/Redis
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://127.0.0.1:6379/0")
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
@@ -298,7 +300,6 @@ CELERY_ENABLE_UTC = False
 
 USE_X_FORWARDED_HOST = True
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-
 
 customColorPalette = [
     {
@@ -342,13 +343,13 @@ CKEDITOR_5_CONFIGS = {
             'blockQuote',
         ],
         'toolbar': ['heading', '|', 'outdent', 'indent', '|', 'bold', 'italic', 'link', 'underline', 'strikethrough',
-        'code','subscript', 'superscript', 'highlight', '|', 'codeBlock', 'sourceEditing', 'insertImage',
-                    'bulletedList', 'numberedList', 'todoList', '|',  'blockQuote', 'imageUpload', '|',
+                    'code', 'subscript', 'superscript', 'highlight', '|', 'codeBlock', 'sourceEditing', 'insertImage',
+                    'bulletedList', 'numberedList', 'todoList', '|', 'blockQuote', 'imageUpload', '|',
                     'fontSize', 'fontFamily', 'fontColor', 'fontBackgroundColor', 'mediaEmbed', 'removeFormat',
-                    'insertTable',],
+                    'insertTable', ],
         'image': {
             'toolbar': ['imageTextAlternative', '|', 'imageStyle:alignLeft',
-                        'imageStyle:alignRight', 'imageStyle:alignCenter', 'imageStyle:side',  '|'],
+                        'imageStyle:alignRight', 'imageStyle:alignCenter', 'imageStyle:side', '|'],
             'styles': [
                 'full',
                 'side',
@@ -359,8 +360,8 @@ CKEDITOR_5_CONFIGS = {
 
         },
         'table': {
-            'contentToolbar': [ 'tableColumn', 'tableRow', 'mergeTableCells',
-            'tableProperties', 'tableCellProperties' ],
+            'contentToolbar': ['tableColumn', 'tableRow', 'mergeTableCells',
+                               'tableProperties', 'tableCellProperties'],
             'tableProperties': {
                 'borderColors': customColorPalette,
                 'backgroundColors': customColorPalette
@@ -370,12 +371,12 @@ CKEDITOR_5_CONFIGS = {
                 'backgroundColors': customColorPalette
             }
         },
-        'heading' : {
+        'heading': {
             'options': [
-                { 'model': 'paragraph', 'title': 'Paragraph', 'class': 'ck-heading_paragraph' },
-                { 'model': 'heading1', 'view': 'h1', 'title': 'Heading 1', 'class': 'ck-heading_heading1' },
-                { 'model': 'heading2', 'view': 'h3', 'title': 'Heading 2', 'class': 'ck-heading_heading2' },
-                { 'model': 'heading3', 'view': 'h5', 'title': 'Heading 3', 'class': 'ck-heading_heading3' }
+                {'model': 'paragraph', 'title': 'Paragraph', 'class': 'ck-heading_paragraph'},
+                {'model': 'heading1', 'view': 'h1', 'title': 'Heading 1', 'class': 'ck-heading_heading1'},
+                {'model': 'heading2', 'view': 'h3', 'title': 'Heading 2', 'class': 'ck-heading_heading2'},
+                {'model': 'heading3', 'view': 'h5', 'title': 'Heading 3', 'class': 'ck-heading_heading3'}
             ]
         }
     },
@@ -387,46 +388,94 @@ CKEDITOR_5_CONFIGS = {
         }
     }
 }
+SIMPLEUI_HOME_INFO = False
+SIMPLEUI_HOME_ACTION = True
+SIMPLEUI_ANALYSIS = False
 
+SIMPLEPRO_SECRET_KEY = '2c4411a795534e0fbc28720051161434'
+SIMPLEPRO_MONIT_DISPLAY = True
+SIMPLEPRO_INFO = True
+SIMPLEPRO_FK_ASYNC_DATA = True
+
+# SIMPLEUI_HOME_PAGE = "/admin-home"
+# SIMPLEUI_HOME_ICON = 'fa fa-user'
 
 SIMPLEUI_CONFIG = {
-    'system_keep': False,
-    'menu_display': ['調査のグローバル設定', 'ユーザー', '調査セット', '回答のセット','Request記録'],
-    'dynamic': True,
+    'system_keep': True,
+    'dynamic': False,
+    'menu_display': ['iPhone関連データ', ],
     'menus':
-    [
-        {
-            'name': '調査のグローバル設定',
-            'icon': 'fa-solid fa-gear',
-            'url': '/dashboards/global-setup-page/',
-            'newTab': False,
-        },
+        [
+            {
+                'name': 'iPhone関連データ',
+                'icon': 'fa-solid fa-mobile-screen-button',
+                'models': [{'name': '中古店価格推移',
+                            'icon': 'fa-solid fa-chart-line',
+                            'url': '/AppleStockChecker/resale-trend-pn-merged/',
+                            },
+                           {'name': '中古店価格ボード',
+                            'icon': 'fa-solid fa-table-columns',
+                            'url': '/AppleStockChecker/price-matrix/',
+                            },
+                           {'name': 'iPhone公式在庫表',
+                            'icon': 'fa-solid fa-warehouse',
+                            'url': '/AppleStockChecker/price-matrix/',
+                            },
 
-        {
-            'name': 'ユーザー',
-            'icon': 'fas fa-user-shield',
-            'url': '/admin/dashboards/applicationuser/',
-            'newTab': False,
-        },
+                           {'name': '中古店価格メタデータ',
+                            'icon': 'fa-solid fa-database',
+                            'models': [{'name': 'iPhoneモデル',
+                                        'icon': 'fa-solid fa-mobile-button',
+                                        'url': '/admin/AppleStockChecker/iphone/',
+                                        },
+                                       {'name': '中古店',
+                                        'icon': 'fa-solid fa-shop',
+                                        'url': '/admin/AppleStockChecker/secondhandshop/'
+                                        },
+                                       {'name': '中古店価格記録',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/purchasingshoppricerecord/'
+                                        },
+                                       ]
+                            },
 
-        {
-            'name': '調査セット',
-            'icon': 'fa-solid fa-square-poll-horizontal',
-            'url': '/admin/survey/survey/',
-            'newTab': False,
-        },
+                           {'name': 'iPhone公式在庫メタデータ',
+                            'icon': 'fa-solid fa-file-contract',
+                            'models': [{'name': 'Apple公式ストア',
+                                        'icon': 'fa-solid fa-store',
+                                        'url': '/admin/AppleStockChecker/officialstore/',
+                                        },
+                                       {'name': 'iphone官方在库記録',
+                                        'icon': 'fa-solid fa-truck-ramp-box',
+                                        'url': '/admin/AppleStockChecker/inventoryrecord/'
+                                        },
+                                       ]
+                            },
 
-        {
-            'name': '回答のセット',
-            'icon': 'fa-regular fa-comment-dots',
-            'url': '/admin/survey/response/',
-            'newTab': False,
-        },
-        {
-            'name': 'Request記録',
-            'icon': 'fa-solid fa-camera-retro',
-            'url': '/admin/easyaudit/requestevent/',
-        },
+                           ]
+            },
 
-    ]
-}
+        ]}
+
+
+
+# --- 本地开发：允许 Session 认证 + JWT；生产保持只有 JWT ---
+if os.getenv("DJANGO_ENV", "dev") == "dev":
+    REST_FRAMEWORK = {
+        "DEFAULT_AUTHENTICATION_CLASSES": [
+            "rest_framework.authentication.SessionAuthentication",  # 浏览器登录态
+            "rest_framework_simplejwt.authentication.JWTAuthentication",  # 保留 JWT
+        ],
+        "DEFAULT_PERMISSION_CLASSES": [
+            "rest_framework.permissions.IsAuthenticated",
+        ],
+    }
+else:
+    REST_FRAMEWORK = {
+        "DEFAULT_AUTHENTICATION_CLASSES": [
+            "rest_framework_simplejwt.authentication.JWTAuthentication",
+        ],
+        "DEFAULT_PERMISSION_CLASSES": [
+            "rest_framework.permissions.IsAuthenticated",
+        ],
+    }

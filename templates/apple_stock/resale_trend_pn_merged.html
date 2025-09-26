@@ -8,66 +8,80 @@
   <!-- Chart.js & 时间轴适配器（date-fns） -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
-  <script>
-    // 简易暗色模式
-    (()=>{const pref=localStorage.getItem('theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');if(pref==='dark')document.documentElement.classList.add('dark');window.__toggleTheme=()=>{document.documentElement.classList.toggle('dark');localStorage.setItem('theme',document.documentElement.classList.contains('dark')?'dark':'light');};})();
-  </script>
+  <!-- 缩放/平移插件 -->
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.umd.min.js"></script>
   <style>
-    *{scrollbar-width:thin}::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:8px}.dark ::-webkit-scrollbar-thumb{background:#334155}
+    *{scrollbar-width:thin}
+    ::-webkit-scrollbar{width:8px;height:8px}
+    ::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:8px}
   </style>
 </head>
-<body class="bg-zinc-50 text-zinc-900 dark:bg-zinc-900 dark:text-zinc-50 min-h-screen">
+<body class="bg-zinc-50 text-zinc-900 min-h-screen">
   <div class="max-w-7xl mx-auto p-4 space-y-4">
     <header class="flex items-center gap-3">
       <h1 class="text-xl font-semibold">二手店回收价历史（按 PN → 各店）</h1>
-      <button class="ml-auto p-2 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800" onclick="__toggleTheme()" title="切换主题">🌓</button>
     </header>
 
-    <!-- 查询栏 -->
-    <section class="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-3">
-      <div class="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+    <!-- 查询栏（白色） -->
+    <section class="rounded-2xl border border-zinc-200 bg-white p-3">
+      <div class="grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
         <div class="md:col-span-2">
           <label class="block text-sm mb-1">PN（唯一编码）</label>
           <input id="pnInput" list="pnOptions" type="text" placeholder="如：MTUW3J/A"
-                 class="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 outline-none"/>
+                 class="w-full px-3 py-2 rounded-lg border border-zinc-200 outline-none bg-white"/>
           <datalist id="pnOptions"></datalist>
           <p class="text-xs text-zinc-500 mt-1">从下拉建议选择，或输入完整 PN。</p>
         </div>
         <div>
           <label class="block text-sm mb-1">最近 N 天</label>
           <input id="daysInput" type="number" min="1" max="180" value="30"
-                 class="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 outline-none"/>
+                 class="w-full px-3 py-2 rounded-lg border border-zinc-200 outline-none bg-white"/>
         </div>
         <div class="flex items-center gap-2">
           <input id="showPoints" type="checkbox" class="w-4 h-4" checked>
           <label for="showPoints" class="text-sm">显示点</label>
         </div>
         <div class="flex items-center gap-2 md:justify-end">
-          <button id="refreshBtn" class="px-3 py-2 bg-black text-white dark:bg-white dark:text-black rounded-lg">查询</button>
-          <span id="loading" class="text-sm text-zinc-600 dark:text-zinc-400 hidden">加载中…</span>
+          <button id="refreshBtn" class="px-3 py-2 bg-black text-white rounded-lg">查询</button>
+          <button id="resetZoomBtn" class="px-3 py-2 border rounded-lg">重置缩放</button>
+          <span id="loading" class="text-sm text-zinc-600 hidden">加载中…</span>
         </div>
       </div>
-      <div id="pnMeta" class="text-sm text-zinc-600 dark:text-zinc-400 mt-2"></div>
-      <p class="text-xs text-zinc-500 mt-2">说明：同一图中每条线代表一家二手店。X 轴为记录时间；Y 轴为价格（円）。A/B 价格为空的点将被跳过并形成断点。</p>
+
+      <!-- 选择参与“平均线”的门店 -->
+      <div class="mt-3">
+        <label class="text-sm font-medium">平均线参与门店：</label>
+        <div class="text-xs text-zinc-500">勾选后点击“刷新”或“重算平均”即可更新平均线</div>
+        <div id="shopChecks" class="flex flex-wrap gap-3 mt-2"></div>
+        <div class="flex items-center gap-2 mt-2">
+          <input id="toggleAvg" type="checkbox" class="w-4 h-4" checked>
+          <label for="toggleAvg" class="text-sm">显示平均线</label>
+          <button id="recalcAvgBtn" class="px-2 py-1 border rounded">重算平均</button>
+          <span id="avgHint" class="text-xs text-zinc-500"></span>
+        </div>
+      </div>
+
+      <div id="pnMeta" class="text-sm text-zinc-600 mt-3"></div>
+      <p class="text-xs text-zinc-500 mt-2">说明：支持滚轮/触摸缩放、拖拽平移；平均线按“日”聚合所选门店的均值。</p>
     </section>
 
-    <!-- 三个图表：新品 / A品 / B品 -->
+    <!-- 三个图表（白色卡片） -->
     <section class="space-y-6">
-      <div class="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950">
-        <div class="px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 text-sm">新品价格</div>
+      <div class="rounded-2xl border border-zinc-200 bg-white">
+        <div class="px-3 py-2 border-b border-zinc-200 text-sm">新品价格</div>
         <div class="p-3"><canvas id="chart-new"></canvas></div>
       </div>
-      <div class="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950">
-        <div class="px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 text-sm">A 品价格</div>
+      <div class="rounded-2xl border border-zinc-200 bg-white">
+        <div class="px-3 py-2 border-b border-zinc-200 text-sm">A 品价格</div>
         <div class="p-3"><canvas id="chart-a"></canvas></div>
       </div>
-      <div class="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950">
-        <div class="px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 text-sm">B 品价格</div>
+      <div class="rounded-2xl border border-zinc-200 bg-white">
+        <div class="px-3 py-2 border-b border-zinc-200 text-sm">B 品价格</div>
         <div class="p-3"><canvas id="chart-b"></canvas></div>
       </div>
     </section>
 
-    <footer class="text-xs text-zinc-500">数据来源：/api/purchasing-price-records/?iphone_part_number=…&recorded_after=…&ordering=recorded_at 与 /api/iphones/</footer>
+    <footer class="text-xs text-zinc-500">数据来源：/AppleStockChecker/purchasing-price-records 与 /AppleStockChecker/iphones/（需登录）</footer>
   </div>
 
 <script>
@@ -75,20 +89,41 @@ const apiBase = '/AppleStockChecker';
 const $ = sel => document.querySelector(sel);
 let charts = { new: null, a: null, b: null };
 
-function esc(s){return (s??'').toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));}
+// —— Session 认证：带 Cookie，未登录自动跳转 —— //
+function handleAuth(resp) {
+  if (resp.status === 401 || resp.status === 403) {
+    const next = encodeURIComponent(location.pathname + location.search);
+    location.href = `/accounts/login/?next=${next}`;
+    return false;
+  }
+  if (resp.redirected && resp.url.includes('/accounts/login')) {
+    const next = encodeURIComponent(location.pathname + location.search);
+    location.href = `/accounts/login/?next=${next}`;
+    return false;
+  }
+  return true;
+}
+const FETCH_INIT = { credentials: 'same-origin' };
 
-async function fetchAll(url, maxPages=40){
+function esc(s){return (s??'').toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));}
+function toISODate(d){ return new Date(d).toISOString(); }
+function dayKey(ts){ const d=new Date(ts); d.setHours(0,0,0,0); return d.getTime(); }
+
+async function fetchAll(url, maxPages=80){
   const out=[]; let next=url, page=0;
   while(next && page<maxPages){
-    const r=await fetch(next); if(!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    const r=await fetch(next, FETCH_INIT);
+    if(!handleAuth(r)) throw "未登录";
+    if(!r.ok) throw new Error(`${r.status} ${r.statusText}`);
     const j=await r.json(); page++;
-    if(Array.isArray(j)) return j; // 无分页
-    out.push(...(j.results||[])); next=j.next;
+    if(Array.isArray(j)) return j;
+    out.push(...(j.results||[]));
+    next = j.next ? new URL(j.next, location.origin).toString() : null;
   }
   return out;
 }
 
-// PN 建议：value=PN，label=型号 容量 颜色
+// PN 建议
 async function loadPnOptions(){
   try{
     const rows = await fetchAll(`${apiBase}/iphones/?ordering=model_name`);
@@ -97,17 +132,111 @@ async function loadPnOptions(){
       return `<option value="${esc(x.part_number)}">${esc(x.model_name)} ${esc(cap)} ${esc(x.color)}</option>`;
     }).join('');
     $('#pnOptions').innerHTML = html;
-  }catch{}
+  }catch(e){ if(e==="未登录") return; }
 }
 
-function toISODate(d){ return new Date(d).toISOString(); }
+// 平均线（按天）——忽略空值
+function calcDailyAverage(datasets, selectedLabels){
+  const acc = new Map(); // dayTs -> {sum, n}
+  for(const ds of datasets){
+    if (!selectedLabels.has(ds.label)) continue;
+    for(const p of ds.data||[]){
+      if (p==null || p.y==null || Number.isNaN(p.y)) continue;
+      const k = dayKey(p.x);
+      const cur = acc.get(k) || {sum:0, n:0};
+      cur.sum += Number(p.y); cur.n += 1;
+      acc.set(k, cur);
+    }
+  }
+  return Array.from(acc.entries()).sort((a,b)=>a[0]-b[0]).map(([k,v])=>({x:Number(k), y:v.n? v.sum/v.n : null}));
+}
+
+// 渲染门店复选框
+function renderShopChecks(allLabels){
+  const host = $('#shopChecks'); host.innerHTML='';
+  const allId='shop_all';
+  host.insertAdjacentHTML('beforeend',
+    `<label class="inline-flex items-center gap-1">
+       <input id="${allId}" type="checkbox" class="w-4 h-4" checked> <span>全选</span>
+     </label>`);
+  document.getElementById(allId).addEventListener('change', e=>{
+    const on=e.target.checked;
+    host.querySelectorAll('input[type="checkbox"][data-shop]').forEach(cb=>cb.checked=on);
+  });
+  for(const name of allLabels){
+    const id=`shop_${btoa(unescape(encodeURIComponent(name))).replace(/=/g,'')}`;
+    host.insertAdjacentHTML('beforeend',
+      `<label class="inline-flex items-center gap-1">
+         <input id="${id}" data-shop type="checkbox" class="w-4 h-4" checked> <span>${esc(name)}</span>
+       </label>`);
+  }
+  $('#avgHint').textContent = `（已载入门店：${allLabels.length}）`;
+}
+function getSelectedShopLabels(){
+  const set=new Set();
+  document.querySelectorAll('#shopChecks input[type="checkbox"][data-shop]').forEach(cb=>{
+    if(cb.checked) set.add(cb.nextElementSibling?.textContent||'');
+  });
+  return set;
+}
+
+function makeChart(ctx, datasets, showPoints){
+  if(!ctx) return null;
+  const dsLines = datasets.map(d=>({
+    label:d.label, data:d.data, borderWidth:1, pointRadius: showPoints?2:0, spanGaps:true
+  }));
+  const selected = getSelectedShopLabels();
+  const avgData = calcDailyAverage(datasets, selected);
+  const avgDataset = {
+    label:'平均(选中门店)', data:avgData,
+    borderColor:'#000', backgroundColor:'#000', borderWidth:3, pointRadius:0, spanGaps:true, order:0
+  };
+
+  const chart = new Chart(ctx, {
+    type:'line',
+    data:{ datasets:[...dsLines, ...( $('#toggleAvg').checked ? [avgDataset] : [] )] },
+    options:{
+      parsing:false, animation:false, normalized:true, spanGaps:true,
+      interaction:{ mode:'index', intersect:false },
+      plugins:{
+        legend:{ position:'top' },
+        tooltip:{ callbacks:{ label:(it)=>`${it.dataset.label}: ¥${Number(it.parsed.y).toLocaleString()}` } },
+        zoom:{ pan:{enabled:true, mode:'x'}, zoom:{ wheel:{enabled:true}, pinch:{enabled:true}, mode:'x' } }
+      },
+      scales:{
+        x:{ type:'time', time:{ unit:'day' }, title:{display:true,text:'记录时间'} },
+        y:{ beginAtZero:false, title:{display:true,text:'价格（円）'} }
+      },
+      elements:{ line:{tension:0.2} }
+    }
+  });
+  chart.__baseDatasets = datasets;
+  return chart;
+}
+function destroyCharts(){ Object.values(charts).forEach(c=>c?.destroy()); charts={new:null,a:null,b:null}; }
+function resetAllZoom(){ for(const c of Object.values(charts)) c?.resetZoom(); }
+function recalcAverageOnCharts(){
+  const showAvg = $('#toggleAvg').checked;
+  const sel = getSelectedShopLabels();
+  for(const key of ['new','a','b']){
+    const chart = charts[key]; if(!chart) continue;
+    chart.data.datasets = chart.data.datasets.filter(d=>d.label!=='平均(选中门店)');
+    if(showAvg){
+      const avgData = calcDailyAverage(chart.__baseDatasets||[], sel);
+      chart.data.datasets.push({
+        label:'平均(选中门店)', data:avgData,
+        borderColor:'#000', backgroundColor:'#000', borderWidth:3, pointRadius:0, spanGaps:true, order:0
+      });
+    }
+    chart.update('none');
+  }
+}
 
 async function fetchPriceSeriesByPN(pn, days){
   const recorded_after = toISODate(Date.now() - Math.max(1, days|0)*24*60*60*1000);
   const p = new URLSearchParams({ iphone_part_number: pn.trim(), recorded_after, ordering: 'recorded_at' });
   const rows = await fetchAll(`${apiBase}/purchasing-price-records/?${p.toString()}`);
 
-  // PN 基本信息（从一条记录推断；如需更完整可再请求 /iphones/{pn}）
   const metaBox = $('#pnMeta');
   if(rows.length){
     const first = rows.find(r => r.iphone_part_number) || rows[0];
@@ -117,81 +246,46 @@ async function fetchPriceSeriesByPN(pn, days){
     metaBox.textContent = '无数据';
   }
 
-  // 按店铺分组 → 三类价位构造时间序列
-  // datasets: [{label: 店名, data:[{x:ts,y:price},...]}]
-  const byShop = new Map(); // id -> { name, new:[], a:[], b:[] }
+  const byShop=new Map(); // id -> { name, new:[], a:[], b:[] }
   for(const r of rows){
-    const sid = r.shop;
-    if(!byShop.has(sid)) byShop.set(sid, { name: r.shop_name || `Shop #${sid}`, new: [], a: [], b: [] });
-    const t = new Date(r.recorded_at).getTime();
-    byShop.get(sid).new.push({ x: t, y: r.price_new });
-    byShop.get(sid).a.push({ x: t, y: (r.price_grade_a ?? null) });
-    byShop.get(sid).b.push({ x: t, y: (r.price_grade_b ?? null) });
+    const sid=r.shop;
+    if(!byShop.has(sid)) byShop.set(sid,{ name:r.shop_name||`Shop #${sid}`, new:[], a:[], b:[] });
+    const t=new Date(r.recorded_at).getTime();
+    byShop.get(sid).new.push({x:t,y:r.price_new});
+    byShop.get(sid).a.push({x:t,y:(r.price_grade_a??null)});
+    byShop.get(sid).b.push({x:t,y:(r.price_grade_b??null)});
   }
-
-  const shops = Array.from(byShop.values());
+  const shops=Array.from(byShop.values());
   return {
-    datasetsNew: shops.map(s => ({ label: s.name, data: s.new })),
-    datasetsA: shops.map(s => ({ label: s.name, data: s.a })),
-    datasetsB: shops.map(s => ({ label: s.name, data: s.b })),
+    shops,
+    datasetsNew: shops.map(s=>({label:s.name,data:s.new})),
+    datasetsA:   shops.map(s=>({label:s.name,data:s.a})),
+    datasetsB:   shops.map(s=>({label:s.name,data:s.b})),
   };
 }
 
-function makeChart(ctx, datasets, title, showPoints){
-  if(!ctx) return null;
-  return new Chart(ctx, {
-    type: 'line',
-    data: { datasets },
-    options: {
-      parsing: false,          // data: [{x,y}] 格式
-      animation: false,
-      normalized: true,
-      spanGaps: true,
-      interaction: { mode: 'index', intersect: false },
-      plugins: {
-        legend: { position: 'top' },
-        tooltip: { callbacks: { label: (it) => `${it.dataset.label}: ¥${Number(it.parsed.y).toLocaleString()}` } },
-        title: { display: false, text: title },
-      },
-      scales: {
-        x: { type: 'time', time: { unit: 'day' }, title: { display: true, text: '记录时间' } },
-        y: { beginAtZero: false, title: { display: true, text: '价格（円）' } }
-      },
-      elements: {
-        point: { radius: showPoints ? 2 : 0 },
-        line: { tension: 0.2 }
-      }
-    }
-  });
-}
-
-function destroyCharts(){ Object.values(charts).forEach(c => c?.destroy()); charts = { new: null, a: null, b: null }; }
-
 async function run(){
-  const loading = $('#loading'); loading.classList.remove('hidden');
+  const loading=$('#loading'); loading.classList.remove('hidden');
   try{
-    const pn = ($('#pnInput').value||'').trim();
+    const pn=($('#pnInput').value||'').trim();
     if(!pn) throw new Error('请输入 PN');
-    const days = Math.max(1, parseInt($('#daysInput').value||'30', 10));
-    const showPoints = $('#showPoints').checked;
+    const days=Math.max(1, parseInt($('#daysInput').value||'30',10));
+    const showPoints=$('#showPoints').checked;
 
-    const series = await fetchPriceSeriesByPN(pn, days);
+    const series=await fetchPriceSeriesByPN(pn, days);
+
+    renderShopChecks(series.shops.map(s=>s.name));
 
     destroyCharts();
-    charts.new = makeChart(document.getElementById('chart-new'), series.datasetsNew, '新品价格', showPoints);
-    charts.a   = makeChart(document.getElementById('chart-a'),   series.datasetsA,   'A品价格',  showPoints);
-    charts.b   = makeChart(document.getElementById('chart-b'),   series.datasetsB,   'B品价格',  showPoints);
+    charts.new = makeChart(document.getElementById('chart-new'), series.datasetsNew, showPoints);
+    charts.a   = makeChart(document.getElementById('chart-a'),   series.datasetsA,   showPoints);
+    charts.b   = makeChart(document.getElementById('chart-b'),   series.datasetsB,   showPoints);
 
-    // 若某类完全没数据，则在画布下方给提示
-    if(!series.datasetsA.length || series.datasetsA.every(d=>!d.data.length)){
-      document.getElementById('chart-a').insertAdjacentHTML('afterend', '<div class="text-xs text-zinc-500 mt-2">本区间无 A 品价格记录。</div>');
-    }
-    if(!series.datasetsB.length || series.datasetsB.every(d=>!d.data.length)){
-      document.getElementById('chart-b').insertAdjacentHTML('afterend', '<div class="text-xs text-zinc-500 mt-2">本区间无 B 品价格记录。</div>');
-    }
+    recalcAverageOnCharts();
   }catch(e){
+    if(e==="未登录") return;
     destroyCharts();
-    document.getElementById('pnMeta').textContent = '';
+    $('#pnMeta').textContent='';
     const wrapMsg = `<div class="p-3 rounded-lg bg-red-50 text-red-700">加载失败：${esc(e.message||e)}</div>`;
     document.getElementById('chart-new').parentElement.insertAdjacentHTML('beforeend', wrapMsg);
   }finally{
@@ -201,6 +295,9 @@ async function run(){
 
 // 事件
 $('#refreshBtn').addEventListener('click', run);
+$('#recalcAvgBtn').addEventListener('click', recalcAverageOnCharts);
+$('#toggleAvg').addEventListener('change', recalcAverageOnCharts);
+$('#resetZoomBtn').addEventListener('click', resetAllZoom);
 $('#pnInput').addEventListener('keydown', e=>{ if(e.key==='Enter') run(); });
 
 // 初始化
@@ -208,4 +305,3 @@ loadPnOptions();
 </script>
 </body>
 </html>
-
