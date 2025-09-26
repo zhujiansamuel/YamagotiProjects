@@ -386,47 +386,81 @@ LOGOUT_REDIRECT_URL = "/accounts/login/"
 
 SESSION_ENGINE = "django.contrib.sessions.backends.cached_db"
 
+
+
+
+SIMPLEUI_HOME_INFO = False
+SIMPLEUI_HOME_ACTION = True
+SIMPLEUI_ANALYSIS = False
+
+SIMPLEPRO_SECRET_KEY = '2c4411a795534e0fbc28720051161434'
+SIMPLEPRO_MONIT_DISPLAY = True
+SIMPLEPRO_INFO = True
+SIMPLEPRO_FK_ASYNC_DATA = True
+
+
+
 SIMPLEUI_CONFIG = {
-    'system_keep': False,
-    'menu_display': ['調査のグローバル設定', 'ユーザー', '調査セット', '回答のセット','Request記録'],
-    'dynamic': True,
+    'system_keep': True,
+    'dynamic': False,
+    'menu_display': ['iPhone関連データ', ],
     'menus':
-    [
-        {
-            'name': '調査のグローバル設定',
-            'icon': 'fa-solid fa-gear',
-            'url': '/dashboards/global-setup-page/',
-            'newTab': False,
-        },
+        [
+            {
+                'name': 'iPhone関連データ',
+                'icon': 'fa-solid fa-mobile-screen-button',
+                'models': [{'name': '中古店価格推移(PN別)',
+                            'icon': 'fa-solid fa-chart-line',
+                            'url': '/AppleStockChecker/resale-trend-pn-merged/',
+                            },
+                           {'name': '中古店価格推移(Model別)',
+                            'icon': 'fa-solid fa-chart-line',
+                            'url': '/AppleStockChecker/resale-trend-colors-merged/',
+                            },
+                           {'name': '中古店価格ボード',
+                            'icon': 'fa-solid fa-table-columns',
+                            'url': '/AppleStockChecker/price-matrix/',
+                            },
+                           {'name': 'iPhone公式在庫表',
+                            'icon': 'fa-solid fa-warehouse',
+                            'url': '/AppleStockChecker/price-matrix/',
+                            },
 
-        {
-            'name': 'ユーザー',
-            'icon': 'fas fa-user-shield',
-            'url': '/admin/dashboards/applicationuser/',
-            'newTab': False,
-        },
+                           {'name': '中古店価格メタデータ',
+                            'icon': 'fa-solid fa-database',
+                            'models': [{'name': 'iPhoneモデル',
+                                        'icon': 'fa-solid fa-mobile-button',
+                                        'url': '/admin/AppleStockChecker/iphone/',
+                                        },
+                                       {'name': '中古店',
+                                        'icon': 'fa-solid fa-shop',
+                                        'url': '/admin/AppleStockChecker/secondhandshop/'
+                                        },
+                                       {'name': '中古店価格記録',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/purchasingshoppricerecord/'
+                                        },
+                                       ]
+                            },
 
-        {
-            'name': '調査セット',
-            'icon': 'fa-solid fa-square-poll-horizontal',
-            'url': '/admin/survey/survey/',
-            'newTab': False,
-        },
+                           {'name': 'iPhone公式在庫メタデータ',
+                            'icon': 'fa-solid fa-file-contract',
+                            'models': [{'name': 'Apple公式ストア',
+                                        'icon': 'fa-solid fa-store',
+                                        'url': '/admin/AppleStockChecker/officialstore/',
+                                        },
+                                       {'name': 'iphone官方在库記録',
+                                        'icon': 'fa-solid fa-truck-ramp-box',
+                                        'url': '/admin/AppleStockChecker/inventoryrecord/'
+                                        },
+                                       ]
+                            },
 
-        {
-            'name': '回答のセット',
-            'icon': 'fa-regular fa-comment-dots',
-            'url': '/admin/survey/response/',
-            'newTab': False,
-        },
-        {
-            'name': 'Request記録',
-            'icon': 'fa-solid fa-camera-retro',
-            'url': '/admin/easyaudit/requestevent/',
-        },
+                           ]
+            },
 
-    ]
-}
+        ]}
+
 
 
 CACHES = {
