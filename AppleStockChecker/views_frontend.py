@@ -36,3 +36,7 @@ class PriceMatrixView(TemplateView):
 
 class ResaleTrendColorsMergedView(TemplateView):
     template_name = "apple_stock/model_capacity_colors_trend.html"
+
+
+class TemplateChartjsView(TemplateView):
+    template_name = "apple_stock/TemplateChartjs.html"

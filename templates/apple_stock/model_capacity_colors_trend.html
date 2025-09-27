@@ -3,10 +3,12 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>机型容量 → 各颜色新品价格趋势</title>
+  <title>机型容量 → 各颜色新品价格趋势（Chart.js）</title>
+  <!-- UI（可选） -->
   <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
-  <!-- Chart.js & 时间轴适配器 -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <!-- Chart.js（官方最小例引入方式） -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- 时间坐标适配器（用于 time 轴显示 yyyy-MM-dd） -->
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
   <style>
     *{scrollbar-width:thin}
@@ -17,11 +19,11 @@
 <body class="bg-zinc-50 text-zinc-900 min-h-screen">
 <div class="max-w-7xl mx-auto p-4 space-y-4">
   <header class="flex items-center gap-3">
-    <h1 class="text-xl font-semibold">机型 + 容量 → 各颜色新品价格趋势</h1>
+    <h1 class="text-xl font-semibold">机型 + 容量 → 各颜色新品价格趋势（Chart.js）</h1>
   </header>
 
-  <!-- 查询栏 -->
-  <section class="rounded-2xl border border-zinc-200 bg-white p-3">
+  <!-- 查询栏 + 平均线配置 -->
+  <section class="rounded-2xl border border-zinc-200 bg-white p-3 space-y-3">
     <div class="grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
       <div class="md:col-span-3">
         <label class="block text-sm mb-1">机型 + 容量</label>
@@ -37,56 +39,105 @@
         <input id="showPoints" type="checkbox" class="w-4 h-4" checked>
         <label for="showPoints" class="text-sm">显示点</label>
       </div>
-      <div class="flex items-center gap-2 md:justify-end">
+      <div class="text-right">
         <button id="refreshBtn" class="px-3 py-2 bg-black text-white rounded-lg">查询</button>
         <span id="loading" class="text-sm text-zinc-600 hidden">加载中…</span>
       </div>
     </div>
 
-    <!-- 参与平均的门店 -->
-    <div class="mt-3">
+    <!-- 参与平均的店铺（A线与B/C都以此为参与集合） -->
+    <div>
       <label class="text-sm font-medium">平均线参与门店：</label>
-      <div class="text-xs text-zinc-500">按 30 分钟分桶；勾选后“重算平均”更新平均线（每张图表都会用同一套选择）。</div>
       <div id="shopChecks" class="flex flex-wrap gap-3 mt-2"></div>
+      <div class="text-xs text-zinc-500" id="avgHint"></div>
+    </div>
+
+    <!-- ★ 改动点：A=分桶平均(分钟)；B/C=基于A的“时间窗(分钟)”移动平均 -->
+    <div>
+      <div class="text-sm font-medium mb-1">平均线设置（A=分桶分钟；B/C=时间窗分钟，基于A）</div>
+      <div class="overflow-auto">
+        <table class="min-w-full text-sm border">
+          <thead class="bg-zinc-100">
+          <tr>
+            <th class="px-2 py-1 border">平均线</th>
+            <!-- A 行：分桶(分钟)；B/C 行：窗口(分钟) -->
+            <th class="px-2 py-1 border">A：分桶(分钟) / B/C：窗口(分钟)</th>
+            <th class="px-2 py-1 border">线宽</th>
+            <th class="px-2 py-1 border">颜色</th>
+            <th class="px-2 py-1 border">线型</th>
+            <th class="px-2 py-1 border">说明</th>
+          </tr>
+          </thead>
+          <tbody id="avgConfigTbody"></tbody>
+        </table>
+      </div>
+      <div class="text-xs text-zinc-500 mt-1">
+        黑线 A = 勾选店铺做“分桶(分钟)平均”；B/C = 在<b>黑线 A</b> 的结果上做“时间窗(分钟)移动平均”。
+        默认参与店铺集合请修改 <code>AVG_LINES_DEFAULTS[i].shops</code>（'ALL' 或 ['店A','店B']）。
+      </div>
       <div class="flex items-center gap-2 mt-2">
         <input id="toggleAvg" type="checkbox" class="w-4 h-4" checked>
-        <label for="toggleAvg" class="text-sm">显示平均线</label>
+        <label for="toggleAvg" class="text-sm">显示平均线（A/B/C）</label>
         <button id="recalcAvgBtn" class="px-2 py-1 border rounded">重算平均</button>
-        <span id="avgHint" class="text-xs text-zinc-500"></span>
       </div>
     </div>
 
-    <div id="comboMeta" class="text-sm text-zinc-600 mt-3"></div>
-    <p class="text-xs text-zinc-500 mt-2">说明：仅显示“新品价格”。同一颜色=一张图；图中每条曲线=一家二手店；平均线为黑色。</p>
+    <div id="comboMeta" class="text-sm text-zinc-600"></div>
+    <p class="text-xs text-zinc-500">说明：纵轴在右侧；横轴仅标注每日 0:00；右侧显示各曲线“最新值”标注。</p>
   </section>
 
-  <!-- 视图控制（按钮缩放/平移） -->
+  <!-- 顶部“跨颜色平均（每店）”图 -->
   <section class="rounded-2xl border border-zinc-200 bg-white p-3">
+    <div class="px-2 pb-2 text-sm font-medium">跨颜色平均（每店）</div>
+    <canvas id="chart-merged"></canvas>
+  </section>
+
+  <!-- 视图控制（按钮缩放/平移），X/Y 两组互不影响 -->
+  <section class="rounded-2xl border border-zinc-200 bg-white p-3 space-y-2">
     <div class="flex flex-wrap gap-2 items-center">
-      <span class="text-sm text-zinc-600 mr-2">视图控制：</span>
+      <span class="text-sm text-zinc-600 mr-2">横向(X)视图：</span>
       <button id="panLeftBtn"  class="px-3 py-1.5 border rounded">← 平移</button>
       <button id="zoomInBtn"   class="px-3 py-1.5 border rounded">放大</button>
       <button id="zoomOutBtn"  class="px-3 py-1.5 border rounded">缩小</button>
       <button id="panRightBtn" class="px-3 py-1.5 border rounded">平移 →</button>
-      <button id="resetZoomBtn" class="px-3 py-1.5 border rounded">重置缩放</button>
-      <span class="text-xs text-zinc-500 ml-2">作用于下方所有图</span>
+      <button id="resetZoomBtn" class="px-3 py-1.5 border rounded">重置</button>
+    </div>
+    <div class="flex flex-wrap gap-2 items-center">
+      <span class="text-sm text-zinc-600 mr-2">纵向(Y)视图：</span>
+      <button id="panUpBtn"    class="px-3 py-1.5 border rounded">↑ 上移</button>
+      <button id="zoomYInBtn"  class="px-3 py-1.5 border rounded">放大</button>
+      <button id="zoomYOutBtn" class="px-3 py-1.5 border rounded">缩小</button>
+      <button id="panDownBtn"  class="px-3 py-1.5 border rounded">下移 ↓</button>
+      <button id="resetYBtn"   class="px-3 py-1.5 border rounded">重置</button>
     </div>
   </section>
 
-  <!-- 动态图表容器：每种颜色生成一个图块 -->
+  <!-- 每种颜色生成一个图 -->
   <section id="chartsHost" class="space-y-6"></section>
 
   <footer class="text-xs text-zinc-500">数据来源：/AppleStockChecker/iphones/ 与 /AppleStockChecker/purchasing-price-records/（需登录）</footer>
 </div>
 
 <script>
-const apiBase = '/AppleStockChecker';
+/* -------------------- 常量与基础工具 -------------------- */
+const API_BASE = '/AppleStockChecker';
 const $ = s => document.querySelector(s);
-let charts = [];  // 动态生成的 Chart 实例数组
-let COMBOS = new Map(); // key: "model|capacity_gb" -> [{color, pn}]
+let charts = [];           // 每色图实例集合
+let mergedChart = null;    // 顶部合并图实例
+let COMBOS = new Map();    // "model|capacity" -> [{color, pn}, ...]
 const FETCH_INIT = { credentials: "same-origin" };
+const CHART_HEIGHT = 130;  // 统一图表高度
 
-// —— 登录保护：未登录跳转 —— //
+// ★ 改动点：平均线配置
+// A：黑线，bucketMinutes=分桶分钟（原方法）；B/C：在 A 上做“时间窗(分钟)”移动平均（windowMinutes）。
+const AVG_LINES_DEFAULTS = [
+  { id:'A', label:'平均线 A(黑)',  bucketMinutes:30,  lineWidth:3, color:'#000000', dash:'solid', shops:'ALL' },
+  { id:'B', label:'平均线 B',      windowMinutes:60,  lineWidth:2, color:'#ff0077', dash:'dash',  shops:'ALL' },
+  { id:'C', label:'平均线 C',      windowMinutes:240, lineWidth:2, color:'#00bcd4', dash:'dot',   shops:'ALL' },
+];
+const LINE_DASH = { solid:[], dash:[6,4], dot:[2,3], dashdot:[6,4,2,3] };
+const LINE_PALETTE=["#2563eb","#16a34a","#f59e0b","#ef4444","#8b5cf6","#06b6d4","#a855f7","#f97316","#22c55e","#3b82f6","#e11d48","#14b8a6","#7c3aed","#0ea5e9","#84cc16"];
+
 function handleAuth(resp){
   if (resp.status === 401 || resp.status === 403 || (resp.redirected && resp.url.includes('/accounts/login'))){
     const next = encodeURIComponent(location.pathname + location.search);
@@ -94,29 +145,24 @@ function handleAuth(resp){
   }
   return true;
 }
-
-// —— 实用函数 —— //
-function esc(s){return (s??'').toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));}
+function esc(s){return (s??'').toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;","&gt;":"&gt;","\"":"&quot;"}[c]));}
 function toISODate(d){ return new Date(d).toISOString(); }
 function normalizeNext(u){ return u ? new URL(u, location.origin).toString() : null; }
-function slot30Key(ts){ const d=new Date(ts); d.setSeconds(0,0); const mins=d.getHours()*60+d.getMinutes(); const slot=Math.floor(mins/30)*30; d.setHours(Math.floor(slot/60),slot%60,0,0); return d.getTime(); }
-
-// —— 颜色名 → 近似色（用于图标题）—— //
+// 横轴仅标注每日 0:00
+function tickMidnightLabel(value){ const d=new Date(value); return (d.getHours()===0&&d.getMinutes()===0)? d.toISOString().slice(0,10) : ''; }
+// 简易颜色映射用于标题
 function colorHex(colorName){
-  const name = (colorName||'').toLowerCase();
-  const map = {
-    'black titanium':'#3b3b3b','black':'#111111','midnight':'#0a0b0d','space gray':'#4b4b4b','graphite':'#4a4a4a',
-    'white titanium':'#e6e6e6','white':'#f5f5f5','starlight':'#f2efe6','silver':'#e8e8e8',
-    'blue titanium':'#2a4e7f','blue':'#2563eb','deep blue':'#1e3a8a',
-    'natural titanium':'#9a8772','desert titanium':'#c9a86a','gold':'#e0c066',
-    'green':'#16a34a','purple':'#7e22ce','pink':'#f472b6','yellow':'#eab308',
-    'cosmic orange':'#ff7a32','orange':'#ff7a32','red':'#ef4444'
-  };
-  for (const key of Object.keys(map)) if (name.includes(key)) return map[key];
-  return '#0ea5e9'; // 默认青色
+  const name=(colorName||'').toLowerCase();
+  const map={'black titanium':'#3b3b3b','black':'#111111','midnight':'#0a0b0d','space gray':'#4b4b4b','graphite':'#4a4a4a',
+             'white titanium':'#e6e6e6','white':'#f5f5f5','starlight':'#f2efe6','silver':'#e8e8e8',
+             'blue titanium':'#2a4e7f','blue':'#2563eb','deep blue':'#1e3a8a',
+             'natural titanium':'#9a8772','desert titanium':'#c9a86a','gold':'#e0c066',
+             'green':'#16a34a','purple':'#7e22ce','pink':'#f472b6','yellow':'#eab308',
+             'cosmic orange':'#ff7a32','orange':'#ff7a32','red':'#ef4444'};
+  for(const k of Object.keys(map)) if(name.includes(k)) return map[k];
+  return '#0ea5e9';
 }
 
-// —— 分页拉取 —— //
 async function fetchAll(url, maxPages=80){
   const out=[]; let next=url, page=0;
   while(next && page<maxPages){
@@ -130,305 +176,445 @@ async function fetchAll(url, maxPages=80){
   return out;
 }
 
-// —— 构建“机型+容量”下拉 —— //
+/* -------------------- 下拉与店铺勾选 -------------------- */
 async function buildCombos(){
   COMBOS.clear();
-  let url = `${apiBase}/iphones/?ordering=model_name`;
-  while (url){
-    const r = await fetch(url, FETCH_INIT); if(!handleAuth(r)) throw "未登录";
-    const j = await r.json(); const rows = j.results||j;
-    for (const x of rows){
+  let url=`${API_BASE}/iphones/?ordering=model_name`;
+  while(url){
+    const r=await fetch(url, FETCH_INIT); if(!handleAuth(r)) throw "未登录";
+    const j=await r.json(); const rows=j.results||j;
+    for(const x of rows){
       const key = `${x.model_name}|${x.capacity_gb}`;
-      const arr = COMBOS.get(key) || [];
-      arr.push({ color: x.color, pn: x.part_number });
+      const arr = COMBOS.get(key)||[];
+      arr.push({color:x.color, pn:x.part_number});
       COMBOS.set(key, arr);
     }
     url = normalizeNext(j.next);
   }
-  const sel = $('#comboSelect'); sel.innerHTML='';
+  const sel=$('#comboSelect'); sel.innerHTML='';
   Array.from(COMBOS.keys())
-    .sort((a,b)=>{ const [mA,cA]=a.split('|'),[mB,cB]=b.split('|'); if(mA!==mB) return mA.localeCompare(mB); return Number(cA)-Number(cB); })
+    .sort((a,b)=>{const[ma,ca]=a.split('|'),[mb,cb]=b.split('|'); if(ma!==mb)return ma.localeCompare(mb); return Number(ca)-Number(cb);})
     .forEach(key=>{
       const [m,c]=key.split('|'); const cap=(Number(c)%1024===0)?`${Number(c)/1024}TB`:`${c}GB`;
-      const opt=document.createElement('option'); opt.value=key; opt.textContent=`${m} ${cap}`; sel.appendChild(opt);
+      const op=document.createElement('option'); op.value=key; op.textContent=`${m} ${cap}`; sel.appendChild(op);
     });
 }
-
-// —— 载入店铺并渲染勾选 —— //
 async function loadShops(){
-  const names = [];
-  let url=`${apiBase}/secondhand-shops/?ordering=name`;
+  const names=[]; let url=`${API_BASE}/secondhand-shops/?ordering=name`;
   while(url){
     const r=await fetch(url, FETCH_INIT); if(!handleAuth(r)) throw "未登录";
     const j=await r.json(); (j.results||j).forEach(s=>names.push(s.name));
-    url = normalizeNext(j.next);
+    url=normalizeNext(j.next);
   }
   names.sort((a,b)=>a.localeCompare(b));
   const host=$('#shopChecks'); host.innerHTML='';
   const allId='shop_all';
   host.insertAdjacentHTML('beforeend', `<label class="inline-flex items-center gap-1"><input id="${allId}" type="checkbox" class="w-4 h-4" checked> <span>全选</span></label>`);
   document.getElementById(allId).addEventListener('change', e=>{
-    const on=e.target.checked; host.querySelectorAll('input[type="checkbox"][data-shop]').forEach(cb=>cb.checked=on);
+    host.querySelectorAll('input[data-shop]').forEach(cb=>cb.checked=e.target.checked);
   });
-  for (const name of names){
-    const id=`shop_${btoa(unescape(encodeURIComponent(name))).replace(/=/g,'')}`;
-    host.insertAdjacentHTML('beforeend', `<label class="inline-flex items-center gap-1"><input id="${id}" data-shop type="checkbox" class="w-4 h-4" checked> <span>${esc(name)}</span></label>`);
+  for(const n of names){
+    const id=`shop_${btoa(unescape(encodeURIComponent(n))).replace(/=/g,'')}`;
+    host.insertAdjacentHTML('beforeend', `<label class="inline-flex items-center gap-1"><input id="${id}" data-shop type="checkbox" class="w-4 h-4" checked> <span>${esc(n)}</span></label>`);
   }
   $('#avgHint').textContent = `（已载入门店：${names.length}）`;
 }
 function getSelectedShops(){
   const set=new Set();
-  document.querySelectorAll('#shopChecks input[type="checkbox"][data-shop]').forEach(cb=>{
+  document.querySelectorAll('#shopChecks input[data-shop]').forEach(cb=>{
     if(cb.checked) set.add(cb.nextElementSibling?.textContent||'');
   });
   return set;
 }
 
-// —— 计算平均（30 分钟桶，跨“选定门店”算术平均）—— //
-function calcAvgSlot30(datasetsByShop, selectedShops){
-  const acc = new Map(); // slot -> {sum,n}
-  for (const ds of datasetsByShop){  // ds 一条线 = 一个“店”的序列
-    if (!selectedShops.has(ds.label)) continue;
-    for (const p of ds.data || []){
-      if (p==null || p.y==null || Number.isNaN(p.y)) continue;
-      const k=slot30Key(p.x);
-      const cur=acc.get(k)||{sum:0,n:0};
-      cur.sum+=Number(p.y); cur.n+=1; acc.set(k,cur);
+/* -------------------- 平均计算：A=分桶平均；B/C=基于A的时间窗MA -------------------- */
+// A：分桶平均（分钟）
+function slotKeyByMinutes(ts, minutes){
+  const d=new Date(ts); d.setSeconds(0,0);
+  const m=Math.max(1, parseInt(minutes||1,10));
+  const total=d.getHours()*60+d.getMinutes();
+  const slot=Math.floor(total/m)*m;
+  d.setHours(Math.floor(slot/60), slot%60, 0, 0);
+  return d.getTime();
+}
+function calcAvgByBucket(datasetsByShop, bucketMinutes, selectedShops){
+  const acc=new Map();
+  for(const ds of datasetsByShop){
+    if(!selectedShops.has(ds.label)) continue;
+    for(const p of ds.data||[]){
+      if(!p||p.y==null||Number.isNaN(p.y)) continue;
+      const k=slotKeyByMinutes(p.x, bucketMinutes);
+      const cur=acc.get(k)||{sum:0,n:0}; cur.sum+=Number(p.y); cur.n+=1; acc.set(k,cur);
     }
   }
   return Array.from(acc.entries()).sort((a,b)=>a[0]-b[0]).map(([k,v])=>({x:k,y:v.n?v.sum/v.n:null}));
 }
+// B/C：在 A 的序列上做“时间窗(分钟)”移动平均
+function calcMovingAverageTime(points, windowMinutes){
+  if(!points||!points.length) return [];
+  const wms=Math.max(1, parseInt(windowMinutes||1,10))*60*1000;
+  const pts=[...points].sort((a,b)=>a.x-b.x);
+  const out=[]; let head=0, sum=0, cnt=0;
+  for(let i=0;i<pts.length;i++){
+    sum+=pts[i].y; cnt+=1;
+    while(head<=i && (pts[i].x - pts[head].x) > wms){ sum-=pts[head].y; cnt-=1; head+=1; }
+    out.push({x:pts[i].x, y: sum/cnt});
+  }
+  return out;
+}
 
-// —— 颜色 → 每店一条线（仅新品价） —— //
-async function fetchSeriesForColor(pn, days){
-  const recorded_after = toISODate(Date.now() - Math.max(1, days|0)*24*60*60*1000);
-  const params = new URLSearchParams({ iphone_part_number: pn, recorded_after, ordering: 'recorded_at' });
-  const rows = await fetchAll(`${apiBase}/purchasing-price-records/?${params.toString()}`);
-
-  // 分店聚合
-  const byShop = new Map(); // shop -> [{x,y}]
-  const shopNames = new Set();
-  for (const r of rows){
-    const name = r.shop_name || `Shop#${r.shop}`;
-    shopNames.add(name);
+/* -------------------- 数据构造（每店线） -------------------- */
+async function fetchSeriesForPN(pn, days){
+  const recorded_after = toISODate(Date.now()-Math.max(1,days|0)*24*60*60*1000);
+  const params = new URLSearchParams({iphone_part_number:pn, recorded_after, ordering:'recorded_at'});
+  const rows = await fetchAll(`${API_BASE}/purchasing-price-records/?${params.toString()}`);
+  const byShop=new Map();
+  for(const r of rows){
+    const name=r.shop_name || `Shop#${r.shop}`;
     const t=new Date(r.recorded_at).getTime();
-    const arr = byShop.get(name) || [];
-    arr.push({x:t, y:r.price_new});
+    const arr=byShop.get(name)||[];
+    arr.push({x:t,y:r.price_new});
     byShop.set(name, arr);
   }
-  // 生成每店一条曲线
-  const datasets = Array.from(byShop.entries()).map(([name, pts])=>({
-    label: name, data: pts
+  return Array.from(byShop.entries()).map(([name,pts])=>({
+    label:name, data: pts.filter(p=>p&&p.y!=null&&!Number.isNaN(p.y)).sort((a,b)=>a.x-b.x)
   }));
-  return { datasets, shopNames: Array.from(shopNames).sort((a,b)=>a.localeCompare(b)) };
 }
 
-// —— 调色板（区分不同“店”的线色；平均线始终黑色）—— //
-const LINE_PALETTE = [
-  "#2563eb","#16a34a","#f59e0b","#ef4444","#8b5cf6","#06b6d4","#a855f7","#f97316","#22c55e","#3b82f6",
-  "#e11d48","#14b8a6","#7c3aed","#0ea5e9","#84cc16"
-];
-
-// —— 画一张“颜色”的图：每店一条线 + 黑色平均 —— //
-function makeChartForColor(colorName, datasetsPerShop, showPoints){
-  // 根据店数量给线分配颜色
-  const dsLines = datasetsPerShop.map((d, i)=>({
-    label: d.label,
-    data: d.data,
-    borderWidth: 1,
-    borderColor: LINE_PALETTE[i % LINE_PALETTE.length],
-    backgroundColor: LINE_PALETTE[i % LINE_PALETTE.length],
-    pointRadius: showPoints ? 2 : 0,
-    spanGaps: true
-  }));
-  const selectedShops = getSelectedShops();
-  const avgData = calcAvgSlot30(dsLines, selectedShops);
-  const avgDataset = {
-    label: '平均(选中门店)',
-    data: avgData,
-    borderColor: '#000',
-    backgroundColor: '#000',
-    borderWidth: 3,
-    pointRadius: 0,
-    spanGaps: true,
-    order: 0
-  };
-
-  const canvas = document.createElement('canvas');
-  const chart = new Chart(canvas, {
-    type: 'line',
-    data: { datasets: [...dsLines, ...( $('#toggleAvg').checked ? [avgDataset] : [] )] },
-    options: {
-      parsing: false, animation: false, normalized: true, spanGaps: true,
-      interaction: { mode: 'index', intersect: false },
-      plugins: {
-        legend: { position: 'top' },
-        tooltip: { callbacks: { label: (it)=> `${it.dataset.label}: ¥${Number(it.parsed.y).toLocaleString()}` } }
-      },
-      scales: {
-        x: { type:'time', time:{unit:'hour'}, title:{display:true,text:'记录时间'} },
-        y: { beginAtZero:false, title:{display:true,text:'价格（円）'} }
-      },
-      elements: { line:{ tension:0.2 } }
+/* -------------------- 右侧“最新值”标注（防重叠 + 白底遮挡） -------------------- */
+function makeRightLabelPlugin(id){
+  return {
+    id,
+    afterDatasetsDraw(chart){
+      const {ctx, chartArea, scales:{x,y}}=chart;
+      ctx.save(); ctx.textAlign='left'; ctx.textBaseline='middle'; ctx.font='12px system-ui';
+      const placed=[]; const minGap=14;
+      chart.data.datasets.forEach(ds=>{
+        if(!ds.data||!ds.data.length) return;
+        const last=ds.data.reduce((a,b)=> (a&&a.x>b.x)?a:b);
+        if(!last||last.y==null) return;
+        let ty=y.getPixelForValue(last.y);
+        for(let tries=0; tries<20; tries++){
+          if(placed.every(p=>Math.abs(p-ty)>=minGap)) break;
+          ty += (tries%2===0?1:-1)*(minGap-2);
+        }
+        placed.push(ty);
+        const tx=chartArea.right+8;
+        const label=` ${ds.label}: ¥${Number(last.y).toLocaleString()}`;
+        const metrics=ctx.measureText(label); const boxW=10+metrics.width+6, boxH=16;
+        ctx.fillStyle='rgba(255,255,255,0.9)'; ctx.fillRect(tx-2, ty-boxH/2, boxW, boxH);
+        ctx.fillStyle=ds.borderColor||'#000'; ctx.fillRect(tx, ty-5, 8, 10);
+        ctx.fillStyle='#111'; ctx.fillText(label, tx+10, ty);
+      });
+      ctx.restore();
     }
-  });
-  chart.__baseDatasets = dsLines;  // 用于锁定 y 域 / 重算平均
-  return { canvas, chart };
+  };
 }
 
-// —— 锁定 y 轴（只做横向缩放/平移）—— //
-function initDomain(c){
-  if (!c || c.__domain) return;
-  const base=c.__baseDatasets||[], pts=base.flatMap(ds=>ds.data||[]);
+/* -------------------- 缩放/平移：X/Y 独立 -------------------- */
+function initFixedDomains(c){
+  if(!c||c.__domain) return;
+  const pts=(c.data.datasets||[]).flatMap(ds=>ds.data||[]);
   const xs=pts.map(p=>p?.x).filter(v=>typeof v==='number'&&!Number.isNaN(v));
   const ys=pts.map(p=>p?.y).filter(v=>typeof v==='number'&&!Number.isNaN(v));
   if(!xs.length||!ys.length) return;
   const xMin=Math.min(...xs), xMax=Math.max(...xs);
   const yMin0=Math.min(...ys), yMax0=Math.max(...ys), pad=(yMax0-yMin0)*0.05;
-  const yMin=yMin0-pad, yMax=yMax0+pad;
-  c.__domain={xMin,xMax,yMin,yMax};
-  if(c.options.scales?.y){ c.options.scales.y.min=yMin; c.options.scales.y.max=yMax; }
+  c.__domain={ xMin, xMax, yMin:yMin0-pad, yMax:yMax0+pad, yCurMin:yMin0-pad, yCurMax:yMax0+pad };
+  c.options.scales.y.min=c.__domain.yCurMin;
+  c.options.scales.y.max=c.__domain.yCurMax;
+  c.update('none');
 }
-function getRange(c){
-  const dom=c.__domain||{}; const s=c.options.scales?.x||{};
-  let min=s.min??c.scales?.x?.min??dom.xMin, max=s.max??c.scales?.x?.max??dom.xMax;
-  return {min,max};
-}
-function zoomAll(factor){
-  for (const c of charts){
-    if(!c) continue; initDomain(c); const dom=c.__domain; if(!dom) continue;
-    const r=getRange(c); if(!(r.min<r.max)) continue;
-    const mid=(r.min+r.max)/2, range=(r.max-r.min)/factor;
-    let newMin=mid-range/2, newMax=mid+range/2;
-    if(newMin<dom.xMin){ newMin=dom.xMin; newMax=dom.xMin+range; }
-    if(newMax>dom.xMax){ newMax=dom.xMax; newMin=dom.xMax-range; }
-    if(!(newMin<newMax)){ newMin=dom.xMin; newMax=dom.xMax; }
-    c.options.scales.x.min=Math.floor(newMin);
-    c.options.scales.x.max=Math.ceil(newMax);
-    c.update('none');
-  }
-}
-function panAll(frac){
-  for (const c of charts){
-    if(!c) continue; initDomain(c); const dom=c.__domain; if(!dom) continue;
-    const r=getRange(c); if(!(r.min<r.max)) continue;
-    const width=(r.max-r.min), delta=width*frac;
-    let newMin=r.min+delta, newMax=r.max+delta;
-    if(newMin<dom.xMin){ newMin=dom.xMin; newMax=dom.xMin+width; }
-    if(newMax>dom.xMax){ newMax=dom.xMax; newMin=dom.xMax-width; }
-    c.options.scales.x.min=Math.floor(newMin);
-    c.options.scales.x.max=Math.ceil(newMax);
-    c.update('none');
-  }
-}
-function resetAllZoom(){
-  for (const c of charts){
-    if(!c) continue; initDomain(c); const dom=c.__domain; if(!dom) continue;
-    c.options.scales.x.min=dom.xMin; c.options.scales.x.max=dom.xMax; c.update('none');
-  }
-}
+function getXRange(c){ const dom=c.__domain||{}; const s=c.options.scales?.x||{}; let min=s.min ?? c.scales?.x?.min ?? dom.xMin, max=s.max ?? c.scales?.x?.max ?? dom.xMax; return {min,max}; }
 
-// —— 主流程 —— //
-function destroyAllCharts(){ charts.forEach(c=>c?.destroy()); charts = []; }
-function getSelectedShops(){ const set=new Set(); document.querySelectorAll('#shopChecks input[data-shop]').forEach(cb=>{ if(cb.checked) set.add(cb.nextElementSibling?.textContent||''); }); return set; }
+// X 操作
+function zoomAllX(f){ for(const c of [mergedChart,...charts]){ if(!c) continue; initFixedDomains(c); const d=c.__domain; const r=getXRange(c); if(!(r.min<r.max)) continue; const mid=(r.min+r.max)/2, range=(r.max-r.min)/f; let a=mid-range/2, b=mid+range/2; if(a<d.xMin){a=d.xMin;b=d.xMin+range;} if(b>d.xMax){b=d.xMax;a=d.xMax-range;} if(!(a<b)){a=d.xMin;b=d.xMax;} c.options.scales.x.min=Math.floor(a); c.options.scales.x.max=Math.ceil(b); c.update('none'); } }
+function panAllX(frac){ for(const c of [mergedChart,...charts]){ if(!c) continue; initFixedDomains(c); const d=c.__domain; const r=getXRange(c); if(!(r.min<r.max)) continue; const width=(r.max-r.min), delta=width*frac; let a=r.min+delta, b=r.max+delta; if(a<d.xMin){a=d.xMin;b=d.xMin+width;} if(b>d.xMax){b=d.xMax;a=d.xMax-width;} c.options.scales.x.min=Math.floor(a); c.options.scales.x.max=Math.ceil(b); c.update('none'); } }
+function resetAllX(){ for(const c of [mergedChart,...charts]){ if(!c) continue; initFixedDomains(c); const d=c.__domain; c.options.scales.x.min=d.xMin; c.options.scales.x.max=d.xMax; c.update('none'); } }
 
-async function run(){
-  const loading=$('#loading'); loading.classList.remove('hidden');
-  try{
-    const key = $('#comboSelect').value;
-    if (!key) throw new Error('请选择 机型 + 容量');
-    const days = Math.max(1, parseInt($('#daysInput').value||'30',10));
-    const showPoints = $('#showPoints').checked;
+// Y 操作
+function zoomAllY(f){ for(const c of [mergedChart,...charts]){ if(!c) continue; initFixedDomains(c); const d=c.__domain; const min=d.yCurMin, max=d.yCurMax; if(!(min<max)) continue; const mid=(min+max)/2, range=(max-min)/f; let a=mid-range/2, b=mid+range/2; if(a<d.yMin){a=d.yMin;b=d.yMin+range;} if(b>d.yMax){b=d.yMax;a=d.yMax-range;} if(!(a<b)){a=d.yMin;b=d.yMax;} d.yCurMin=a; d.yCurMax=b; c.options.scales.y.min=a; c.options.scales.y.max=b; c.update('none'); } }
+function panAllY(frac){ for(const c of [mergedChart,...charts]){ if(!c) continue; initFixedDomains(c); const d=c.__domain; const min=d.yCurMin, max=d.yCurMax; if(!(min<max)) continue; const h=(max-min), delta=h*frac; let a=min+delta, b=max+delta; if(a<d.yMin){a=d.yMin;b=d.yMin+h;} if(b>d.yMax){b=d.yMax;a=d.yMax-h;} d.yCurMin=a; d.yCurMax=b; c.options.scales.y.min=a; c.options.scales.y.max=b; c.update('none'); } }
+function resetAllY(){ for(const c of [mergedChart,...charts]){ if(!c) continue; initFixedDomains(c); const d=c.__domain; d.yCurMin=d.yMin; d.yCurMax=d.yMax; c.options.scales.y.min=d.yCurMin; c.options.scales.y.max=d.yCurMax; c.update('none'); } }
 
-    // 载入/渲染门店（一次性）
-    await loadShops();
+/* -------------------- 图表构造：每色图 + 合并图 -------------------- */
+function makeColorChart(container, colorName, datasetsPerShop, showPoints){
+  const canvas=document.createElement('canvas'); canvas.height=CHART_HEIGHT; container.appendChild(canvas);
 
-    // 清空图表容器
-    destroyAllCharts();
-    $('#chartsHost').innerHTML = '';
+  // 店线（每家店一条）
+  const storeLines = datasetsPerShop.map((d,i)=>({
+    label:d.label,
+    data:[...d.data].sort((a,b)=>a.x-b.x),
+    borderColor:LINE_PALETTE[i%LINE_PALETTE.length],
+    backgroundColor:LINE_PALETTE[i%LINE_PALETTE.length],
+    borderWidth:1, pointRadius: showPoints?2:0, spanGaps:false
+  }));
 
-    // 遍历该组合下的所有颜色（每色一个图）
-    const parts = COMBOS.get(key) || [];
-    // 用颜色名去重保持顺序
-    const colors = Array.from(new Map(parts.map(p=>[p.color, p.pn])).entries()); // [ [color,pn], ... ]
-    $('#comboMeta').textContent = `该组合包含颜色 ${colors.length} 种`;
+  const selShops=getSelectedShops();
 
-    for (const [colorName, pn] of colors){
-      // 拉该颜色（该 PN）的数据，按“店”分线
-      const { datasets, shopNames } = await fetchSeriesForColor(pn, days);
+  // ★ A=分桶平均（黑线）
+  const cfgA = AVG_LINES_DEFAULTS[0];
+  const lineShopsA = (cfgA.shops==='ALL') ? selShops : new Set([...selShops].filter(s => cfgA.shops.includes(s)));
+  const seriesA = calcAvgByBucket(storeLines, cfgA.bucketMinutes, lineShopsA).sort((a,b)=>a.x-b.x);
+  const avgA = {
+    label: cfgA.label, data: seriesA,
+    borderColor: cfgA.color, backgroundColor: cfgA.color,
+    borderWidth: cfgA.lineWidth, borderDash: LINE_DASH[cfgA.dash]||[],
+    pointRadius:0, spanGaps:false, order:0
+  };
 
-      // 生成图块 + 标题（用近似色）
-      const hex = colorHex(colorName);
-      const card = document.createElement('div');
-      card.className = 'rounded-2xl border border-zinc-200 bg-white';
-      const head = document.createElement('div');
-      head.className = 'px-3 py-2 border-b border-zinc-200 text-sm flex items-center gap-2';
-      head.innerHTML = `<span class="inline-block w-3 h-3 rounded" style="background:${hex}"></span>
-                        <span style="color:${hex};font-weight:600">${esc(colorName)}</span>`;
-      const body = document.createElement('div'); body.className = 'p-3';
+  // ★ B/C = 在 A 的序列上做“时间窗(分钟)”移动平均
+  const others = [1,2].map(idx=>{
+    const cfg = AVG_LINES_DEFAULTS[idx];
+    const ma  = calcMovingAverageTime(seriesA, Math.max(1, cfg.windowMinutes||60));
+    return {
+      label: cfg.label, data: ma,
+      borderColor: cfg.color, backgroundColor: cfg.color,
+      borderWidth: cfg.lineWidth, borderDash: LINE_DASH[cfg.dash]||[],
+      pointRadius:0, spanGaps:false, order:0
+    };
+  });
 
-      const { canvas, chart } = makeChartForColor(colorName, datasets, showPoints);
-      body.appendChild(canvas);
-      card.appendChild(head); card.appendChild(body);
-      $('#chartsHost').appendChild(card);
+  const chart=new Chart(canvas,{
+    type:'line',
+    data:{ datasets:[...storeLines, ...( $('#toggleAvg').checked ? [avgA, ...others] : [] )] },
+    options:{
+      parsing:false, animation:false, normalized:true, spanGaps:false,
+      interaction:{mode:'index',intersect:false},
+      layout:{ padding:{ right:170 } }, // 右侧为标注留白
+      plugins:{ legend:{position:'top'}, tooltip:{callbacks:{label:(it)=>`${it.dataset.label}: ¥${Number(it.parsed.y).toLocaleString()}`}} },
+      scales:{
+        x:{ type:'time', time:{unit:'day'}, ticks:{ callback: tickMidnightLabel }, title:{display:true,text:'日期'} },
+        y:{ position:'right', beginAtZero:false, title:{display:true,text:'价格（円）'} }
+      },
+      elements:{ line:{ tension:0.2 } }
+    },
+    plugins:[ makeRightLabelPlugin('rightLabelsColor') ]
+  });
 
-      // 锁定 y 轴 & 汇入集合
-      initDomain(chart);
-      charts.push(chart);
-    }
-
-    // 初次计算平均线（基于当前门店勾选）
-    recalcAvgAllCharts();
-
-  }catch(e){
-    if(e==="未登录") return;
-    destroyAllCharts();
-    $('#comboMeta').textContent='';
-    const div = document.createElement('div');
-    div.className = 'p-3 rounded bg-red-50 text-red-700';
-    div.textContent = `加载失败：${e.message||e}`;
-    $('#chartsHost').appendChild(div);
-  }finally{
-    loading.classList.add('hidden');
-  }
+  initFixedDomains(chart);
+  return chart;
 }
 
-function recalcAvgAllCharts(){
-  const showAvg = $('#toggleAvg').checked;
-  const selShops = getSelectedShops();
-  charts.forEach(c=>{
-    // 保留“店线”数据，去掉旧平均
-    const base = (c.__baseDatasets||[]);
-    c.data.datasets = base.map((d,i)=>({
-      label:d.label, data:d.data,
-      borderWidth:1, borderColor: d.borderColor, backgroundColor: d.backgroundColor,
-      pointRadius: $('#showPoints').checked?2:0, spanGaps:true
-    }));
-    if (showAvg){
-      const avgData = calcAvgSlot30(base, selShops);
-      c.data.datasets.push({
-        label:'平均(选中门店)', data:avgData,
-        borderColor:'#000', backgroundColor:'#000', borderWidth:3, pointRadius:0, spanGaps:true, order:0
-      });
-    }
-    initDomain(c);
-    c.update('none');
+function makeMergedChart(canvas, perColorDatasets, showPoints){
+  canvas.height=CHART_HEIGHT;
+
+  // 合并多颜色 → 每店点集（仍为“每店一条线”）
+  const byShop=new Map();
+  perColorDatasets.forEach(({datasets})=>{
+    datasets.forEach(ds=>{
+      const arr=byShop.get(ds.label)||[];
+      arr.push(...ds.data);
+      byShop.set(ds.label, arr);
+    });
+  });
+
+  const storeLines = Array.from(byShop.entries()).map(([name,pts],i)=>({
+    label:name,
+    data: pts.filter(p=>p&&p.y!=null&&!Number.isNaN(p.y)).sort((a,b)=>a.x-b.x),
+    borderColor:LINE_PALETTE[i%LINE_PALETTE.length],
+    backgroundColor:LINE_PALETTE[i%LINE_PALETTE.length],
+    borderWidth:1, pointRadius: showPoints?2:0, spanGaps:false
+  }));
+
+  const selShops=getSelectedShops();
+
+  // ★ A=分桶平均（黑线）
+  const cfgA = AVG_LINES_DEFAULTS[0];
+  const lineShopsA = (cfgA.shops==='ALL') ? selShops : new Set([...selShops].filter(s => cfgA.shops.includes(s)));
+  const seriesA = calcAvgByBucket(storeLines, cfgA.bucketMinutes, lineShopsA).sort((a,b)=>a.x-b.x);
+  const avgA = {
+    label: cfgA.label, data: seriesA,
+    borderColor: cfgA.color, backgroundColor: cfgA.color,
+    borderWidth: cfgA.lineWidth, borderDash: LINE_DASH[cfgA.dash]||[],
+    pointRadius:0, spanGaps:false, order:0
+  };
+
+  // ★ B/C = A 的时间窗(分钟)移动平均
+  const others = [1,2].map(idx=>{
+    const cfg = AVG_LINES_DEFAULTS[idx];
+    const ma  = calcMovingAverageTime(seriesA, Math.max(1, cfg.windowMinutes||60));
+    return {
+      label: cfg.label, data: ma,
+      borderColor: cfg.color, backgroundColor: cfg.color,
+      borderWidth: cfg.lineWidth, borderDash: LINE_DASH[cfg.dash]||[],
+      pointRadius:0, spanGaps:false, order:0
+    };
+  });
+
+  const chart=new Chart(canvas,{
+    type:'line',
+    data:{ datasets:[...storeLines, ...( $('#toggleAvg').checked ? [avgA, ...others] : [] )] },
+    options:{
+      parsing:false, animation:false, normalized:true, spanGaps:false,
+      interaction:{mode:'index',intersect:false},
+      layout:{ padding:{ right:170 } },
+      plugins:{ legend:{position:'top'}, tooltip:{callbacks:{label:(it)=>`${it.dataset.label}: ¥${Number(it.parsed.y).toLocaleString()}`}} },
+      scales:{
+        x:{ type:'time', time:{unit:'day'}, ticks:{ callback: tickMidnightLabel }, title:{display:true,text:'日期'} },
+        y:{ position:'right', beginAtZero:false, title:{display:true,text:'价格（円）'} }
+      },
+      elements:{ line:{ tension:0.2 } }
+    },
+    plugins:[ makeRightLabelPlugin('rightLabelsMerged') ]
+  });
+
+  initFixedDomains(chart);
+  return chart;
+}
+
+/* -------------------- 平均线配置表渲染 -------------------- */
+function renderAvgConfigTable(){
+  const tbody=$('#avgConfigTbody'); tbody.innerHTML='';
+  AVG_LINES_DEFAULTS.forEach((cfg,idx)=>{
+    const isA = (cfg.id==='A');
+    const valueCell = isA
+      ? `<input data-avg="bucket" data-idx="${idx}" type="number" min="1" value="${cfg.bucketMinutes||30}" class="w-24 border rounded px-1 py-0.5"/>`
+      : `<input data-avg="winm"   data-idx="${idx}" type="number" min="1" value="${cfg.windowMinutes||60}" class="w-24 border rounded px-1 py-0.5"/>`;
+    const tr=document.createElement('tr'); tr.className='border-b';
+    tr.innerHTML=`
+      <td class="px-2 py-1 border">${esc(cfg.label)}</td>
+      <td class="px-2 py-1 border">${valueCell}</td>
+      <td class="px-2 py-1 border"><input data-avg="width" data-idx="${idx}" type="number" min="1" max="8" value="${cfg.lineWidth}" class="w-16 border rounded px-1 py-0.5"/></td>
+      <td class="px-2 py-1 border"><input data-avg="color" data-idx="${idx}" type="color" value="${cfg.color}" class="w-12 h-6 p-0 border rounded"/></td>
+      <td class="px-2 py-1 border">
+        <select data-avg="dash" data-idx="${idx}" class="border rounded px-1 py-0.5">
+          ${Object.keys(LINE_DASH).map(k=>`<option value="${k}" ${k===cfg.dash?'selected':''}>${k}</option>`).join('')}
+        </select>
+      </td>
+      <td class="px-2 py-1 border text-xs text-zinc-500">${isA?'黑线=分桶(分钟)平均':'基于黑线的时间窗(分钟)移动平均'}</td>`;
+    tbody.appendChild(tr);
+  });
+  tbody.querySelectorAll('[data-avg]').forEach(el=>{
+    el.addEventListener('change', ()=>{
+      const idx=Number(el.dataset.idx), kind=el.dataset.avg, v=el.value;
+      if(kind==='bucket') AVG_LINES_DEFAULTS[idx].bucketMinutes = Math.max(1, parseInt(v||'30',10));
+      if(kind==='winm')   AVG_LINES_DEFAULTS[idx].windowMinutes = Math.max(1, parseInt(v||'60',10));
+      if(kind==='width')  AVG_LINES_DEFAULTS[idx].lineWidth     = Math.max(1, parseInt(v||'1',10));
+      if(kind==='color')  AVG_LINES_DEFAULTS[idx].color         = v;
+      if(kind==='dash')   AVG_LINES_DEFAULTS[idx].dash          = v;
+    });
   });
 }
 
-// —— 事件 —— //
-$('#refreshBtn').addEventListener('click', run);
-$('#recalcAvgBtn').addEventListener('click', recalcAvgAllCharts);
-$('#toggleAvg').addEventListener('change', recalcAvgAllCharts);
-$('#zoomInBtn').addEventListener('click', ()=> zoomAll(1.2));
-$('#zoomOutBtn').addEventListener('click', ()=> zoomAll(0.833));
-$('#panLeftBtn').addEventListener('click', ()=> panAll(-0.2));
-$('#panRightBtn').addEventListener('click', ()=> panAll(0.2));
-$('#resetZoomBtn').addEventListener('click', resetAllZoom);
+/* -------------------- 重算平均（A先算，B/C基于A） -------------------- */
+function recalcAvgAllCharts(){
+  const showAvg=$('#toggleAvg').checked;
+  const selShops=getSelectedShops();
 
-// —— 初始化：构建“机型+容量”下拉 —— //
+  const apply=(chart)=>{
+    if(!chart) return;
+    const base = chart.data.datasets.filter(ds=>!AVG_LINES_DEFAULTS.some(cfg=>ds.label===cfg.label));
+    chart.data.datasets = base.map(ds=>({ ...ds, pointRadius: $('#showPoints').checked?2:0 }));
+
+    if(showAvg){
+      // A=分桶
+      const cfgA=AVG_LINES_DEFAULTS[0];
+      const lineShopsA=(cfgA.shops==='ALL')?selShops:new Set([...selShops].filter(s => cfgA.shops.includes(s)));
+      const seriesA = calcAvgByBucket(base, cfgA.bucketMinutes, lineShopsA).sort((a,b)=>a.x-b.x);
+      chart.data.datasets.push({
+        label: cfgA.label, data: seriesA,
+        borderColor: cfgA.color, backgroundColor: cfgA.color,
+        borderWidth: cfgA.lineWidth, borderDash: LINE_DASH[cfgA.dash]||[],
+        pointRadius:0, spanGaps:false, order:0
+      });
+      // B/C = 时间窗(分钟)MA(A)
+      const seriesForMA = seriesA;
+      [1,2].forEach(idx=>{
+        const cfg=AVG_LINES_DEFAULTS[idx];
+        const ma = calcMovingAverageTime(seriesForMA, Math.max(1,cfg.windowMinutes||60));
+        chart.data.datasets.push({
+          label: cfg.label, data: ma,
+          borderColor: cfg.color, backgroundColor: cfg.color,
+          borderWidth: cfg.lineWidth, borderDash: LINE_DASH[cfg.dash]||[],
+          pointRadius:0, spanGaps:false, order:0
+        });
+      });
+    }
+    initFixedDomains(chart);
+    chart.update('none');
+  };
+
+  apply(mergedChart);
+  charts.forEach(apply);
+}
+
+/* -------------------- 主流程：查询与绘图 -------------------- */
+async function run(){
+  const loading=$('#loading'); loading.classList.remove('hidden');
+  try{
+    const key=$('#comboSelect').value;
+    if(!key) throw new Error('请选择 机型 + 容量');
+    const days=Math.max(1, parseInt($('#daysInput').value||'30',10));
+    const showPoints=$('#showPoints').checked;
+
+    await loadShops();
+
+    charts.forEach(c=>c?.destroy()); charts=[];
+    if(mergedChart){ mergedChart.destroy(); mergedChart=null; }
+
+    const parts = COMBOS.get(key)||[];
+    const colors = Array.from(new Map(parts.map(p=>[p.color,p.pn])).entries()); // [ [color,pn], ... ]
+    $('#comboMeta').textContent = `该组合包含颜色 ${colors.length} 种`;
+
+    // 拉每个颜色的“每店线”
+    const perColorDatasets=[];
+    for(const [colorName,pn] of colors){
+      const datasets = await fetchSeriesForPN(pn, days);
+      perColorDatasets.push({colorName, datasets});
+    }
+
+    // 顶部合并图（A=分桶；B/C=时间窗MA(A)）
+    mergedChart = makeMergedChart(document.getElementById('chart-merged'), perColorDatasets, showPoints);
+
+    // 每色一图
+    const host=$('#chartsHost'); host.innerHTML='';
+    for(const {colorName,datasets} of perColorDatasets){
+      const card=document.createElement('div'); card.className='rounded-2xl border border-zinc-200 bg-white';
+      const head=document.createElement('div'); head.className='px-3 py-2 border-b border-zinc-200 text-sm flex items-center gap-2';
+      const hex=colorHex(colorName);
+      head.innerHTML = `<span class="inline-block w-3 h-3 rounded" style="background:${hex}"></span>
+                        <span style="color:${hex};font-weight:600">${esc(colorName)}</span>`;
+      const body=document.createElement('div'); body.className='p-3';
+      card.appendChild(head); card.appendChild(body); host.appendChild(card);
+
+      const chart = makeColorChart(body, colorName, datasets, showPoints);
+      charts.push(chart);
+    }
+
+  }catch(e){
+    if(e==="未登录") return;
+    charts.forEach(c=>c?.destroy()); charts=[];
+    if(mergedChart){mergedChart.destroy(); mergedChart=null;}
+    document.getElementById('chartsHost').innerHTML = `<div class="p-3 rounded bg-red-50 text-red-700">加载失败：${esc(e.message||e)}</div>`;
+  }finally{
+    $('#loading').classList.add('hidden');
+  }
+}
+
+/* -------------------- 事件绑定 -------------------- */
+document.getElementById('refreshBtn').addEventListener('click', run);
+document.getElementById('recalcAvgBtn').addEventListener('click', recalcAvgAllCharts);
+document.getElementById('toggleAvg').addEventListener('change', ()=>document.getElementById('recalcAvgBtn').click());
+
+// X（横向）
+document.getElementById('zoomInBtn').addEventListener('click', ()=> zoomAllX(1.2));
+document.getElementById('zoomOutBtn').addEventListener('click', ()=> zoomAllX(0.833));
+document.getElementById('panLeftBtn').addEventListener('click', ()=> panAllX(-0.2));
+document.getElementById('panRightBtn').addEventListener('click', ()=> panAllX(0.2));
+document.getElementById('resetZoomBtn').addEventListener('click', resetAllX);
+
+// Y（纵向）
+document.getElementById('zoomYInBtn').addEventListener('click', ()=> zoomAllY(1.2));
+document.getElementById('zoomYOutBtn').addEventListener('click', ()=> zoomAllY(0.833));
+document.getElementById('panUpBtn').addEventListener('click', ()=> panAllY(-0.2));
+document.getElementById('panDownBtn').addEventListener('click', ()=> panAllY(0.2));
+document.getElementById('resetYBtn').addEventListener('click', resetAllY);
+
+// 初始化：构建下拉 + 渲染平均线设置（A=分桶分钟；B/C=时间窗分钟）
 (async function init(){
   await buildCombos();
+  renderAvgConfigTable();
 })();
 </script>
 </body>

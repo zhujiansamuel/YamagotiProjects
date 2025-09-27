@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "rest_framework",
     "drf_spectacular",
+'easyaudit',
 
 ]
 
@@ -60,7 +61,7 @@ MIDDLEWARE = [
     "YamagotiProjects.middleware.login_required.LoginRequiredMiddleware",
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-
+'easyaudit.middleware.easyaudit.EasyAuditMiddleware',
     'simplepro.middlewares.SimpleMiddleware'
 ]
 
@@ -377,7 +378,8 @@ CKEDITOR_5_CONFIGS = {
                 {'model': 'paragraph', 'title': 'Paragraph', 'class': 'ck-heading_paragraph'},
                 {'model': 'heading1', 'view': 'h1', 'title': 'Heading 1', 'class': 'ck-heading_heading1'},
                 {'model': 'heading2', 'view': 'h3', 'title': 'Heading 2', 'class': 'ck-heading_heading2'},
-                {'model': 'heading3', 'view': 'h5', 'title': 'Heading 3', 'class': 'ck-heading_heading3'}
+                {'model': 'heading3', 'view': 'h5', 'title': 'Heading 3', 'class': 'ck-heading_heading3'},
+
             ]
         }
     },
@@ -443,7 +445,6 @@ SIMPLEUI_CONFIG = {
                                         },
                                        ]
                             },
-
                            {'name': 'iPhone公式在庫メタデータ',
                             'icon': 'fa-solid fa-file-contract',
                             'models': [{'name': 'Apple公式ストア',
@@ -456,7 +457,18 @@ SIMPLEUI_CONFIG = {
                                         },
                                        ]
                             },
-
+                           # {'name': 'TryForSomething',
+                           #  'icon': 'fa-solid fa-file-contract',
+                           #  'models': [{'name': 'chatjs',
+                           #              'icon': 'fa-solid fa-store',
+                           #              'url': '/AppleStockChecker/template-chartjs/',
+                           #              },
+                           #             {'name': 'iphone官方在库記録',
+                           #              'icon': 'fa-solid fa-truck-ramp-box',
+                           #              'url': '/admin/AppleStockChecker/inventoryrecord/'
+                           #              },
+                           #             ]
+                           #  },
                            ]
             },
 
@@ -482,3 +494,17 @@ else:
             "rest_framework.permissions.IsAuthenticated",
         ],
     }
+
+
+DJANGO_EASY_AUDIT_WATCH_MODEL_EVENTS = True
+DJANGO_EASY_AUDIT_WATCH_AUTH_EVENTS = True
+DJANGO_EASY_AUDIT_WATCH_REQUEST_EVENTS = False
+DJANGO_EASY_AUDIT_UNREGISTERED_URLS_DEFAULT = [r'^/static/',
+                                               r'^/favicon.ico$',
+                                               r'^/media/',
+                                               r'^/__debug__/',
+                                               r'^/ckeditor5/',
+                                               ]
+
+
+TIME_INPUT_FORMATS = "%H:%M"
