@@ -508,3 +508,14 @@ DJANGO_EASY_AUDIT_UNREGISTERED_URLS_DEFAULT = [r'^/static/',
 
 
 TIME_INPUT_FORMATS = "%H:%M"
+
+
+SHOP_DISPLAY_ORDER = [
+    "買取一丁目",   # shop3
+    "森森買取",     # shop5
+    "買取ルデヤ",   # shop6
+    "買取ホムラ",   # shop7
+    "買取wiki",     # shop8
+    "アキモバ",     # shop9
+    "ドラゴンモバイル" # shop10
+]

@@ -1,138 +1,38 @@
 from __future__ import annotations
 
-
 import uuid
-from django.shortcuts import render
-
-from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
-from django.utils.dateparse import parse_date
-from collections import defaultdict
-from django.db import transaction
 
 
 from .models import Iphone, OfficialStore, InventoryRecord
 from .serializers import OfficialStoreSerializer, InventoryRecordSerializer, IphoneSerializer
 from .serializers import UserSerializer
-from django.db.models import Q, F
-from math import ceil
-from datetime import timedelta
-from django.utils import timezone
-
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from rest_framework import status
-
 from .serializers import TrendResponseByPNSerializer
-from .utils.color_norm import normalize_color, synonyms_for_query, is_all_color
-from django.utils.dateparse import parse_datetime
 from rest_framework import viewsets, permissions, filters
 from drf_spectacular.utils import (
     extend_schema, extend_schema_view, OpenApiParameter, OpenApiTypes
 )
-from .models import SecondHandShop, PurchasingShopPriceRecord
 from .serializers import SecondHandShopSerializer, PurchasingShopPriceRecordSerializer
-
-import csv
-import io
-import re
-from datetime import datetime
 from math import ceil
-
-from django.db import transaction
-from django.utils import timezone
-from django.utils.dateparse import parse_datetime, parse_date
-
-from rest_framework.decorators import action
-from rest_framework.parsers import MultiPartParser, FormParser
-from rest_framework.response import Response
-from rest_framework import status, permissions
-from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
-
-from .models import Iphone, SecondHandShop, PurchasingShopPriceRecord
-
-
-import re, csv, io
-from collections import defaultdict
-from datetime import datetime
-from django.utils import timezone
-from django.utils.dateparse import parse_datetime, parse_date
-from django.db import transaction
-from rest_framework.decorators import action
-from rest_framework.parsers import MultiPartParser, FormParser
-from rest_framework import permissions, status
-from rest_framework.response import Response
-from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
-
-from .utils.tradein_cleaner import parse_tradein_uploaded  # ← 新增导入
-from .models import Iphone, SecondHandShop, PurchasingShopPriceRecord
-import pandas as pd
-
 import csv, io, re
 from django.http import HttpResponse
-from django.utils.dateparse import parse_date
 from django.db import transaction, IntegrityError
-from rest_framework.decorators import action
-from rest_framework.parsers import MultiPartParser, FormParser
-from rest_framework import permissions, status
-from rest_framework.response import Response
-from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
-
 from datetime import datetime
 from django.db import transaction
-from django.db.models import Q
-from django.utils import timezone
 from django.utils.dateparse import parse_datetime, parse_date
-from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser
-from rest_framework import permissions, status
-from rest_framework.response import Response
-from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
-
 from .utils.tradein_pipeline import clean_and_aggregate_tradein
 from .utils.color_norm import synonyms_for_query
 from .models import Iphone, SecondHandShop, PurchasingShopPriceRecord
-
-
-from rest_framework.decorators import action
-from rest_framework import permissions, status
-from rest_framework.response import Response
-from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
-
 from .services.external_ingest_service import ingest_external_sources
-
-from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
-from rest_framework.decorators import action
 from rest_framework import permissions, status
-from rest_framework.response import Response
-
-from django.conf import settings
-import asyncio
-
-from AppleStockChecker.utils.external_ingest.webscraper import fetch_webscraper_export, to_dataframe_from_request
-from AppleStockChecker.services.external_ingest_service import ingest_external_dataframe
-from AppleStockChecker.utils.external_ingest.registry import get_cleaner
-
-from rest_framework.permissions import AllowAny
-from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from rest_framework import status
-from django.conf import settings
-
-# from celery.result import AsyncResult
-# from AppleStockChecker.tasks.webscraper_tasks import task_process_webscraper_job
-from AppleStockChecker.utils.external_ingest.webscraper import fetch_webscraper_export_sync,to_dataframe_from_request
-from AppleStockChecker.services.external_ingest_service import ingest_external_dataframe
-from AppleStockChecker.utils.external_ingest.registry import get_cleaner
-import pandas as pd
-import io
-from rest_framework.permissions import AllowAny, IsAdminUser
-
-
-
+from collections import defaultdict
+from datetime import timedelta
+from django.db.models import Q
+from django.utils import timezone
+from rest_framework.decorators import api_view, permission_classes
+from .models import Iphone, PurchasingShopPriceRecord
 import io, pandas as pd
-from rest_framework.permissions import AllowAny
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework import status
@@ -146,18 +46,30 @@ from AppleStockChecker.utils.external_ingest.registry import get_cleaner
 from AppleStockChecker.tasks.webscraper_tasks import task_process_webscraper_job
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 
-def _get_bool_param(request, name: str, default=False):
-    return str(request.query_params.get(name) or request.data.get(name) or "").lower() in {"1","true","t","yes","y"} or default
+from collections import defaultdict
+from datetime import timedelta
+from typing import List, Dict
 
+from django.utils import timezone
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from .models import Iphone, PurchasingShopPriceRecord
+from django.conf import settings
+
+def _get_bool_param(request, name: str, default=False):
+    return str(request.query_params.get(name) or request.data.get(name) or "").lower() in {"1", "true", "t", "yes",
+                                                                                           "y"} or default
 
 
 def _check_token(request, path_token=None):
     shared = settings.WEB_SCRAPER_WEBHOOK_TOKEN
     incoming = request.headers.get("X-Webhook-Token") \
-        or request.query_params.get("token") \
-        or request.query_params.get("t") \
-        or (path_token or "") \
-        or ""
+               or request.query_params.get("token") \
+               or request.query_params.get("t") \
+               or (path_token or "") \
+               or ""
     return (not shared) or (incoming == shared)
 
 
@@ -176,7 +88,6 @@ def _resolve_source(request) -> str | None:
     return mp.get(sitemap_name) or mp.get(custom_id)
 
 
-
 class HealthView(APIView):
     permission_classes = [AllowAny]
 
@@ -190,6 +101,7 @@ class HealthView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
 
 class ApiRoot(APIView):
     permission_classes = [AllowAny]
@@ -207,11 +119,12 @@ class ApiRoot(APIView):
             }
         )
 
+
 class MeView(APIView):
     def get(self, request):
         data = UserSerializer(request.user).data
         return Response(data)
-#
+
 
 @extend_schema_view(
     list=extend_schema(tags=["Apple / Store"], summary="门店列表", auth=[]),
@@ -433,13 +346,14 @@ class IphoneViewSet(viewsets.ModelViewSet):
                             changed = False
                             new_jan = jan or None
                             if obj.jan != new_jan:
-                                obj.jan = new_jan; changed = True
+                                obj.jan = new_jan;
+                                changed = True
                             if obj.model_name != name: obj.model_name = name; changed = True
                             if obj.capacity_gb != cap_int: obj.capacity_gb = cap_int; changed = True
                             if obj.color != color: obj.color = color; changed = True
                             if obj.release_date != rdate: obj.release_date = rdate; changed = True
                             if changed:
-                                obj.save(update_fields=["model_name", "capacity_gb", "color", "release_date","jan"])
+                                obj.save(update_fields=["model_name", "capacity_gb", "color", "release_date", "jan"])
                                 updated += 1
                             else:
                                 skipped += 1
@@ -461,6 +375,7 @@ class IphoneViewSet(viewsets.ModelViewSet):
             "errors_count": len(errors), "errors": errors[:50], "preview": preview,
             "options": {"update": allow_update, "dry_run": dry_run},
         }, status=status.HTTP_200_OK)
+
 
 class OfficialStoreViewSet(viewsets.ModelViewSet):
     queryset = OfficialStore.objects.all()
@@ -497,14 +412,21 @@ def _to_bool(val: str | None):
             OpenApiParameter("store", OpenApiTypes.INT, description="按门店ID筛选", required=False),
             OpenApiParameter("store_name", OpenApiTypes.STR, description="按门店名模糊匹配", required=False),
             OpenApiParameter("iphone", OpenApiTypes.INT, description="按 iPhone ID 筛选", required=False),
-            OpenApiParameter("iphone_part_number", OpenApiTypes.STR, description="按 iPhone Part Number 精确匹配", required=False),
+            OpenApiParameter("iphone_part_number", OpenApiTypes.STR, description="按 iPhone Part Number 精确匹配",
+                             required=False),
             OpenApiParameter("has_stock", OpenApiTypes.BOOL, description="是否有库存（true/false）", required=False),
-            OpenApiParameter("recorded_after", OpenApiTypes.DATETIME, description="记录时间不早于(ISO8601)", required=False),
-            OpenApiParameter("recorded_before", OpenApiTypes.DATETIME, description="记录时间不晚于(ISO8601)", required=False),
-            OpenApiParameter("arrival_earliest_after", OpenApiTypes.DATETIME, description="最早到达不早于(ISO8601)", required=False),
-            OpenApiParameter("arrival_earliest_before", OpenApiTypes.DATETIME, description="最早到达不晚于(ISO8601)", required=False),
-            OpenApiParameter("arrival_latest_after", OpenApiTypes.DATETIME, description="最晚到达不早于(ISO8601)", required=False),
-            OpenApiParameter("arrival_latest_before", OpenApiTypes.DATETIME, description="最晚到达不晚于(ISO8601)", required=False),
+            OpenApiParameter("recorded_after", OpenApiTypes.DATETIME, description="记录时间不早于(ISO8601)",
+                             required=False),
+            OpenApiParameter("recorded_before", OpenApiTypes.DATETIME, description="记录时间不晚于(ISO8601)",
+                             required=False),
+            OpenApiParameter("arrival_earliest_after", OpenApiTypes.DATETIME, description="最早到达不早于(ISO8601)",
+                             required=False),
+            OpenApiParameter("arrival_earliest_before", OpenApiTypes.DATETIME, description="最早到达不晚于(ISO8601)",
+                             required=False),
+            OpenApiParameter("arrival_latest_after", OpenApiTypes.DATETIME, description="最晚到达不早于(ISO8601)",
+                             required=False),
+            OpenApiParameter("arrival_latest_before", OpenApiTypes.DATETIME, description="最晚到达不晚于(ISO8601)",
+                             required=False),
             OpenApiParameter(
                 "ordering",
                 OpenApiTypes.STR,
@@ -740,6 +662,7 @@ class InventoryRecordViewSet(viewsets.ModelViewSet):
         ser = TrendResponseByPNSerializer(data)
         return Response(ser.data)
 
+
 @extend_schema_view(
     list=extend_schema(tags=["Resale / Shop"], summary="二手店列表", auth=[]),
     retrieve=extend_schema(tags=["Resale / Shop"], summary="二手店详情", auth=[]),
@@ -773,9 +696,12 @@ class SecondHandShopViewSet(viewsets.ModelViewSet):
             OpenApiParameter("shop", OpenApiTypes.INT, description="按二手店ID", required=False),
             OpenApiParameter("shop_name", OpenApiTypes.STR, description="按二手店名（模糊）", required=False),
             OpenApiParameter("iphone", OpenApiTypes.INT, description="按 iPhone ID", required=False),
-            OpenApiParameter("iphone_part_number", OpenApiTypes.STR, description="按 iPhone PN 精确匹配", required=False),
-            OpenApiParameter("recorded_after", OpenApiTypes.DATETIME, description="记录时间不早于(ISO8601)", required=False),
-            OpenApiParameter("recorded_before", OpenApiTypes.DATETIME, description="记录时间不晚于(ISO8601)", required=False),
+            OpenApiParameter("iphone_part_number", OpenApiTypes.STR, description="按 iPhone PN 精确匹配",
+                             required=False),
+            OpenApiParameter("recorded_after", OpenApiTypes.DATETIME, description="记录时间不早于(ISO8601)",
+                             required=False),
+            OpenApiParameter("recorded_before", OpenApiTypes.DATETIME, description="记录时间不晚于(ISO8601)",
+                             required=False),
             OpenApiParameter("min_price_new", OpenApiTypes.INT, description="新品卖取价格 ≥", required=False),
             OpenApiParameter("max_price_new", OpenApiTypes.INT, description="新品卖取价格 ≤", required=False),
             OpenApiParameter("search", OpenApiTypes.STR, description="在 店名/PN/型号/颜色 上搜索", required=False),
@@ -851,7 +777,6 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
 
         return qs
 
-
     def _to_int_yen(val):
         """
         将 '¥105,000' / '105000' / '105,000.0' / '' / None → int 或 None
@@ -878,7 +803,6 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
         except ValueError:
             return None
 
-
     def _parse_recorded_at(val):
         """
         解析 recorded_at：
@@ -901,24 +825,24 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
             dt = timezone.make_aware(dt, timezone.get_current_timezone())
         return dt
 
-
     def _norm_key(d):
         """将 DictReader 的列名统一为小写去空格"""
-        return { (k or "").strip().lower(): v for k, v in d.items() }
-
+        return {(k or "").strip().lower(): v for k, v in d.items()}
 
     @extend_schema(
         tags=["Resale / Price"],
         summary="导入二手店回收价格（CSV）",
         description=(
-            "上传 CSV 批量写入二手店回收价格记录。\n\n"
-            "必需列：`pn`(或 `part_number`)、`shop_name`、`price_new`。\n"
-            "可选列：`shop_address`、`shop_website`、`price_grade_a`、`price_grade_b`、`recorded_at`。\n"
-            "参数：`create_shop`=1 允许自动创建新店；`dedupe`=1 同店+PN+记录时间相同则更新而非新建；`dry_run`=1 仅校验不写库。"
+                "上传 CSV 批量写入二手店回收价格记录。\n\n"
+                "必需列：`pn`(或 `part_number`)、`shop_name`、`price_new`。\n"
+                "可选列：`shop_address`、`shop_website`、`price_grade_a`、`price_grade_b`、`recorded_at`。\n"
+                "参数：`create_shop`=1 允许自动创建新店；`dedupe`=1 同店+PN+记录时间相同则更新而非新建；`dry_run`=1 仅校验不写库。"
         ),
         parameters=[
-            OpenApiParameter("create_shop", OpenApiTypes.BOOL, description="若店铺不存在则创建（默认 true）", required=False),
-            OpenApiParameter("dedupe", OpenApiTypes.BOOL, description="同店+PN+recorded_at 去重并更新（默认 true）", required=False),
+            OpenApiParameter("create_shop", OpenApiTypes.BOOL, description="若店铺不存在则创建（默认 true）",
+                             required=False),
+            OpenApiParameter("dedupe", OpenApiTypes.BOOL, description="同店+PN+recorded_at 去重并更新（默认 true）",
+                             required=False),
             OpenApiParameter("dry_run", OpenApiTypes.BOOL, description="仅校验不落库（默认 false）", required=False),
         ],
         request={
@@ -1062,11 +986,14 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
                     if upsert:
                         changed = False
                         if existed.price_new != price_new:
-                            existed.price_new = price_new; changed = True
+                            existed.price_new = price_new;
+                            changed = True
                         if price_a is not None and existed.price_grade_a != price_a:
-                            existed.price_grade_a = price_a; changed = True
+                            existed.price_grade_a = price_a;
+                            changed = True
                         if price_b is not None and existed.price_grade_b != price_b:
-                            existed.price_grade_b = price_b; changed = True
+                            existed.price_grade_b = price_b;
+                            changed = True
                         if changed:
                             existed.batch_id = batch_uuid
                             existed.save(update_fields=["price_new", "price_grade_a", "price_grade_b", "batch_id"])
@@ -1094,10 +1021,10 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
             "inserted": inserted,
             "updated": updated,
             "dedup_skipped": dedup_skipped,  # 幂等跳过的行数
-            "skipped": skipped,              # 其它原因（校验失败/店铺缺失等）
+            "skipped": skipped,  # 其它原因（校验失败/店铺缺失等）
             "errors_count": len(errors),
-            "errors": errors[:50],           # 防止回包过大
-            "preview": preview,              # 前 5 条预览
+            "errors": errors[:50],  # 防止回包过大
+            "preview": preview,  # 前 5 条预览
             "options": {
                 "create_shop": create_shop,
                 "dedupe": dedupe,
@@ -1107,7 +1034,6 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
             },
         }
         return Response(resp, status=status.HTTP_200_OK)
-
 
     @extend_schema(
         tags=["Resale / Price"],
@@ -1261,11 +1187,11 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
                                 existed.price_new = int(price_new);
                                 changed = True
                             if (price_a is not None) and (existed.price_grade_a or None) != (
-                            None if pd.isna(price_a) else int(price_a)):
+                                    None if pd.isna(price_a) else int(price_a)):
                                 existed.price_grade_a = None if pd.isna(price_a) else int(price_a);
                                 changed = True
                             if (price_b is not None) and (existed.price_grade_b or None) != (
-                            None if pd.isna(price_b) else int(price_b)):
+                                    None if pd.isna(price_b) else int(price_b)):
                                 existed.price_grade_b = None if pd.isna(price_b) else int(price_b);
                                 changed = True
                             if changed:
@@ -1305,9 +1231,9 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
         tags=["Resale / Price"],
         summary="从外部平台 GET 一组 CSV → 清洗 → 以 PN 定位 iPhone → 新增回收价格记录",
         description=(
-            "请求体传入 sources 列表（每个包含 name/url/headers），或使用 settings 中预置的 EXTERNAL_TRADEIN_SOURCES 并用 names 指定子集。\n"
-            "清洗规则在 utils.external_ingest.base_cleaners 中按 name 注册（独立脚本框架）。\n"
-            "支持 ?dry_run=1 只预览不落库。"
+                "请求体传入 sources 列表（每个包含 name/url/headers），或使用 settings 中预置的 EXTERNAL_TRADEIN_SOURCES 并用 names 指定子集。\n"
+                "清洗规则在 utils.external_ingest.base_cleaners 中按 name 注册（独立脚本框架）。\n"
+                "支持 ?dry_run=1 只预览不落库。"
         ),
         request=OpenApiTypes.OBJECT,
         parameters=[
@@ -1318,7 +1244,7 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["post"], url_path="ingest-external", permission_classes=[permissions.IsAdminUser])
     def ingest_external(self, request):
 
-        dry_run = str(request.query_params.get("dry_run") or "").lower() in {"1","true","t","yes","y"}
+        dry_run = str(request.query_params.get("dry_run") or "").lower() in {"1", "true", "t", "yes", "y"}
 
         payload = request.data or {}
         sources = payload.get("sources") or []
@@ -1339,7 +1265,8 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
             sources = preset
 
         if not sources:
-            return Response({"detail": "未提供 sources，且 settings.EXTERNAL_TRADEIN_SOURCES 为空"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "未提供 sources，且 settings.EXTERNAL_TRADEIN_SOURCES 为空"},
+                            status=status.HTTP_400_BAD_REQUEST)
 
         result = ingest_external_sources(sources, dry_run=dry_run)
         return Response({
@@ -1423,7 +1350,6 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
     #     return Response({"mode": "webhook", "dry_run": dry_run, "job_id": job_id, "source": source_name, **result},
     #                     status=status.HTTP_200_OK)
 
-
     # # —— Path Token 版（更短的 URL）：/ingest-webscraper/<token>/ —— #
     # # 最短路径：/.../ingest-webscraper/<token>/
     # @action(detail=False, methods=["post"],
@@ -1449,7 +1375,7 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
     )
     @action(detail=False, methods=["post"], url_path="ingest-webscraper", permission_classes=[AllowAny])
     def ingest_webscraper(self, request):
-        dry_run = str(request.query_params.get("dry_run") or "").lower() in {"1","true","t","yes","y"}
+        dry_run = str(request.query_params.get("dry_run") or "").lower() in {"1", "true", "t", "yes", "y"}
         dedupe = _get_bool_param(request, "dedupe", True)
         upsert = _get_bool_param(request, "upsert", False)
         # batch_id: Header 优先，其次 query，再次 body；合法 uuid4，否则自动生成
@@ -1494,7 +1420,8 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
                  or request.query_params.get("scrapingjob_id") or request.query_params.get("job_id")
         source_name = _resolve_source(request) or request.query_params.get("source")
         if not job_id or not source_name:
-            return Response({"detail":"Webhook 需要 job_id(scrapingjob_id) 与 source（或提供映射）"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "Webhook 需要 job_id(scrapingjob_id) 与 source（或提供映射）"},
+                            status=status.HTTP_400_BAD_REQUEST)
         try:
             get_cleaner(source_name)
         except Exception:
@@ -1509,19 +1436,21 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
 
     # —— 极短 URL：/ingest-webscraper/<token>/ —— #
     @extend_schema(tags=["Resale / Price"], summary="Webhook（Path Token 版）")
-    @action(detail=False, methods=["post"], url_path=r"ingest-webscraper/(?P<ptoken>[-A-Za-z0-9_]+)", permission_classes=[AllowAny])
+    @action(detail=False, methods=["post"], url_path=r"ingest-webscraper/(?P<ptoken>[-A-Za-z0-9_]+)",
+            permission_classes=[AllowAny])
     def ingest_webscraper_with_path_token(self, request, ptoken: str = ""):
         if not _check_token(request, path_token=ptoken):
             return Response({"detail": "Webhook token 不匹配"}, status=status.HTTP_403_FORBIDDEN)
         return self.ingest_webscraper(request)
 
     # —— 任务查询 —— #
-    @extend_schema(tags=["Resale / Price"], summary="查询 Celery 任务结果", parameters=[OpenApiParameter("task_id", OpenApiTypes.STR, required=True)])
+    @extend_schema(tags=["Resale / Price"], summary="查询 Celery 任务结果",
+                   parameters=[OpenApiParameter("task_id", OpenApiTypes.STR, required=True)])
     @action(detail=False, methods=["get"], url_path="ingest-webscraper/result", permission_classes=[AllowAny])
     def ingest_webscraper_result(self, request):
         task_id = request.query_params.get("task_id")
         if not task_id:
-            return Response({"detail":"缺少 task_id"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "缺少 task_id"}, status=status.HTTP_400_BAD_REQUEST)
         res = AsyncResult(task_id)
         data = {"task_id": task_id, "state": res.state}
         if res.state == "SUCCESS":
@@ -1529,3 +1458,318 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
         elif res.state == "FAILURE":
             data["error"] = str(res.result)
         return Response(data, status=status.HTTP_200_OK)
+
+
+# AppleStockChecker/api_trends.py
+# -*- coding: utf-8 -*-
+"""
+统一曲线计算（后端）：
+1) 生成 0时offset分开始、每 step 分钟一个点的网格（默认 15min，offset=0）
+2) 对“每家店、每个颜色”的原始点做最近邻重采样 → 得到“每 15min 都有值”的标准序列
+3) merged（跨颜色、每店）：同一网格点，对所有颜色做横向均值 → 得到“每店曲线”
+4) A：在 merged 的“每店曲线集合”上，对勾选店做均值（每个网格点）
+5) B/C：在 A 上做“时间窗(分钟)移动平均”
+6) per_color：每色返回“每店曲线（重采样后）”及其 A/B/C
+7) 返回顺序：shop_order_all（settings 定义的全量顺序，去重）；shop_order_present（本次有数据顺序，去重）
+"""
+from collections import defaultdict
+from datetime import timedelta
+from typing import List, Dict
+
+from django.conf import settings
+from django.utils import timezone
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from .models import Iphone, PurchasingShopPriceRecord
+
+
+# =========================
+# 基础工具
+# =========================
+
+def _aware_local(dt):
+    tz = timezone.get_current_timezone()
+    if timezone.is_naive(dt):
+        return timezone.make_aware(dt, tz)
+    return dt.astimezone(tz)
+
+
+def _norm_name(s: str) -> str:
+    """统一店名/字符串比较：去首尾空白"""
+    return (s or "").strip()
+
+
+def _build_time_grid(start_dt, end_dt, step_minutes: int = 15, offset_minute: int = 0) -> List[int]:
+    """生成本地时区网格（ms）：从 start_dt~end_dt，对齐到“0时offset分+步长 step 分钟”"""
+    step_minutes = max(1, int(step_minutes))
+    offset_minute = int(offset_minute) % step_minutes
+
+    start_local = _aware_local(start_dt)
+    end_local = _aware_local(end_dt)
+
+    day0 = start_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    first = day0 + timedelta(minutes=offset_minute)
+    if first < start_local:
+        delta_min = (start_local - first).total_seconds() / 60.0
+        steps = int(delta_min // step_minutes) + 1
+        first = first + timedelta(minutes=steps * step_minutes)
+
+    grid = []
+    cur = first
+    while cur <= end_local:
+        grid.append(int(cur.timestamp() * 1000))
+        cur = cur + timedelta(minutes=step_minutes)
+    return grid
+
+
+def _resample_nearest(points: List[Dict], grid_ms: List[int]) -> List[Dict]:
+    """
+    最近邻重采样：对每个网格 t，挑绝对时间差最小的历史点（允许“未来”点），保证 15min 连续。
+    points: [{x(ms), y}...]（升序）
+    返回与 grid 等长的 [{x,y}]
+    """
+    out = []
+    n = len(points)
+    if n == 0:
+        return [{"x": t, "y": None} for t in grid_ms]
+    i = 0
+    for t in grid_ms:
+        while i + 1 < n and abs(points[i + 1]["x"] - t) < abs(points[i]["x"] - t):
+            i += 1
+        out.append({"x": t, "y": points[i].get("y")})
+    return out
+
+
+def _moving_average_time(points: List[Dict], window_minutes: int) -> List[Dict]:
+    """时间窗(分钟)移动平均（包含当前点），在 A 线结果上做平滑。"""
+    if not points:
+        return []
+    wms = max(1, int(window_minutes)) * 60 * 1000
+    pts = sorted(points, key=lambda p: p["x"])
+    out = []
+    head = 0
+    s = 0.0
+    c = 0
+    for i, pt in enumerate(pts):
+        s += float(pt["y"]); c += 1
+        while head <= i and (pt["x"] - pts[head]["x"]) > wms:
+            s -= float(pts[head]["y"]); c -= 1; head += 1
+        out.append({"x": pt["x"], "y": s / c if c else None})
+    return out
+
+
+def _order_shops(all_names: List[str]) -> List[str]:
+    """按 settings.SHOP_DISPLAY_ORDER 排序；未在该列表的放末尾（按名称字母序）"""
+    preferred = list(getattr(settings, "SHOP_DISPLAY_ORDER", []))
+    pref_index = {name: i for i, name in enumerate(preferred)}
+    def key(name: str):
+        return (0, pref_index[name]) if name in pref_index else (1, name)
+    return sorted(all_names, key=key)
+
+
+# =========================
+# 核心计算
+# =========================
+
+def compute_trends_for_model_capacity(model_name: str,
+                                      capacity_gb: int,
+                                      days: int,
+                                      selected_shops: set[str],
+                                      avg_cfg: dict,
+                                      grid_cfg: dict | None = None) -> dict:
+    """
+    见模块顶部 docstring
+    """
+    tz = timezone.get_current_timezone()
+    now = timezone.now()
+    start_window = now - timedelta(days=max(1, int(days)))  # 仅用于展示窗口 / 网格范围
+
+    # 配置
+    A_cfg = (avg_cfg or {}).get("A", {})
+    B_cfg = (avg_cfg or {}).get("B", {})
+    C_cfg = (avg_cfg or {}).get("C", {})
+    bucket_minutes = max(1, int(A_cfg.get("bucketMinutes", 30)))  # 保留概念；实际 A 用 15min 网格均值
+    b_win = max(1, int(B_cfg.get("windowMinutes", 60)))
+    c_win = max(1, int(C_cfg.get("windowMinutes", 240)))
+
+    step_minutes = int((grid_cfg or {}).get("stepMinutes", 15))
+    offset_minute = int((grid_cfg or {}).get("offsetMinute", 0))  # 0 时 N 分
+
+    # 机型+容量 -> 颜色 -> PN
+    iphones = Iphone.objects.filter(model_name=model_name, capacity_gb=int(capacity_gb)) \
+        .values("part_number", "color")
+    pn_by_color: dict[str, list[str]] = defaultdict(list)
+    for it in iphones:
+        pn_by_color[_norm_name(it["color"])].append(it["part_number"])
+    color_list = sorted(pn_by_color.keys(), key=lambda s: s or "")
+
+    # 拉全部历史记录（用于最近邻补齐；不裁剪 days）
+    per_color_store_raw: dict[str, dict[str, list[dict]]] = {}   # color -> { shop -> [ {x,y}... ] }
+    merged_store_raw: dict[str, list[dict]] = defaultdict(list)  # shop -> [{x,y}...]
+
+    for color in color_list:
+        pns = pn_by_color[color]
+        qs = PurchasingShopPriceRecord.objects.filter(
+            iphone__part_number__in=pns
+        ).select_related("shop", "iphone").order_by("recorded_at")
+
+        store_map = defaultdict(list)
+        for r in qs.iterator():
+            shop_name = _norm_name(r.shop.name)
+            t = int(timezone.localtime(r.recorded_at, tz).timestamp() * 1000)
+            y = r.price_new
+            store_map[shop_name].append({"x": t, "y": y})
+            merged_store_raw[shop_name].append({"x": t, "y": y})
+
+        for shop in store_map:
+            store_map[shop].sort(key=lambda p: p["x"])
+        per_color_store_raw[color] = store_map
+
+    for shop in merged_store_raw:
+        merged_store_raw[shop].sort(key=lambda p: p["x"])
+
+    # 网格（覆盖 now-days ~ now）
+    grid_ms = _build_time_grid(start_window, now, step_minutes=step_minutes, offset_minute=offset_minute)
+    grid_len = len(grid_ms)
+
+    # 每 店-色 最近邻重采样（连续 15min）
+    per_color_resampled: dict[str, dict[str, list[dict]]] = {}
+    all_shops_set: set[str] = set()
+    for color, store_map in per_color_store_raw.items():
+        rs_map = {}
+        for shop, pts in store_map.items():
+            rs_map[shop] = _resample_nearest(pts, grid_ms)
+            all_shops_set.add(shop)
+        per_color_resampled[color] = rs_map
+
+    # 所有店：全量顺序与本次有数据顺序（都做规范化&去重）
+    # 全库所有店名（distinct）→ 规范化 → 唯一化 → 按 settings 排序
+    all_names_db = list(PurchasingShopPriceRecord.objects.values_list("shop__name", flat=True).distinct())
+    names_norm = [_norm_name(n) for n in all_names_db if _norm_name(n)]
+    names_unique = list(dict.fromkeys(names_norm))          # 稳定去重
+    shop_order_all = _order_shops(names_unique)
+
+    # 本次窗口出现过数据的店（按 settings 顺序）
+    shop_order_present = _order_shops(sorted(all_shops_set))
+
+    # merged（跨颜色、每店）= 同一网格点，对所有颜色做横向均值（连续 15min）
+    merged_store_resampled_avg: dict[str, list[dict]] = {}
+    for shop in shop_order_present:
+        series = []
+        for idx in range(grid_len):
+            x = grid_ms[idx]
+            ys = []
+            for color, store_map in per_color_resampled.items():
+                seq = store_map.get(shop)
+                if not seq:
+                    continue
+                y = seq[idx].get("y")
+                if y is not None:
+                    ys.append(float(y))
+            series.append({"x": x, "y": (sum(ys)/len(ys)) if ys else None})
+        merged_store_resampled_avg[shop] = series
+
+    # 横向均值（在网格上对勾选店做均值）
+    def _avg_on_grid(store_resampled: Dict[str, List[Dict]], selected_shops: set) -> List[Dict]:
+        any_series = next(iter(store_resampled.values()), [])
+        out = []
+        for idx in range(len(any_series)):
+            x = any_series[idx]["x"] if any_series else None
+            ys = []
+            for shop, seq in store_resampled.items():
+                if _norm_name(shop) not in selected_shops:
+                    continue
+                y = seq[idx].get("y") if idx < len(seq) else None
+                if y is not None:
+                    ys.append(float(y))
+            if ys:
+                out.append({"x": x, "y": sum(ys)/len(ys)})
+        return out
+
+    # A/B/C（merged）
+    seriesA_merged = _avg_on_grid(merged_store_resampled_avg, selected_shops)
+    seriesB_merged = _moving_average_time(seriesA_merged, b_win)
+    seriesC_merged = _moving_average_time(seriesA_merged, c_win)
+
+    merged = {
+        "stores": [
+            {"label": shop, "data": merged_store_resampled_avg[shop]}
+            for shop in shop_order_present
+        ],
+        "avg": {"A": seriesA_merged, "B": seriesB_merged, "C": seriesC_merged}
+    }
+
+    # per_color：每色也返回“重采样后的每店曲线”及其 A/B/C（店顺序按 settings）
+    per_color = []
+    for color in color_list:
+        stores_rs = per_color_resampled[color]               # {shop -> rs(seq)}
+        stores_list = [{"label": shop, "data": stores_rs[shop]}
+                       for shop in shop_order_present if shop in stores_rs]
+
+        seriesA = _avg_on_grid({shop: stores_rs[shop] for shop in stores_rs}, selected_shops)
+        seriesB = _moving_average_time(seriesA, b_win)
+        seriesC = _moving_average_time(seriesA, c_win)
+        per_color.append({
+            "color": color,
+            "stores": stores_list,
+            "avg": {"A": seriesA, "B": seriesB, "C": seriesC}
+        })
+
+    return {
+        "shop_order_all": shop_order_all,           # 全量顺序（来自 settings，已去重）
+        "shop_order_present": shop_order_present,   # 本次窗口出现过数据的顺序（已去重）
+        "colors": color_list,
+        "merged": merged,
+        "per_color": per_color,
+    }
+
+
+# =========================
+# API 入口
+# =========================
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def trends_model_colors(request):
+    """
+    请求 JSON:
+    {
+      "model_name": "iPhone 17",
+      "capacity_gb": 256,
+      "days": 30,
+      "shops": ["買取一丁目","森森買取", ...],   // 勾选店；空或不传=ALL
+      "avg": {
+        "A": {"bucketMinutes": 30},
+        "B": {"windowMinutes": 60,  "lineWidth": 2, "color":"#ff0077", "dash":"dash"},
+        "C": {"windowMinutes": 240, "lineWidth": 2, "color":"#00bcd4", "dash":"dot"}
+      },
+      "grid": { "stepMinutes": 15, "offsetMinute": 0 }  // 0时N分开始、每 step 分钟一个点
+    }
+    响应 JSON：见 compute_trends_for_model_capacity()
+    """
+    payload = request.data or {}
+    model_name = (payload.get("model_name") or "").strip()
+    capacity_gb = int(payload.get("capacity_gb") or 0)
+    days = int(payload.get("days") or 30)
+    shops = payload.get("shops") or []
+    avg_cfg = payload.get("avg") or {}
+    grid_cfg = payload.get("grid") or {}
+
+    if not model_name or not capacity_gb:
+        return Response({"detail": "model_name/capacity_gb 不能为空"}, status=400)
+
+    if shops:
+        selected_shops = set(_norm_name(str(s)) for s in shops)
+    else:
+        selected_shops = set(_norm_name(n) for n in
+                             PurchasingShopPriceRecord.objects.values_list("shop__name", flat=True).distinct())
+
+    data = compute_trends_for_model_capacity(
+        model_name, capacity_gb, days,
+        selected_shops=selected_shops,
+        avg_cfg=avg_cfg,
+        grid_cfg=grid_cfg
+    )
+    return Response(data)

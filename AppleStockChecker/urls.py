@@ -17,6 +17,8 @@ from .views_frontend import ResaleTrendPNMergedView
 from .views_frontend import ImportResaleCSVView
 from .views_frontend import ImportTradeinCSVView, ImportIphoneCSVView, ExternalIngestView
 from .views_frontend import PriceMatrixView, ResaleTrendColorsMergedView, TemplateChartjsView
+from .views import trends_model_colors
+
 router = DefaultRouter()
 router.register(r"iphones", IphoneViewSet, basename="iphone")
 router.register(r"stores", OfficialStoreViewSet, basename="store")
@@ -41,7 +43,7 @@ urlpatterns = [
 urlpatterns = [
                   path("delivery-trend/", DeliveryTrendView.as_view(), name="delivery-trend"),
               ] + urlpatterns
-urlpatterns = [ path("resale-trend-pn/", ResaleTrendPNView.as_view(), name="resale-trend-pn"), ] + urlpatterns
+urlpatterns = [path("resale-trend-pn/", ResaleTrendPNView.as_view(), name="resale-trend-pn"), ] + urlpatterns
 urlpatterns = ([path("resale-trend-pn-merged/", ResaleTrendPNMergedView.as_view(), name="resale-trend-pn-merged"),
                 ] + urlpatterns)
 
@@ -49,14 +51,14 @@ urlpatterns = [
                   path("import-resale-csv/", ImportResaleCSVView.as_view(), name="import-resale-csv"),
               ] + urlpatterns
 urlpatterns = [
-                path("import-tradein-csv/", ImportTradeinCSVView.as_view(), name="import-tradein-csv"),
-                path("import-iphone-csv/", ImportIphoneCSVView.as_view(), name="import-iphone-csv"),
-                path("external-ingest/", ExternalIngestView.as_view(), name="external-ingest"),
-                path("price-matrix/", PriceMatrixView.as_view(), name="price-matrix"),
-                path("resale-trend-colors-merged/", ResaleTrendColorsMergedView.as_view(), name="resale-trend-colors-merged"),
-                path("template-chartjs/", TemplateChartjsView.as_view(), name="template-chartjs"),
-
+                  path("import-tradein-csv/", ImportTradeinCSVView.as_view(), name="import-tradein-csv"),
+                  path("import-iphone-csv/", ImportIphoneCSVView.as_view(), name="import-iphone-csv"),
+                  path("external-ingest/", ExternalIngestView.as_view(), name="external-ingest"),
+                  path("price-matrix/", PriceMatrixView.as_view(), name="price-matrix"),
+                  path("resale-trend-colors-merged/", ResaleTrendColorsMergedView.as_view(),
+                       name="resale-trend-colors-merged"),
+                  path("template-chartjs/", TemplateChartjsView.as_view(), name="template-chartjs"),
+                  path("api/trends/model-colors/", trends_model_colors, name="trends-model-colors"),  # ★ 新增
               ] + urlpatterns
-
 
 urlpatterns += router.urls
