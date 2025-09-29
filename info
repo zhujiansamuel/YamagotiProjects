@@ -118,3 +118,9 @@ zoomAll(factor)、panAll(frac)、resetAllZoom() 对所有图统一操作，仅�
 黑色的平均值使用原本的计算方法，其他平均值基于黑色曲线计算。
 
 +818010186780
+
+
+git fetch --all --prune
+ git pull
+ git reset --hard origin/master
+ git pull origin master
