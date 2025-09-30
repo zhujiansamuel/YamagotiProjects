@@ -7,6 +7,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+
   <style>
     *{scrollbar-width:thin}
     ::-webkit-scrollbar{width:8px;height:8px}
@@ -30,8 +31,14 @@
       .side-card{width:100%}
     }
   </style>
+
 </head>
 <body class="bg-zinc-50 text-zinc-900 min-h-screen">
+{{ FX_API_KEYS|json_script:"fx-api-keys" }}
+<script>
+  window.FX_API_KEYS = {{ fx_api_keys|safe }};
+  console.debug("FX_API_KEYS injected:", window.FX_API_KEYS);
+</script>
 <div class="max-w-7xl mx-auto p-4 space-y-4">
   <header class="flex items-center gap-3">
     <h1 class="text-xl font-semibold">机型 + 容量 → 各颜色新品价格趋势</h1>
@@ -140,10 +147,29 @@
       <button id="panDownBtn"  class="px-3 py-1.5 border rounded">下移 ↓</button>
       <button id="resetYBtn"   class="px-3 py-1.5 border rounded">重置</button>
     </div>
-  </section>
+
+    <div class="pt-2">
+      <button id="loadDetailsBtn" class="px-3 py-1.5 bg-black text-white rounded">
+        加载颜色明细图表
+      </button>
+      <span id="detailsStatus" class="ml-2 text-sm text-zinc-600"></span>
+    </div>
+
+    <div class="pt-2 flex flex-wrap items-center gap-2">
+      <span class="text-sm text-zinc-600">汇率叠加（USD/JPY 15m）：</span>
+      <select id="fxProvider" class="px-3 py-1.5 rounded-lg border border-zinc-200 bg-white">
+        <option value="twelvedata">Twelve Data</option>
+      </select>
+      <button id="loadFxOverlayBtn" class="px-3 py-1.5 bg-black text-white rounded">加载汇率（叠加到合并图）</button>
+      <button id="fxPasteBtn" class="px-3 py-1.5 border rounded">从粘贴叠加</button>
+      <span id="fxStatus" class="text-xs text-zinc-500"></span>
+    </div>
+</section>
 
   <!-- 每色一图：左画布 + 右卡片 -->
   <section id="chartsHost" class="space-y-6"></section>
+  <!-- USD/JPY (15m) 汇率图表 -->
+
 
   <footer class="text-xs text-zinc-500">数据来源：/AppleStockChecker/api/trends/model-colors/（需登录）</footer>
 </div>
@@ -158,6 +184,88 @@ const LINE_PALETTE=["#2563eb","#16a34a","#f59e0b","#ef4444","#8b5cf6","#06b6d4",
 
 let charts = [];
 let mergedChart = null;
+let lastData = null;
+let detailsLoaded = false;
+let usdjpyChart = null;
+// —— 同步 FX 图的 X 轴到合并图 —— //
+function getMergedXRange(){
+  const s = mergedChart && mergedChart.scales && mergedChart.scales.x;
+  if(!s) return null;
+  // Chart.js scale.min/max 可能为 undefined（自动），此时我们取像素映射的data min/max
+  const min = s.min ?? s._userMin ?? s.getUserBounds?.().min ?? s.getPixelForValue ? s.getValueForPixel(0) : undefined;
+  const max = s.max ?? s._userMax ?? s.getUserBounds?.().max ?? s.right ? s.getValueForPixel?.(s.right) : undefined;
+  return (min!=null && max!=null) ? {min, max} : {min: s.min, max: s.max};
+}
+function setFxXRange(range){
+  if(!usdjpyChart || !range) return;
+  if(!usdjpyChart.options.scales) usdjpyChart.options.scales = {};
+  if(!usdjpyChart.options.scales.x) usdjpyChart.options.scales.x = {};
+  usdjpyChart.options.scales.x.min = range.min;
+  usdjpyChart.options.scales.x.max = range.max;
+  try { usdjpyChart.update('none'); } catch(e){ /* ignore */ }
+}
+function syncFxToMerged() {
+    // 同步范围 + 日期刻度
+    {
+        const r = getMergedXRange();
+        if (r) setFxXRange(r);
+        applyFxDayTicksFromMerged();
+    }
+}
+// —— 日期对齐：让 FX 图的日期刻度与合并图完全一致 —— //
+function startOfLocalDay(ts){
+  const d = new Date(ts);
+  d.setHours(0,0,0,0);
+  return +d;
+}
+function unique(arr){ return Array.from(new Set(arr)); }
+function getMergedDayTicks(){
+  if(!mergedChart || !mergedChart.scales || !mergedChart.scales.x) return null;
+  // 从合并图现有 ticks 中提取“当天 0 点”的集合
+  const ticks = mergedChart.scales.x?.ticks || [];
+  if(!ticks.length) return null;
+  const days = unique(ticks.map(t => startOfLocalDay(t.value ?? t)));
+  // 过滤到当前范围内
+  const s = mergedChart.scales.x;
+  const min = s.min ?? s._userMin ?? days[0];
+  const max = s.max ?? s._userMax ?? days[days.length-1];
+  return days.filter(x => x>=min && x<=max);
+}
+function applyFxDayTicksFromMerged(){
+  if(!usdjpyChart || !usdjpyChart.options?.scales?.x) return;
+  const dayTicks = getMergedDayTicks();
+  if(!dayTicks || !dayTicks.length) return;
+  // 强制 FX X 轴仅使用这些日期为刻度
+  usdjpyChart.options.scales.x.time = { unit: 'day' };
+  usdjpyChart.options.scales.x.ticks = usdjpyChart.options.scales.x.ticks || {};
+  usdjpyChart.options.scales.x.ticks.autoSkip = false;
+  usdjpyChart.options.scales.x.ticks.source = 'auto'; // 实际用 afterBuildTicks 强制
+  usdjpyChart.options.scales.x.afterBuildTicks = (scale) => {
+    // 生成对应的 Tick 对象
+    scale.ticks = dayTicks.map(v => ({ value: v, major: true }));
+    return scale.ticks;
+  };
+  try { usdjpyChart.update('none'); } catch(e) {}
+}
+
+
+
+// —— 合并图更新后联动 FX 的插件 —— //
+try{
+  if (typeof Chart !== 'undefined') {
+    Chart.register({
+      id: 'fxSyncPlugin',
+      afterUpdate(chart, args, opts){
+        try{
+          if (chart === mergedChart) { syncFxToMerged(); }
+        }catch(e){ /* ignore */ }
+      }
+    });
+  }
+}catch(e){ /* ignore */ }
+
+
+
 
 /* ========= 工具 ========= */
 function esc(s){return (s??'').toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;","&gt;":"&gt;","\"":"&quot;"}[c]));}
@@ -183,6 +291,19 @@ function resetAllX(){ for(const c of [mergedChart,...charts]){ if(!c) continue; 
 function zoomAllY(f){ for(const c of [mergedChart,...charts]){ if(!c) continue; initFixedDomains(c); const d=c.__domain; const min=d.yCurMin, max=d.yCurMax; if(!(min<max)) continue; const mid=(min+max)/2, range=(max-min)/f; let a=mid-range/2, b=mid+range/2; if(a<d.yMin){a=d.yMin;b=d.yMin+range;} if(b>d.yMax){b=d.yMax;a=d.yMax-range;} if(!(a<b)){a=d.yMin;b=d.yMax;} d.yCurMin=a; d.yCurMax=b; c.options.scales.y.min=a; c.options.scales.y.max=b; c.update('none'); } }
 function panAllY(frac){ for(const c of [mergedChart,...charts]){ if(!c) continue; initFixedDomains(c); const d=c.__domain; const min=d.yCurMin, max=d.yCurMax; if(!(min<max)) continue; const h=(max-min), delta=h*frac; let a=min+delta, b=max+delta; if(a<d.yMin){a=d.yMin;b=d.yMin+h;} if(b>d.yMax){b=d.yMax;a=d.yMax-h;} d.yCurMin=a; d.yCurMax=b; c.options.scales.y.min=a; c.options.scales.y.max=b; c.update('none'); } }
 function resetAllY(){ for(const c of [mergedChart,...charts]){ if(!c) continue; initFixedDomains(c); const d=c.__domain; d.yCurMin=d.yMin; d.yCurMax=d.yMax; c.options.scales.y.min=d.yCurMin; c.options.scales.y.max=d.yCurMax; c.update('none'); } }
+
+
+function getFxApiKey(provider){
+  // 1) 表单优先（手动覆盖）
+  const inline = document.getElementById('fxApiKey')?.value?.trim();
+  if (inline) return inline;
+
+  // 2) 全局注入（window.FX_API_KEYS 或 window.fx_api_keys）
+  const cfg = (window.FX_API_KEYS || window.fx_api_keys || {});
+  // provider 已经 toLowerCase 过就更稳
+  const p = (provider || '').toLowerCase();
+  return cfg[p] || cfg[provider] || '';
+}
 
 /* ========= 侧边卡片 ========= */
 function getLastNonNullY(arr){ if(!arr||!arr.length) return null; for(let i=arr.length-1;i>=0;i--){ const y=arr[i]?.y; if(y!=null && !Number.isNaN(y)) return Number(y);} return null;}
@@ -223,6 +344,12 @@ function renderSideCard(containerEl, stores, avgLines, storeColorMap, shopOrder)
   });
 
   card.appendChild(ul); containerEl.appendChild(card);
+  try{ syncFxToMerged(); applyFxDayTicksFromMerged(); }catch(e){}
+
+  try{ syncFxToMerged(); applyFxDayTicksFromMerged(); }catch(e){}
+
+  try{ syncFxToMerged(); applyFxDayTicksFromMerged(); }catch(e){}
+
 }
 
 /* ========= Chart.js（默认图例；无右端浮标） ========= */
@@ -402,6 +529,11 @@ async function run(){
     };
 
     const data = await postJSON(`${API_BASE}/api/trends/model-colors/`, payload);
+    // 缓存数据 + 重置延迟加载状态
+    lastData = data;
+    detailsLoaded = false;
+    var detailsEl = document.getElementById('detailsStatus'); if (detailsEl) detailsEl.textContent = '';
+
 
     // 勾选区：每次重建（shop_order_all），本次有数据默认勾选
     {
@@ -442,11 +574,29 @@ async function run(){
     ];
     const {chart:topChart, storeColorMap:topColors} = makeChart(mCanvas, data.merged.stores, mergedAvgLines, document.getElementById('showPoints').checked);
     mergedChart = topChart;
+    try{ syncFxToMerged(); applyFxDayTicksFromMerged(); }catch(e){}
     renderSideCard(document.getElementById('side-merged'), data.merged.stores, mergedAvgLines, topColors, data.shop_order_all || []);
 
-    // 每色一图
-    charts.forEach(c=>c?.destroy()); charts=[];
-    const container = document.getElementById('chartsHost'); container.innerHTML='';
+    // 每色一图：已延迟到点击按钮后再渲染（renderPerColorCharts）
+;
+
+  }catch(e){
+    if(e.message!=='未登录') alert(`加载失败：${e.message||e}`);
+  }finally{
+    document.getElementById('loading').classList.add('hidden');
+  }
+}
+
+
+function renderPerColorCharts(){
+  if(!lastData){ alert('请先完成一次查询'); return; }
+  if(detailsLoaded){ var ds=document.getElementById('detailsStatus'); if(ds) ds.textContent='已加载全部颜色图表'; return; }
+  const data = lastData;
+
+  // 清空旧画布，仅保留容器
+  charts.forEach(c=>c?.destroy()); charts=[];
+  const container = document.getElementById('chartsHost'); container.innerHTML='';
+
     (data.per_color || []).forEach((item, idx)=>{
       const card=document.createElement('div'); card.className='rounded-2xl border border-zinc-200 bg-white p-3';
       const head=document.createElement('div'); head.className='px-1 pb-2 text-sm font-medium flex items-center gap-2';
@@ -480,13 +630,10 @@ async function run(){
       const {chart, storeColorMap} = makeChart(canvas, item.stores, avgLines, document.getElementById('showPoints').checked);
       charts.push(chart);
       renderSideCard(side, item.stores, avgLines, storeColorMap, data.shop_order_all || []);
-    });
+    })
 
-  }catch(e){
-    if(e.message!=='未登录') alert(`加载失败：${e.message||e}`);
-  }finally{
-    document.getElementById('loading').classList.add('hidden');
-  }
+  detailsLoaded = true;
+  var ds2=document.getElementById('detailsStatus'); if(ds2) ds2.textContent = '已加载 ' + ((data.per_color||[]).length) + ' 个颜色图表';
 }
 
 /* ========= 自动刷新 ========= */
@@ -552,6 +699,278 @@ function bind(id, event, handler) {
   el.addEventListener(event, handler);
 }
 
+
+
+// —— 通用：带可选“代理前缀”的 fetch —— //
+async function fetchWithProxy(rawUrl){
+  const px = (document.getElementById('fxProxy')?.value || '').trim();
+  const finalUrl = px ? (px + encodeURIComponent(rawUrl)) : rawUrl;
+  const res = await fetch(finalUrl, {credentials:'omit', mode:'cors'});
+  return res;
+}
+
+// —— 诊断输出 —— //
+function fxLog(msg){
+  const el = document.getElementById('fxDiag');
+  if(!el) return;
+  const now = new Date().toLocaleTimeString();
+  el.textContent = `[${now}] ${msg}`;
+}
+/* ========= USD/JPY (15m) 汇率 ========= */
+async function fetchUsdJpyYahoo(days){
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/USDJPY=X?interval=15m&range=${Math.max(1,days)}d`;
+  const res = await fetch(url, {credentials:'omit', mode:'cors'});
+  if(!res.ok) throw new Error('Yahoo接口不可用');
+  const j = await res.json();
+  const r = j && j.chart && j.chart.result && j.chart.result[0];
+  if(!r || !r.timestamp) throw new Error('Yahoo 数据格式异常');
+  const ts = r.timestamp;
+  const cl = (r.indicators && r.indicators.quote && r.indicators.quote[0] && r.indicators.quote[0].close) || [];
+  const points = [];
+  for(let i=0;i<ts.length;i++){
+    const v = cl[i];
+    if(v!=null && !Number.isNaN(v)){
+      points.push({x: ts[i]*1000, y: Number(v)});
+    }
+  }
+  return points;
+}
+
+async function fetchUsdJpyAlphaVantage(days, apiKey){
+  if(!apiKey) throw new Error('Alpha Vantage 需要 API Key');
+  const url = `https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol=USD&to_symbol=JPY&interval=15min&outputsize=full&apikey=${encodeURIComponent(apiKey)}`;
+  const res = await fetch(url, {credentials:'omit', mode:'cors'});
+  if(!res.ok) throw new Error('Alpha Vantage 接口不可用');
+  const j = await res.json();
+  if(j['Note'] || j['Information']) throw new Error('Alpha Vantage 触发频率/额度限制');
+  const series = j && (j['Time Series FX (15min)'] || j['Time Series (15min)']);
+  if(!series) throw new Error('Alpha Vantage 数据为空或超限');
+  const now = Date.now();
+  const cutoff = now - Math.max(1,days)*86400000;
+  const points = [];
+  for(const k in series){
+    const t = Date.parse(k.replace(' ', 'T') + 'Z');
+    const v = Number(series[k]['4. close'] ?? series[k]['4. Close']);
+    if(!Number.isNaN(t) && t>=cutoff && !Number.isNaN(v)) points.push({x:t, y:v});
+  }
+  points.sort((a,b)=>a.x-b.x);
+  return points;
+}
+
+async function fetchUsdJpyFinnhub(days, apiKey){
+  if(!apiKey) throw new Error('Finnhub 需要 API Key');
+  const nowSec = Math.floor(Date.now()/1000);
+  const fromSec = nowSec - Math.max(1,days)*86400;
+  const url = `https://finnhub.io/api/v1/forex/candle?symbol=OANDA:USD_JPY&resolution=15&from=${fromSec}&to=${nowSec}&token=${encodeURIComponent(apiKey)}`;
+  const res = await fetch(url, {credentials:'omit', mode:'cors'});
+  if(!res.ok) throw new Error('Finnhub 接口不可用(HTTP)');
+  const j = await res.json();
+  if(j.s!=='ok' || !Array.isArray(j.t) || !Array.isArray(j.c)) throw new Error('Finnhub 数据为空/无权限/超限');
+  const points = [];
+  for(let i=0;i<j.t.length;i++){
+    const t = j.t[i]*1000;
+    const v = j.c[i];
+    if(v!=null && !Number.isNaN(v)) points.push({x:t, y:Number(v)});
+  }
+  return points;
+}
+
+async function fetchUsdJpyTwelveData(days, apiKey){
+  if(!apiKey) throw new Error('Twelve Data 需要 API Key');
+  const size = Math.min(5000, Math.max(96*Math.max(1,days)*1.2|0, 200));
+  const url = `https://api.twelvedata.com/time_series?symbol=USD/JPY&interval=15min&outputsize=${size}&format=JSON&apikey=${encodeURIComponent(apiKey)}`;
+  const res = await fetch(url, {credentials:'omit', mode:'cors'});
+  if(!res.ok) throw new Error('Twelve Data 接口不可用');
+  const j = await res.json();
+  if(j.status==='error') throw new Error('Twelve Data 错误：' + (j.message||''));
+  const values = j.values || j.data || [];
+  if(!Array.isArray(values) || !values.length) throw new Error('Twelve Data 无数据');
+  const now = Date.now();
+  const cutoff = now - Math.max(1,days)*86400000;
+  const points = [];
+  for(const row of values){
+    const t = Date.parse((row.datetime || row.datetime_utc || '').replace(' ', 'T') + 'Z');
+    const v = Number(row.close ?? row.price);
+    if(!Number.isNaN(t) && t>=cutoff && !Number.isNaN(v)) points.push({x:t, y:v});
+  }
+  points.sort((a,b)=>a.x-b.x);
+  return points;
+}
+
+function parseFxPasted(text){
+  const lines = (text||'').trim().split(/\r?\n/);
+  const pts=[];
+  for(const ln of lines){
+    const parts = ln.split(/[\s,;\t]+/).filter(Boolean);
+    if(parts.length<2) continue;
+    const t = Date.parse(parts[0]);
+    const y = Number(parts[1]);
+    if(!Number.isNaN(t) && !Number.isNaN(y)) pts.push({x:t, y:y});
+  }
+  pts.sort((a,b)=>a.x-b.x);
+  return pts;
+}
+
+function makeFxChart(canvas, points){
+  if(usdjpyChart){ try{ usdjpyChart.destroy(); }catch(e){} usdjpyChart=null; }
+  const step = Math.max(1, parseInt(document.getElementById('gridStep').value||'15',10));
+  const gridColor = 'rgba(0,0,0,0.06)';
+  usdjpyChart = new Chart(canvas.getContext('2d'), {
+    type: 'line',
+    data: { datasets: [{ label: 'USD/JPY (15m)', data: points, parsing:false, pointRadius: 0, borderWidth: 2, borderColor: '#111827', tension: 0.1 }] },
+    options: {
+      maintainAspectRatio:false,
+      interaction:{ mode:'nearest', intersect:false },
+      scales:{
+        x:{ type:'time', time:{ unit:'day' }, grid:{ color: gridColor, tickColor: gridColor, drawTicks:false }, ticks:{ source:'auto', maxRotation:0, autoSkip:true, callback:(val)=>{ try { return new Date(val).toLocaleDateString(); } catch(e){ return val; } } } },
+        y:{ grid:{ color: gridColor, tickColor: gridColor, drawTicks:false }, ticks:{ callback:(v)=>v.toFixed(2) } }
+      },
+      plugins:{ legend:{ display:true }, tooltip:{ callbacks:{ label:(ctx)=>{ const v=ctx.parsed.y; return ` ${v?.toFixed(3)} JPY`; } } } }
+    }
+  });
+}
+
+async function loadUsdJpy(){
+  const status = document.getElementById('fxStatus');
+  const days = Math.max(1, parseInt(document.getElementById('fxDays').value||'5',10));
+
+    const provider = (document.getElementById('fxProvider')?.value || 'twelvedata').toLowerCase();
+const key = getFxApiKey(provider);
+  {#const key = (window.FX_API_KEYS && window.FX_API_KEYS[provider]) || '';#}
+    console.log('[FX] provider=', provider, ' key=', key ? '(len '+key.length+')' : '(empty)');
+  if(status) status.textContent = '加载中…'; fxLog('Provider='+provider+'；days='+days);
+  try{
+    let points = [];
+    if(provider==='alphavantage'){
+      points = await fetchUsdJpyAlphaVantage(days, key);
+    }else if(provider==='finnhub'){
+      points = await fetchUsdJpyFinnhub(days, key);
+    }else if(provider==='twelvedata'){
+      points = await fetchUsdJpyTwelveData(days, key);
+    }else{
+      points = await fetchUsdJpyYahoo(days);
+    }
+    makeFxChart(document.getElementById('fxCanvas'), points);
+    try{ syncFxToMerged(); applyFxDayTicksFromMerged(); }catch(e){}
+    if(status) status.textContent = `已加载 ${points.length} 个点（≈${Math.round(points.length/4)} 小时）`;
+    renderFxSide(points);
+
+
+function renderFxSide(points){
+  const box = document.getElementById('fxSide');
+  if(!box) return;
+  if(!points || !points.length){ box.innerHTML = '<p class="text-sm text-zinc-600">暂无数据</p>'; return; }
+  const last = points[points.length-1];
+  const first = points[0];
+  const min = points.reduce((m,p)=>Math.min(m,p.y), Infinity);
+  const max = points.reduce((m,p)=>Math.max(m,p.y), -Infinity);
+  const diff = last.y - first.y;
+  const pct = first.y ? (diff/first.y*100) : 0;
+  box.innerHTML = `
+    <div class="side-card">
+      <h4>简要统计</h4>
+      <ul class="side-list">
+        <li><span>起始：</span><span>${new Date(first.x).toLocaleString()}</span></li>
+        <li><span>最新：</span><span>${new Date(last.x).toLocaleString()}</span></li>
+        <li><span>最小：</span><span>${min.toFixed(3)}</span></li>
+        <li><span>最大：</span><span>${max.toFixed(3)}</span></li>
+        <li><span>变化：</span><span>${diff>=0?'+':''}${diff.toFixed(3)} (${pct>=0?'+':''}${pct.toFixed(2)}%)</span></li>
+      </ul>
+    </div>`;
+}
+
+  }catch(e){
+    console.warn('在线加载失败：', e);
+    if(status) status.textContent = '在线加载失败：' + (e.message||e) + '；可切换 Provider 或在下方“从粘贴加载”。';
+    alert('在线汇率数据加载失败：' + (e.message||e));
+  }
+}
+
+
+/* ========= 汇率叠加到合并图（左侧Y轴） ========= */
+function ensureMergedHasFxAxis(){
+  if(!mergedChart) return false;
+  if(!mergedChart.options.scales) mergedChart.options.scales = {};
+  if(!mergedChart.options.scales.yFx){
+    mergedChart.options.scales.yFx = {
+      position: 'left',
+      grid: { drawOnChartArea: false, color: 'rgba(0,0,0,0.06)', tickColor: 'rgba(0,0,0,0.06)' },
+      ticks: { callback:(v)=> (Number(v).toFixed ? Number(v).toFixed(2) : v) }
+    };
+    // 将原价轴挪到右侧（若存在 y 或 yPrice）
+    if(mergedChart.options.scales.y){
+      mergedChart.options.scales.y.position = 'right';
+    }
+    if(mergedChart.options.scales.yPrice){
+      mergedChart.options.scales.yPrice.position = 'right';
+    }
+  }
+  return true;
+}
+
+function upsertFxDataset(points){
+  if(!mergedChart) { alert('请先完成一次查询'); return; }
+  if(!ensureMergedHasFxAxis()) return;
+  const ds = {
+    label: 'USD/JPY (15m)',
+    data: points,
+    parsing: false,
+    pointRadius: 0,
+    borderWidth: 2,
+    borderColor: '#111827',
+    tension: 0.1,
+    yAxisID: 'yFx',
+  };
+  // 如果已存在同名数据集，则替换
+  const i = (mergedChart.data.datasets||[]).findIndex(d=>d && d.yAxisID==='yFx');
+  if(i>=0) mergedChart.data.datasets[i] = ds; else mergedChart.data.datasets.push(ds);
+  try { mergedChart.update('none'); } catch(e){}
+  try { syncFxToMerged(); } catch(e){}
+}
+
+async function loadFxOverlay(){
+  const status = document.getElementById('fxStatus');
+
+    const provider = (document.getElementById('fxProvider')?.value || 'twelvedata').toLowerCase();
+const key = getFxApiKey(provider);
+  const days = Math.max(1, parseInt(document.getElementById('fxDays')?.value || document.getElementById('daysInput')?.value || '5',10));
+  if(status) status.textContent = '加载中…';
+  try {
+    let points = [];
+    if(typeof fetchUsdJpyAlphaVantage === 'function' && provider==='alphavantage'){
+      points = await fetchUsdJpyAlphaVantage(days, key);
+    }else if(typeof fetchUsdJpyFinnhub === 'function' && provider==='finnhub'){
+      points = await fetchUsdJpyFinnhub(days, key);
+    }else if(typeof fetchUsdJpyTwelveData === 'function' && provider==='twelvedata'){
+      points = await fetchUsdJpyTwelveData(days, key);
+    }else if(typeof fetchUsdJpyYahoo === 'function'){
+      points = await fetchUsdJpyYahoo(days);
+    } else {
+      throw new Error('无可用数据源函数');
+    }
+    upsertFxDataset(points);
+    if(status) status.textContent = `已叠加 ${points.length} 点`;
+  } catch(e){
+    console.warn('FX overlay load error:', e);
+    if(status) status.textContent = '加载失败：' + (e.message||e);
+    alert('汇率叠加失败：' + (e.message||e));
+  }
+}
+
+function loadFxOverlayFromPaste(){
+  const text = prompt('粘贴 CSV/TSV：时间,价格（ISO8601,price 或 timestamp,price）');
+  if(!text) return;
+  try {
+    const pts = parseFxPasted(text);
+    if(!pts.length) { alert('未解析到任何数据'); return; }
+    upsertFxDataset(pts);
+    const status = document.getElementById('fxStatus');
+    if(status) status.textContent = `已从粘贴叠加 ${pts.length} 点`;
+  }catch(e){
+    alert('解析失败：' + (e.message||e));
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     renderAvgTable();
   // —— 查询相关 —— //
@@ -572,6 +991,16 @@ document.addEventListener('DOMContentLoaded', () => {
   bind('panUpBtn',    'click', () => panAllY(-0.2));
   bind('panDownBtn',  'click', () => panAllY(0.2));
   bind('resetYBtn',   'click', resetAllY);
+  // —— FX 叠加 —— //
+  bind('loadFxOverlayBtn','click', loadFxOverlay);
+  bind('fxPasteBtn','click', loadFxOverlayFromPaste);
+
+  bind('loadDetailsBtn','click', renderPerColorCharts);
+
+  {#bind('loadFxBtn','click', loadUsdJpy);#}
+  {#bind('fxLoadFromPaste','click', loadUsdJpyFromPaste);#}
+
+
 
   // —— 自动刷新（如果你的页面里有 setupAutoRefresh 就启动；没有则忽略） —— //
   if (typeof setupAutoRefresh === 'function') {

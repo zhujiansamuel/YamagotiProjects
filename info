@@ -124,3 +124,5 @@ git fetch --all --prune
  git pull
  git reset --hard origin/master
  git pull origin master
+ docker compose build --pull web
+ docker compose up -d web nginx

@@ -1,5 +1,7 @@
 from django.views.generic import TemplateView
-
+from django.conf import settings
+import json
+from django.utils.safestring import mark_safe
 class StockDashboardView(TemplateView):
     template_name = "apple_stock/dashboard.html"
 
@@ -36,6 +38,10 @@ class PriceMatrixView(TemplateView):
 
 class ResaleTrendColorsMergedView(TemplateView):
     template_name = "apple_stock/model_capacity_colors_trend.html"
+    def get_context_data(self, **kwargs):
+            ctx = super().get_context_data(**kwargs)
+            ctx["fx_api_keys"] = mark_safe(json.dumps(getattr(settings, "FX_API_KEYS", {})))
+            return ctx
 
 
 class TemplateChartjsView(TemplateView):

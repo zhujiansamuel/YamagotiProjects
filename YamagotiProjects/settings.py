@@ -511,6 +511,7 @@ TIME_INPUT_FORMATS = "%H:%M"
 
 
 SHOP_DISPLAY_ORDER = [
+    "海峡通信", #shop2
     "買取一丁目",   # shop3
     "森森買取",     # shop5
     "買取ルデヤ",   # shop6
@@ -519,3 +520,10 @@ SHOP_DISPLAY_ORDER = [
     "アキモバ",     # shop9
     "ドラゴンモバイル" # shop10
 ]
+
+
+FX_API_KEYS = {
+    "alphavantage": "AlphaVantageKey",
+    "finnhub": "FinnhubKey",
+    "twelvedata": "603d21df9b194d9daeaccd898cee72a3",
+}
