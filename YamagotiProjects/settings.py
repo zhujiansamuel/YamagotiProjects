@@ -241,8 +241,8 @@ EXTERNAL_TRADEIN_SOURCES = [
     #  "url": "https://api.webscraper.io/api/v1/scraping-job/	34172559/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
     {"name": "shop3",
      "url": "https://api.webscraper.io/api/v1/scraping-job/34172550/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
-    # {"name": "shop2",
-    #  "url": "https://api.webscraper.io/api/v1/scraping-job/34172531/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
+    {"name": "shop2",
+     "url": "https://api.webscraper.io/api/v1/scraping-job/34478442/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
 
     # # 样例：B 平台
     # {"name": "shop10", "url": "https://api.webscraper.io/api/v1/scraping-job/34172531/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
@@ -267,6 +267,7 @@ WEB_SCRAPER_WEBHOOK_TOKEN = "0BkhVQJQPDe4IPfxfnw9bX8hYzxY29D48uGi8zq8TcjbsMIvXSh
 
 # 可选：把 WebScraper 的 sitemap 名 或 job 上的 custom_id 映射为清洗器名（shop3/shop4…）
 WEB_SCRAPER_SOURCE_MAP = {
+    "shop2": "shop2",
     "shop10": "shop10",
     "shop3": "shop3",
     "shop4": "shop4",

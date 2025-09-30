@@ -253,6 +253,7 @@ WEB_SCRAPER_WEBHOOK_TOKEN = "0BkhVQJQPDe4IPfxfnw9bX8hYzxY29D48uGi8zq8TcjbsMIvXSh
 
 # 可选：把 WebScraper 的 sitemap 名 或 job 上的 custom_id 映射为清洗器名（shop3/shop4…）
 WEB_SCRAPER_SOURCE_MAP = {
+
     "shop10": "shop10",
     "shop3": "shop3",
     "shop4": "shop4",

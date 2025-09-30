@@ -1101,7 +1101,7 @@ def clean_shop10(df: pd.DataFrame) -> pd.DataFrame:
     model_norm = df["data2"].map(_normalize_model_generic)
     cap_gb     = df["data2"].map(_parse_capacity_gb)
 
-    def _price_from_shop10(x):
+    def _price_from_shop10(x: object) -> int | None:
         if x is None: return None
         s = str(x).replace("新品", "").replace("新\u54c1", "").replace("未開封","").replace("未开封","")
         return to_int_yen(s)
@@ -1244,7 +1244,7 @@ def _apply_adjust_for_colorname(color_name: str, rules: dict) -> int:
 
 # =============== shop2 清洗器 ===============
 @register_cleaner("shop2")
-def clean_shop2(shop2_df: pd.DataFrame, iphone17_df: pd.DataFrame) -> pd.DataFrame:
+def clean_shop2(shop2_df: pd.DataFrame) -> pd.DataFrame:
     """
     输入：
       - shop2_df: 读取自 shop2.csv（columns: web-scraper-order, web-scraper-start-url, data2-1, data2-2, ..., data5, ..., data3, time-scraped）
@@ -1277,7 +1277,8 @@ def clean_shop2(shop2_df: pd.DataFrame, iphone17_df: pd.DataFrame) -> pd.DataFra
         return pd.DataFrame(columns=["part_number","shop_name","price_new","recorded_at"])
 
     # iphone17_df 预处理
-    info = iphone17_df.copy()
+    info = _load_iphone17_info_df()
+    # info = iphone17_df.copy()
     info["model_name"] = info["model_name"].apply(_norm)
     # 容量转 int GB
     if "capacity_gb" not in info.columns:
