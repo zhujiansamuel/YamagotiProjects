@@ -17,7 +17,9 @@ from .views_frontend import ResaleTrendPNMergedView
 from .views_frontend import ImportResaleCSVView
 from .views_frontend import ImportTradeinCSVView, ImportIphoneCSVView, ExternalIngestView
 from .views_frontend import PriceMatrixView, ResaleTrendColorsMergedView, TemplateChartjsView
-from .views import trends_model_colors
+from .api_trends_TrendsAvgOnly import TrendsAvgOnlyApiView
+from .api_trends_model_colors import trends_model_colors
+from .api_trends_color_std import TrendsColorStdApiView
 
 router = DefaultRouter()
 router.register(r"iphones", IphoneViewSet, basename="iphone")
@@ -59,6 +61,8 @@ urlpatterns = [
                        name="resale-trend-colors-merged"),
                   path("template-chartjs/", TemplateChartjsView.as_view(), name="template-chartjs"),
                   path("api/trends/model-colors/", trends_model_colors, name="trends-model-colors"),  # ★ 新增
+                  path("api/trends/model-color/std/", TrendsColorStdApiView.as_view(), name="trends-color-std"),
+                  path("api/trends/model-colors/avg-only/", TrendsAvgOnlyApiView.as_view(), name="trends-avg-only"),
               ] + urlpatterns
 
 urlpatterns += router.urls

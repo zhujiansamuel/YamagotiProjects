@@ -1230,10 +1230,10 @@ def _apply_adjust_for_colorname(color_name: str, rules: dict) -> int:
     adjust = 0
     for group, delta in rules.items():
         g = group.strip()
-        if g in ("青", "ブルー"):
+        if g in ("青", "ブルー","ミストブルー","ディープブルー","スカイブルー"):
             if "ブルー" in c:
                 adjust += delta
-        elif g in ("銀", "シルバー"):
+        elif g in ("銀", "シルバー",):
             if "シルバー" in c:
                 adjust += delta
         else:
@@ -1241,6 +1241,43 @@ def _apply_adjust_for_colorname(color_name: str, rules: dict) -> int:
             if g and g in c:
                 adjust += delta
     return adjust
+
+
+def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
+    """
+    读取 AppleStockChecker/data/iphone17_info.csv 或 settings / env 指定的路径。
+    输出列：part_number, model_name_norm, capacity_gb
+    """
+
+
+    try:
+        from django.conf import settings
+        p = getattr(settings, "EXTERNAL_IPHONE17_INFO_PATH", None)
+        if p:
+            path = str(p)
+        else:
+            raise AttributeError
+    except Exception:
+        path = os.getenv("IPHONE17_INFO_CSV") or str(Path(__file__).resolve().parents[2] / "data" / "iphone17_info.csv")
+    pth = Path(path)
+    if not pth.exists():
+        raise FileNotFoundError(f"未找到 iphone17_info：{pth}")
+
+    if re.search(r"\.(xlsx|xlsm|xls|ods)$", str(pth), re.I):
+        df = pd.read_excel(pth)
+    else:
+        df = pd.read_csv(pth, encoding="utf-8-sig")
+
+    need = {"part_number", "model_name", "capacity_gb","color"}
+    missing = need - set(df.columns)
+    if missing:
+        raise ValueError(f"iphone17_info 缺少必要列：{missing}")
+
+    df = df.copy()
+    # df["model_name_norm"] = df["model_name"].map(_normalize_model_generic)
+    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
+    df = df.dropna(subset=["model_name", "capacity_gb", "part_number","color"])
+    return df[["part_number", "model_name", "capacity_gb","color"]]
 
 # =============== shop2 清洗器 ===============
 @register_cleaner("shop2")
@@ -1277,9 +1314,9 @@ def clean_shop2(shop2_df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=["part_number","shop_name","price_new","recorded_at"])
 
     # iphone17_df 预处理
-    info = _load_iphone17_info_df()
+    info = _load_iphone17_info_df_for_shop2()
     # info = iphone17_df.copy()
-    info["model_name"] = info["model_name"].apply(_norm)
+    # info["model_name"] = info["model_name"].apply(_norm)
     # 容量转 int GB
     if "capacity_gb" not in info.columns:
         # 如果你的 info 表容量列叫别的名字，替换这里

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import uuid
-from rest_framework.views import APIView
-
 
 from .models import Iphone, OfficialStore, InventoryRecord
 from .serializers import OfficialStoreSerializer, InventoryRecordSerializer, IphoneSerializer
@@ -26,37 +24,26 @@ from .utils.color_norm import synonyms_for_query
 from .models import Iphone, SecondHandShop, PurchasingShopPriceRecord
 from .services.external_ingest_service import ingest_external_sources
 from rest_framework import permissions, status
-from collections import defaultdict
-from datetime import timedelta
 from django.db.models import Q
-from django.utils import timezone
-from rest_framework.decorators import api_view, permission_classes
-from .models import Iphone, PurchasingShopPriceRecord
 import io, pandas as pd
 from rest_framework.decorators import action
-from rest_framework.response import Response
 from rest_framework import status
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
-from django.conf import settings
 from celery.result import AsyncResult
-
 from AppleStockChecker.utils.external_ingest.webscraper import fetch_webscraper_export_sync, to_dataframe_from_request
 from AppleStockChecker.services.external_ingest_service import ingest_external_dataframe
 from AppleStockChecker.utils.external_ingest.registry import get_cleaner
 from AppleStockChecker.tasks.webscraper_tasks import task_process_webscraper_job
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
-
-from collections import defaultdict
+from django.conf import settings
 from datetime import timedelta
-from typing import List, Dict
-
 from django.utils import timezone
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-
 from .models import Iphone, PurchasingShopPriceRecord
-from django.conf import settings
+
+
 
 def _get_bool_param(request, name: str, default=False):
     return str(request.query_params.get(name) or request.data.get(name) or "").lower() in {"1", "true", "t", "yes",
@@ -1460,316 +1447,7 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
         return Response(data, status=status.HTTP_200_OK)
 
 
-# AppleStockChecker/api_trends.py
-# -*- coding: utf-8 -*-
-"""
-统一曲线计算（后端）：
-1) 生成 0时offset分开始、每 step 分钟一个点的网格（默认 15min，offset=0）
-2) 对“每家店、每个颜色”的原始点做最近邻重采样 → 得到“每 15min 都有值”的标准序列
-3) merged（跨颜色、每店）：同一网格点，对所有颜色做横向均值 → 得到“每店曲线”
-4) A：在 merged 的“每店曲线集合”上，对勾选店做均值（每个网格点）
-5) B/C：在 A 上做“时间窗(分钟)移动平均”
-6) per_color：每色返回“每店曲线（重采样后）”及其 A/B/C
-7) 返回顺序：shop_order_all（settings 定义的全量顺序，去重）；shop_order_present（本次有数据顺序，去重）
-"""
-from collections import defaultdict
-from datetime import timedelta
-from typing import List, Dict
-
-from django.conf import settings
-from django.utils import timezone
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
-
-from .models import Iphone, PurchasingShopPriceRecord
 
 
-# =========================
-# 基础工具
-# =========================
-
-def _aware_local(dt):
-    tz = timezone.get_current_timezone()
-    if timezone.is_naive(dt):
-        return timezone.make_aware(dt, tz)
-    return dt.astimezone(tz)
 
 
-def _norm_name(s: str) -> str:
-    """统一店名/字符串比较：去首尾空白"""
-    return (s or "").strip()
-
-
-def _build_time_grid(start_dt, end_dt, step_minutes: int = 15, offset_minute: int = 0) -> List[int]:
-    """生成本地时区网格（ms）：从 start_dt~end_dt，对齐到“0时offset分+步长 step 分钟”"""
-    step_minutes = max(1, int(step_minutes))
-    offset_minute = int(offset_minute) % step_minutes
-
-    start_local = _aware_local(start_dt)
-    end_local = _aware_local(end_dt)
-
-    day0 = start_local.replace(hour=0, minute=0, second=0, microsecond=0)
-    first = day0 + timedelta(minutes=offset_minute)
-    if first < start_local:
-        delta_min = (start_local - first).total_seconds() / 60.0
-        steps = int(delta_min // step_minutes) + 1
-        first = first + timedelta(minutes=steps * step_minutes)
-
-    grid = []
-    cur = first
-    while cur <= end_local:
-        grid.append(int(cur.timestamp() * 1000))
-        cur = cur + timedelta(minutes=step_minutes)
-    return grid
-
-
-def _resample_nearest(points: List[Dict], grid_ms: List[int]) -> List[Dict]:
-    """
-    最近邻重采样：对每个网格 t，挑绝对时间差最小的历史点（允许“未来”点），保证 15min 连续。
-    points: [{x(ms), y}...]（升序）
-    返回与 grid 等长的 [{x,y}]
-    """
-    out = []
-    n = len(points)
-    if n == 0:
-        return [{"x": t, "y": None} for t in grid_ms]
-    i = 0
-    for t in grid_ms:
-        while i + 1 < n and abs(points[i + 1]["x"] - t) < abs(points[i]["x"] - t):
-            i += 1
-        out.append({"x": t, "y": points[i].get("y")})
-    return out
-
-
-def _moving_average_time(points: List[Dict], window_minutes: int) -> List[Dict]:
-    """时间窗(分钟)移动平均（包含当前点），在 A 线结果上做平滑。"""
-    if not points:
-        return []
-    wms = max(1, int(window_minutes)) * 60 * 1000
-    pts = sorted(points, key=lambda p: p["x"])
-    out = []
-    head = 0
-    s = 0.0
-    c = 0
-    for i, pt in enumerate(pts):
-        s += float(pt["y"]); c += 1
-        while head <= i and (pt["x"] - pts[head]["x"]) > wms:
-            s -= float(pts[head]["y"]); c -= 1; head += 1
-        out.append({"x": pt["x"], "y": s / c if c else None})
-    return out
-
-
-def _order_shops(all_names: List[str]) -> List[str]:
-    """按 settings.SHOP_DISPLAY_ORDER 排序；未在该列表的放末尾（按名称字母序）"""
-    preferred = list(getattr(settings, "SHOP_DISPLAY_ORDER", []))
-    pref_index = {name: i for i, name in enumerate(preferred)}
-    def key(name: str):
-        return (0, pref_index[name]) if name in pref_index else (1, name)
-    return sorted(all_names, key=key)
-
-
-# =========================
-# 核心计算
-# =========================
-
-def compute_trends_for_model_capacity(model_name: str,
-                                      capacity_gb: int,
-                                      days: int,
-                                      selected_shops: set[str],
-                                      avg_cfg: dict,
-                                      grid_cfg: dict | None = None) -> dict:
-    """
-    见模块顶部 docstring
-    """
-    tz = timezone.get_current_timezone()
-    now = timezone.now()
-    start_window = now - timedelta(days=max(1, int(days)))  # 仅用于展示窗口 / 网格范围
-
-    # 配置
-    A_cfg = (avg_cfg or {}).get("A", {})
-    B_cfg = (avg_cfg or {}).get("B", {})
-    C_cfg = (avg_cfg or {}).get("C", {})
-    bucket_minutes = max(1, int(A_cfg.get("bucketMinutes", 30)))  # 保留概念；实际 A 用 15min 网格均值
-    b_win = max(1, int(B_cfg.get("windowMinutes", 60)))
-    c_win = max(1, int(C_cfg.get("windowMinutes", 240)))
-
-    step_minutes = int((grid_cfg or {}).get("stepMinutes", 15))
-    offset_minute = int((grid_cfg or {}).get("offsetMinute", 0))  # 0 时 N 分
-
-    # 机型+容量 -> 颜色 -> PN
-    iphones = Iphone.objects.filter(model_name=model_name, capacity_gb=int(capacity_gb)) \
-        .values("part_number", "color")
-    pn_by_color: dict[str, list[str]] = defaultdict(list)
-    for it in iphones:
-        pn_by_color[_norm_name(it["color"])].append(it["part_number"])
-    color_list = sorted(pn_by_color.keys(), key=lambda s: s or "")
-
-    # 拉全部历史记录（用于最近邻补齐；不裁剪 days）
-    per_color_store_raw: dict[str, dict[str, list[dict]]] = {}   # color -> { shop -> [ {x,y}... ] }
-    merged_store_raw: dict[str, list[dict]] = defaultdict(list)  # shop -> [{x,y}...]
-
-    for color in color_list:
-        pns = pn_by_color[color]
-        qs = PurchasingShopPriceRecord.objects.filter(
-            iphone__part_number__in=pns
-        ).select_related("shop", "iphone").order_by("recorded_at")
-
-        store_map = defaultdict(list)
-        for r in qs.iterator():
-            shop_name = _norm_name(r.shop.name)
-            t = int(timezone.localtime(r.recorded_at, tz).timestamp() * 1000)
-            y = r.price_new
-            store_map[shop_name].append({"x": t, "y": y})
-            merged_store_raw[shop_name].append({"x": t, "y": y})
-
-        for shop in store_map:
-            store_map[shop].sort(key=lambda p: p["x"])
-        per_color_store_raw[color] = store_map
-
-    for shop in merged_store_raw:
-        merged_store_raw[shop].sort(key=lambda p: p["x"])
-
-    # 网格（覆盖 now-days ~ now）
-    grid_ms = _build_time_grid(start_window, now, step_minutes=step_minutes, offset_minute=offset_minute)
-    grid_len = len(grid_ms)
-
-    # 每 店-色 最近邻重采样（连续 15min）
-    per_color_resampled: dict[str, dict[str, list[dict]]] = {}
-    all_shops_set: set[str] = set()
-    for color, store_map in per_color_store_raw.items():
-        rs_map = {}
-        for shop, pts in store_map.items():
-            rs_map[shop] = _resample_nearest(pts, grid_ms)
-            all_shops_set.add(shop)
-        per_color_resampled[color] = rs_map
-
-    # 所有店：全量顺序与本次有数据顺序（都做规范化&去重）
-    # 全库所有店名（distinct）→ 规范化 → 唯一化 → 按 settings 排序
-    all_names_db = list(PurchasingShopPriceRecord.objects.values_list("shop__name", flat=True).distinct())
-    names_norm = [_norm_name(n) for n in all_names_db if _norm_name(n)]
-    names_unique = list(dict.fromkeys(names_norm))          # 稳定去重
-    shop_order_all = _order_shops(names_unique)
-
-    # 本次窗口出现过数据的店（按 settings 顺序）
-    shop_order_present = _order_shops(sorted(all_shops_set))
-
-    # merged（跨颜色、每店）= 同一网格点，对所有颜色做横向均值（连续 15min）
-    merged_store_resampled_avg: dict[str, list[dict]] = {}
-    for shop in shop_order_present:
-        series = []
-        for idx in range(grid_len):
-            x = grid_ms[idx]
-            ys = []
-            for color, store_map in per_color_resampled.items():
-                seq = store_map.get(shop)
-                if not seq:
-                    continue
-                y = seq[idx].get("y")
-                if y is not None:
-                    ys.append(float(y))
-            series.append({"x": x, "y": (sum(ys)/len(ys)) if ys else None})
-        merged_store_resampled_avg[shop] = series
-
-    # 横向均值（在网格上对勾选店做均值）
-    def _avg_on_grid(store_resampled: Dict[str, List[Dict]], selected_shops: set) -> List[Dict]:
-        any_series = next(iter(store_resampled.values()), [])
-        out = []
-        for idx in range(len(any_series)):
-            x = any_series[idx]["x"] if any_series else None
-            ys = []
-            for shop, seq in store_resampled.items():
-                if _norm_name(shop) not in selected_shops:
-                    continue
-                y = seq[idx].get("y") if idx < len(seq) else None
-                if y is not None:
-                    ys.append(float(y))
-            if ys:
-                out.append({"x": x, "y": sum(ys)/len(ys)})
-        return out
-
-    # A/B/C（merged）
-    seriesA_merged = _avg_on_grid(merged_store_resampled_avg, selected_shops)
-    seriesB_merged = _moving_average_time(seriesA_merged, b_win)
-    seriesC_merged = _moving_average_time(seriesA_merged, c_win)
-
-    merged = {
-        "stores": [
-            {"label": shop, "data": merged_store_resampled_avg[shop]}
-            for shop in shop_order_present
-        ],
-        "avg": {"A": seriesA_merged, "B": seriesB_merged, "C": seriesC_merged}
-    }
-
-    # per_color：每色也返回“重采样后的每店曲线”及其 A/B/C（店顺序按 settings）
-    per_color = []
-    for color in color_list:
-        stores_rs = per_color_resampled[color]               # {shop -> rs(seq)}
-        stores_list = [{"label": shop, "data": stores_rs[shop]}
-                       for shop in shop_order_present if shop in stores_rs]
-
-        seriesA = _avg_on_grid({shop: stores_rs[shop] for shop in stores_rs}, selected_shops)
-        seriesB = _moving_average_time(seriesA, b_win)
-        seriesC = _moving_average_time(seriesA, c_win)
-        per_color.append({
-            "color": color,
-            "stores": stores_list,
-            "avg": {"A": seriesA, "B": seriesB, "C": seriesC}
-        })
-
-    return {
-        "shop_order_all": shop_order_all,           # 全量顺序（来自 settings，已去重）
-        "shop_order_present": shop_order_present,   # 本次窗口出现过数据的顺序（已去重）
-        "colors": color_list,
-        "merged": merged,
-        "per_color": per_color,
-    }
-
-
-# =========================
-# API 入口
-# =========================
-
-@api_view(["POST"])
-@permission_classes([IsAuthenticated])
-def trends_model_colors(request):
-    """
-    请求 JSON:
-    {
-      "model_name": "iPhone 17",
-      "capacity_gb": 256,
-      "days": 30,
-      "shops": ["買取一丁目","森森買取", ...],   // 勾选店；空或不传=ALL
-      "avg": {
-        "A": {"bucketMinutes": 30},
-        "B": {"windowMinutes": 60,  "lineWidth": 2, "color":"#ff0077", "dash":"dash"},
-        "C": {"windowMinutes": 240, "lineWidth": 2, "color":"#00bcd4", "dash":"dot"}
-      },
-      "grid": { "stepMinutes": 15, "offsetMinute": 0 }  // 0时N分开始、每 step 分钟一个点
-    }
-    响应 JSON：见 compute_trends_for_model_capacity()
-    """
-    payload = request.data or {}
-    model_name = (payload.get("model_name") or "").strip()
-    capacity_gb = int(payload.get("capacity_gb") or 0)
-    days = int(payload.get("days") or 30)
-    shops = payload.get("shops") or []
-    avg_cfg = payload.get("avg") or {}
-    grid_cfg = payload.get("grid") or {}
-
-    if not model_name or not capacity_gb:
-        return Response({"detail": "model_name/capacity_gb 不能为空"}, status=400)
-
-    if shops:
-        selected_shops = set(_norm_name(str(s)) for s in shops)
-    else:
-        selected_shops = set(_norm_name(n) for n in
-                             PurchasingShopPriceRecord.objects.values_list("shop__name", flat=True).distinct())
-
-    data = compute_trends_for_model_capacity(
-        model_name, capacity_gb, days,
-        selected_shops=selected_shops,
-        avg_cfg=avg_cfg,
-        grid_cfg=grid_cfg
-    )
-    return Response(data)

@@ -512,14 +512,31 @@ TIME_INPUT_FORMATS = "%H:%M"
 
 
 SHOP_DISPLAY_ORDER = [
-    "海峡通信", #shop2
-    "買取一丁目",   # shop3
-    "森森買取",     # shop5
-    "買取ルデヤ",   # shop6
-    "買取ホムラ",   # shop7
-    "買取wiki",     # shop8
-    "アキモバ",     # shop9
-    "ドラゴンモバイル" # shop10
+
+    "海峡通信",  # shop2　　　      ２
+    "買取一丁目",  # shop3         ３
+
+    "森森買取",  # shop5           ５
+    "買取ルデヤ",  # shop6         ６
+    "買取wiki",  # shop8          ７
+    "買取ホムラ",  # shop7         ８
+    "ドラゴンモバイル",  # shop10　　９
+    "モバステ",  # shop11　         10
+    "アキモバ",  # shop9           11
+    "トゥインクル", # shop12        12
+    "家電市場", # shop13           13
+    "買取楽園", # shop14           14
+    "買取当番", # shop15           15
+    "携帯空間", # shop16           16
+    # "",  # shop17               17
+    # "",  # shop18               18
+    # "",  # shop19               19
+    "毎日買取", # shop20           20
+    # "",  # shop21
+    # "",  # shop22
+    # "",  # shop23
+    # "",  # shop24
+    # "",  # shop25
 ]
 
 
@@ -528,3 +545,10 @@ FX_API_KEYS = {
     "finnhub": "FinnhubKey",
     "twelvedata": "603d21df9b194d9daeaccd898cee72a3",
 }
+
+
+TREND_MAX_LOOKBACK_DAYS = 90
+TREND_DB_MAX_WORKERS    = 6
+TREND_CPU_MAX_WORKERS   = 0    # 0/None=自动核数
+TREND_DOWNSAMPLE_TARGET = 1500 # 每条曲线最多点数（0=关闭）
+
