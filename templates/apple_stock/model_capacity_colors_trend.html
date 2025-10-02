@@ -146,6 +146,8 @@
                 width: 100%
             }
         }
+         .top-info { font-size: 12px; line-height: 1.2; color: #374151; }
+  .top-info h4 { font-size: 12px; font-weight: 600; margin: 0 0 6px 0; color: #111827; }
     </style>
 
 </head>
@@ -451,7 +453,11 @@ async function loadMergedStdChart(){
               if(d.getHours()===0&&d.getMinutes()===0){
                 const w=['周日','周一','周二','周三','周四','周五','周六'][d.getDay()];
                 const mm=String(d.getMonth()+1).padStart(2,'0'), dd=String(d.getDate()).padStart(2,'0');
-                return `${mm}/${dd} (${w})`; } return ''; } },
+                return `${mm}/${dd} (${w})`; } return ''; },
+                  minRotation: 90,   // ★ 新增：最小旋转角度 90°
+      maxRotation: 90
+            },
+
             title:{display:true,text:'日期'} },
         y:{ position:'right', beginAtZero:false, title:{display:true,text:'价格（円）'} }
       },
@@ -1222,7 +1228,11 @@ if(!containerEl) return;
                 scales: {
                     x: {
                         type: 'time', time: {unit: 'day'},
-                                    ticks:{ callback:(v)=>fmtMdWeek(v) },
+                         ticks:{ callback:(v)=>fmtMdWeek(v),
+                                  minRotation: 90,   // ★ 新增：最小旋转角度 90°
+                                  maxRotation: 90    // ★ 新增：最大旋转角度 90°
+                         },
+
                         title: {display: true, text: '日期'}
                     },
                     y: {position: 'right', beginAtZero: false, title: {display: true, text: '价格（円）'}}
@@ -1815,53 +1825,27 @@ try {
 function renderPerColorCharts(){
 
   if(!lastData){ alert('请先完成一次查询'); return; }
-
   if(detailsLoaded){ const ds=document.getElementById('detailsStatus'); if(ds) ds.textContent='已加载全部颜色图表'; return; }
-
   const data = lastData;
-
-
-
   charts.forEach(c=>c?.destroy()); charts=[];
-
   const container = document.getElementById('chartsHost'); container.innerHTML='';
-
-
-
   (data.per_color || []).forEach((item, idx)=>{
-
     const card=document.createElement('div'); card.className='rounded-2xl border border-zinc-200 bg-white p-3';
-
-
-
     /* 统计图（均值+标准差带）容器与控件 */
 
     const statsBox = document.createElement('div');
-
     statsBox.className = 'mb-2';
-
     statsBox.innerHTML = `
-
       <div class="flex items-center gap-2 mb-2">
-
         <button class="px-2 py-1 border rounded" data-role="load-stats">加载统计图</button>
-
         <label class="text-sm">显示标准差带：</label>
-
         <label class="text-sm"><input type="radio" name="std-${idx}" value="A" checked> A</label>
-
         <label class="text-sm"><input type="radio" name="std-${idx}" value="B"> B</label>
-
         <label class="text-sm"><input type="radio" name="std-${idx}" value="C"> C</label>
-
       </div>
-
       <div class="chart-row">
-
-        <div class="chart-left"><canvas id="stats-canvas-${idx}" height="220"></canvas></div>
-
+        <div class="chart-left"><canvas id="stats-canvas-${idx}" height="50"></canvas></div>
         <div class="chart-right"><div class="side-card" id="stats-side-${idx}"></div></div>
-
       </div>
 
     `;
@@ -1895,126 +1879,83 @@ statsBox.querySelector('[data-role="load-stats"]').addEventListener('click', asy
 });
     card.appendChild(statsBox);
 
-
-
     // 颜色主图
-
     const head=document.createElement('div'); head.className='px-1 pb-2 text-sm font-medium flex items-center gap-2';
-
     const hex=colorHex(item.color);
-
     head.innerHTML = `<span class="inline-block w-3 h-3 rounded" style="background:${hex}"></span><span style="color:${hex}">${esc(item.color)}</span>`;
 
 
+// 行容器 + 左列
+const row = document.createElement('div'); row.className = 'chart-row';
+const left = document.createElement('div'); left.className = 'chart-left';
 
-    const row=document.createElement('div'); row.className='chart-row';
+// ★ 新增：把侧边卡片放到画布上方（和合并图一致）
+const sideTop = document.createElement('div');
+sideTop.id = `side-${idx}`;
+sideTop.className = 'top-info';
+sideTop.style.marginBottom = '6px';
+left.appendChild(sideTop);
 
-    const left=document.createElement('div'); left.className='chart-left';
+// 画布
+const canvas = document.createElement('canvas');
+canvas.height = CHART_HEIGHT;
+left.appendChild(canvas);
 
-    const right=document.createElement('div'); right.className='chart-right';
-
-    const side=document.createElement('div'); side.id = `side-${idx}`; side.className='side-card';
-
-
-
-    const canvas=document.createElement('canvas'); canvas.height=CHART_HEIGHT; left.appendChild(canvas);
-
-    right.appendChild(side);
-
-    row.appendChild(left); row.appendChild(right);
-
-    card.appendChild(head); card.appendChild(row); container.appendChild(card);
-
+// 拼接（不再需要 right 列）
+row.appendChild(left);
+card.appendChild(head);
+card.appendChild(row);
+container.appendChild(card);
 
 
     const avgLines = [
-
       { label:'平均线 A(黑)', data:item.avg.A, color:'#000000',
-
         lineWidth: Math.max(1, parseInt(document.querySelector('[data-avg="width"][data-idx="0"]')?.value || '3', 10)),
-
         dash: document.querySelector('[data-avg="dash"][data-idx="0"]')?.value || 'solid' },
-
       { label:'平均线 B',     data:item.avg.B,
-
         color:document.querySelector('[data-avg="color"][data-idx="1"]')?.value || '#ff0077',
-
         lineWidth: Math.max(1, parseInt(document.querySelector('[data-avg="width"][data-idx="1"]')?.value || '2', 10)),
-
         dash: document.querySelector('[data-avg="dash"][data-idx="1"]')?.value || 'dash' },
-
       { label:'平均线 C',     data:item.avg.C,
-
         color:document.querySelector('[data-avg="color"][data-idx="2"]')?.value || '#00bcd4',
-
         lineWidth: Math.max(1, parseInt(document.querySelector('[data-avg="width"][data-idx="2"]')?.value || '2', 10)),
-
         dash: document.querySelector('[data-avg="dash"][data-idx="2"]')?.value || 'dot' },
-
     ];
 
-    const {chart, storeColorMap} = makeChart(canvas, item.stores, avgLines, document.getElementById('showPoints').checked);
-
-    charts.push(chart);
-
-    renderSideCard(side, item.stores, avgLines, storeColorMap, data.shop_order_all || []);
-
-
+ const { chart, storeColorMap } = makeChart(
+  canvas, item.stores, avgLines, document.getElementById('showPoints').checked
+);
+charts.push(chart);
+renderSideCard(sideTop, item.stores, avgLines, storeColorMap, data.shop_order_all || []);
 
     // 绑定“加载统计图”按钮
 
     statsBox.querySelector('[data-role="load-stats"]').addEventListener('click', async ()=>{
-
       const statsCanvas = document.getElementById(`stats-canvas-${idx}`);
-
       const sideEl = document.getElementById(`stats-side-${idx}`);
-
       const key=document.getElementById('comboSelect').value;
-
       const [model_name2, cap2] = key.split('|');
-
       const days = Math.max(1, parseInt(document.getElementById('daysInput').value||'30',10));
-
       const payloadBase = {
-
         model_name: model_name2,
-
-        capacity_gb: parseInt(cap2,10),
-
-        days,
-
+        capacity_gb: parseInt(cap2,10), days,
         shops: Array.from(new Set(
-
           Array.from(document.querySelectorAll('#shopChecks input[data-shop]'))
-
             .filter(cb => cb.checked)
-
             .map(cb => (cb.nextElementSibling.textContent || '').trim())
-
         )),
-
         grid:{
-
           stepMinutes: Math.max(1, parseInt(document.getElementById('gridStep').value||'15',10)),
-
           offsetMinute: Math.max(0, parseInt(document.getElementById('gridOffset').value||'0',10))
 
         },
-
         avg:{
-
           A:{ bucketMinutes: Math.max(1, parseInt(document.querySelector('[data-avg="bucket"][data-idx="0"]')?.value || '30', 10)) },
-
           B:{ windowMinutes: Math.max(1, parseInt(document.querySelector('[data-avg="winm"][data-idx="1"]')?.value || '60', 10)) },
-
           C:{ windowMinutes: Math.max(1, parseInt(document.querySelector('[data-avg="winm"][data-idx="2"]')?.value || '240', 10)) }
-
         }
-
       };
-
       await loadColorStdChart(idx, item.color, statsCanvas, sideEl, payloadBase);
-
     });
 
   });
@@ -2022,7 +1963,6 @@ statsBox.querySelector('[data-role="load-stats"]').addEventListener('click', asy
 
 
   detailsLoaded = true;
-
   const ds2=document.getElementById('detailsStatus'); if(ds2) ds2.textContent = '已加载 ' + ((data.per_color||[]).length) + ' 个颜色图表';
 
 }

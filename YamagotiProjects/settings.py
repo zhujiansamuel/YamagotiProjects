@@ -552,3 +552,19 @@ TREND_DB_MAX_WORKERS    = 6
 TREND_CPU_MAX_WORKERS   = 0    # 0/None=自动核数
 TREND_DOWNSAMPLE_TARGET = 1500 # 每条曲线最多点数（0=关闭）
 
+
+
+LIST_ORDER = [
+    "iphone-17-pro-max-256",
+    "iphone-17-pro-max-512",
+    "iphone-17-pro-max-1024",
+    "iphone-17-pro-max-2048",
+    "iphone-17-pro-256",
+    "iphone-17-pro-512",
+    "iphone-17-pro-1024",
+    "iphone-Air-256",
+    "iphone-Air-512",
+    "iphone-Air-1024",
+    "iphone-17-256",
+    "iphone-17-512"
+]
