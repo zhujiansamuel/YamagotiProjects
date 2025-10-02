@@ -368,13 +368,31 @@
         {#"#84cc16",　　/* ========= 基础-shop25 ========= */#}
     ]
 
+const FIXED_MODELS = [
+  { id: "iphone-17-pro-max-256",  model: "iPhone 17 Pro Max", cap: 256  },
+  { id: "iphone-17-pro-max-512",  model: "iPhone 17 Pro Max", cap: 512  },
+  { id: "iphone-17-pro-max-1024", model: "iPhone 17 Pro Max", cap: 1024 },
+  { id: "iphone-17-pro-max-2048", model: "iPhone 17 Pro Max", cap: 2048 },
+  { id: "iphone-17-pro-256",      model: "iPhone 17 Pro",     cap: 256  },
+  { id: "iphone-17-pro-512",      model: "iPhone 17 Pro",     cap: 512  },
+  { id: "iphone-17-pro-1024",     model: "iPhone 17 Pro",     cap: 1024 },
+  { id: "iphone-Air-256",         model: "iPhone Air",        cap: 256  },
+  { id: "iphone-Air-512",         model: "iPhone Air",        cap: 512  },
+  { id: "iphone-Air-1024",        model: "iPhone Air",        cap: 1024 },
+  { id: "iphone-17-256",          model: "iPhone 17",         cap: 256  },
+  { id: "iphone-17-512",          model: "iPhone 17",         cap: 512  },
+];
+
+
+
+
     // 给传入的 chart 与两个容器 id，设置左右竖直边缘标签
 function updateEdgeLabels(chart, leftId, rightId){
   if(!chart) return;
   const s = chart.scales?.x; if(!s) return;
   const min = s.min, max = s.max; if(min==null||max==null) return;
   const fmt = (ts)=>{ const d=new Date(ts);
-    const w=['周日','周一','周二','周三','周四','周五','周六'][d.getDay()];
+    const w=['日','月','火','水','木','金','土'][d.getDay()];
     const mm=String(d.getMonth()+1).padStart(2,'0'); const dd=String(d.getDate()).padStart(2,'0');
     return `${mm}/${dd} (${w})`; };
   const L = document.getElementById(leftId), R = document.getElementById(rightId);
@@ -451,7 +469,7 @@ async function loadMergedStdChart(){
         x:{ type:'time', time:{unit:'day'},
             ticks:{ callback:(v)=>{ const d=new Date(v);
               if(d.getHours()===0&&d.getMinutes()===0){
-                const w=['周日','周一','周二','周三','周四','周五','周六'][d.getDay()];
+                const w=['日','月','火','水','木','金','土'][d.getDay()];
                 const mm=String(d.getMonth()+1).padStart(2,'0'), dd=String(d.getDate()).padStart(2,'0');
                 return `${mm}/${dd} (${w})`; } return ''; },
                   minRotation: 90,   // ★ 新增：最小旋转角度 90°
@@ -1120,7 +1138,7 @@ async function loadColorStdChart(idx, colorName, ctxCanvas, sideEl, payloadBase)
 
    function fmtMdWeek(ts) {
         const d = new Date(ts);
-        const w = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()];
+        const w = ['日','月','火','水','木','金','土'][d.getDay()];
         const mm = String(d.getMonth() + 1).padStart(2, '0');
         const dd = String(d.getDate()).padStart(2, '0');
         console.log(w)
@@ -1653,47 +1671,28 @@ try {
     }
 
     /* ========= 机型下拉 ========= */
-    async function buildCombos() {
-        // 拉取 /iphones/（DRF 列表）填充下拉
-        let url = `${API_BASE}/iphones/?ordering=model_name`;
-        const sel = document.getElementById('comboSelect');
-        sel.innerHTML = `<option value="">加载中...</option>`;
-        const options = [];
+async function buildCombos(){
+  const sel = document.getElementById('comboSelect');
+  if (!sel) return;
 
-        try {
-            while (url) {
-                const r = await fetch(url, {credentials: 'same-origin'});
-                if (!handleAuth(r)) return;
-                if (!r.ok) throw new Error(`${r.status}`);
-                const j = await r.json();
-                const rows = j.results || j;
-                rows.forEach(x => {
-                    const key = `${x.model_name}|${x.capacity_gb}`;
-                    const cap = (Number(x.capacity_gb) % 1024 === 0) ? `${Number(x.capacity_gb) / 1024}TB` : `${x.capacity_gb}GB`;
-                    options.push({value: key, label: `${x.model_name} ${cap}`});
-                });
-                url = j.next ? new URL(j.next, location.origin).toString() : null;
-            }
-        } catch (err) {
-            console.error('加载机型失败：', err);
-        }
+  // 生成 value（payload 用的是 `${model_name}|${capacity_gb}`）
+  const options = FIXED_MODELS.map(m => {
+    const capLabel = (m.cap % 1024 === 0) ? `${m.cap/1024}TB` : `${m.cap}GB`;
+    return {
+      value: `${m.model}|${m.cap}`,
+      label: `${m.model} ${capLabel}`
+    };
+  });
 
-        // 按文案排序 & 去重（有些型号可能重复出现于不同颜色记录）
-        const seen = new Set();
-        const uniq = [];
-        options.sort((a, b) => a.label.localeCompare(b.label));
-        for (const opt of options) {
-            if (seen.has(opt.value)) continue;
-            seen.add(opt.value);
-            uniq.push(opt);
-        }
+  // 按给定顺序写入
+  sel.innerHTML = options.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
 
-        if (uniq.length) {
-            sel.innerHTML = uniq.map(o => `<option value="${o.value}">${esc(o.label)}</option>`).join('');
-        } else {
-            sel.innerHTML = `<option value="">（无可选机型）</option>`;
-        }
-    }
+  // 默认选第一项
+  if (options.length) sel.value = options[0].value;
+
+  // 维持与原逻辑一致：选择变化时触发查询
+  sel.addEventListener('change', run);
+}
 
     /* ========= 统一请求并渲染 ========= */
     let autoTimer = null;
@@ -1999,36 +1998,26 @@ renderSideCard(sideTop, item.stores, avgLines, storeColorMap, data.shop_order_al
 
     /* ========= 机型下拉初始化 & 事件 ========= */
     async function buildCombos() {
-        let url = `${API_BASE}/iphones/?ordering=model_name`;
         const sel = document.getElementById('comboSelect');
-        sel.innerHTML = `<option value="">加载中...</option>`;
-        const items = [];
-        try {
-            while (url) {
-                const r = await fetch(url, {credentials: 'same-origin'});
-                if (!handleAuth(r)) return;
-                const j = await r.json();
-                const rows = j.results || j;
-                rows.forEach(x => {
-                    const key = `${x.model_name}|${x.capacity_gb}`;
-                    const cap = (Number(x.capacity_gb) % 1024 === 0) ? `${Number(x.capacity_gb) / 1024}TB` : `${x.capacity_gb}GB`;
-                    items.push({value: key, label: `${x.model_name} ${cap}`});
-                });
-                url = j.next ? new URL(j.next, location.origin).toString() : null;
-            }
-        } catch (err) {
-            console.error('加载机型失败：', err);
-        }
+  if (!sel) return;
 
-        // 去重并排序
-        const uniq = [...new Map(items.map(o => [o.value, o])).values()].sort((a, b) => a.label.localeCompare(b.label));
-        if (uniq.length) {
-            sel.innerHTML = uniq.map(o => `<option value="${o.value}">${esc(o.label)}</option>`).join('');
-            // 默认选择第一项
-            sel.value = uniq[0].value;
-        } else {
-            sel.innerHTML = `<option value="">（无可选机型）</option>`;
-        }
+  // 生成 value（payload 用的是 `${model_name}|${capacity_gb}`）
+  const options = FIXED_MODELS.map(m => {
+    const capLabel = (m.cap % 1024 === 0) ? `${m.cap/1024}TB` : `${m.cap}GB`;
+    return {
+      value: `${m.model}|${m.cap}`,
+      label: `${m.model} ${capLabel}`
+    };
+  });
+
+  // 按给定顺序写入
+  sel.innerHTML = options.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
+
+  // 默认选第一项
+  if (options.length) sel.value = options[0].value;
+
+  // 维持与原逻辑一致：选择变化时触发查询
+  sel.addEventListener('change', run);
 
 
     }
