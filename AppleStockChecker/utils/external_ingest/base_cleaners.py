@@ -1299,6 +1299,7 @@ def clean_shop2(shop2_df: pd.DataFrame) -> pd.DataFrame:
     # 统一列名（小写）
     df = shop2_df.copy()
     df.columns = [c.strip().lower() for c in df.columns]
+
     # 必要列存在性检查
     need_cols = ["data2-1","data2-2","data3","data5","time-scraped"]
     for c in need_cols:
@@ -1308,7 +1309,8 @@ def clean_shop2(shop2_df: pd.DataFrame) -> pd.DataFrame:
     # 只保留 simfree 未開封
     def _is_target(s: str) -> bool:
         s = (s or "").lower()
-        return ("simfree" in s) and ("未開封" in s) and ("開封" not in s)
+        return ("simfree" in s) and ("未開封" in s)
+
     df = df[df["data2-2"].apply(_is_target)]
     if df.empty:
         return pd.DataFrame(columns=["part_number","shop_name","price_new","recorded_at"])
@@ -1354,6 +1356,7 @@ def clean_shop2(shop2_df: pd.DataFrame) -> pd.DataFrame:
         # 减价规则
         rules = _parse_adjust_rule(row.get("data5"))
 
+
         # 记录时间
         rec_raw = row.get("time-scraped")
         # 容忍多种日期格式
@@ -1386,7 +1389,6 @@ def clean_shop2(shop2_df: pd.DataFrame) -> pd.DataFrame:
 
     out = pd.DataFrame(out_rows, columns=["part_number","shop_name","price_new","recorded_at"])
     return out
-
 
 
 
