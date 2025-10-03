@@ -515,7 +515,7 @@ SHOP_DISPLAY_ORDER = [
 
     "海峡通信",  # shop2　　　      ２
     "買取一丁目",  # shop3         ３
-
+    "モバイルミックス",  # shop4         4
     "森森買取",  # shop5           ５
     "買取ルデヤ",  # shop6         ６
     "買取wiki",  # shop8          ７

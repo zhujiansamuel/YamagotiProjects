@@ -72,29 +72,48 @@ def _build_time_grid(start_dt, end_dt, step_minutes: int = 15, offset_minute: in
 #         out.append({"x": t, "y": points[i].get("y")})
 #     return out
 
-def _resample_nearest(points: List[Dict], grid_ms: List[int]) -> List[Dict]:
+def _resample_nearest(
+    points: List[Dict],
+    grid_ms: List[int],
+    *,
+    near_ms: int = 12 * 60 * 1000,      # 20 分钟
+    fallback_ms: int = 120 * 60 * 60 * 1000  # 12 小时
+) -> List[Dict]:
     """
-    最近邻重采样（不允许未来点）：
-    对每个网格 t，挑 <= t 的最近历史点。
-    如果没有历史点则返回 None。
-    points: [{x(ms), y}...]（升序）
-    返回与 grid 等长的 [{x,y}]
+    历史最近点重采样（不允许未来点）：
+      - 对每个网格 t，选择最后一个 <= t 的记录（它就是历史最近点）；
+      - 若该点与 t 的时间差 <= near_ms（默认 20 分钟），使用它；
+      - 否则若 <= fallback_ms（默认 12 小时），使用它；
+      - 否则返回 None。
+    要求 points 按 x 升序。
     """
-    out = []
+    if fallback_ms < near_ms:
+        fallback_ms = near_ms
+
     n = len(points)
     if n == 0:
         return [{"x": t, "y": None} for t in grid_ms]
 
-    i = 0
+    out: List[Dict] = []
+    i = 0  # 维护 points[i] 为最后一个 <= t 的点（若存在）
+
     for t in grid_ms:
-        # 找到最后一个 <= t 的点
+        # 推进到最后一个 <= t 的点
         while i + 1 < n and points[i + 1]["x"] <= t:
             i += 1
+
         if points[i]["x"] <= t:
-            out.append({"x": t, "y": points[i].get("y")})
+            delta = t - points[i]["x"]
+            if delta <= near_ms:
+                out.append({"x": t, "y": points[i].get("y")})
+            elif delta <= fallback_ms:
+                out.append({"x": t, "y": points[i].get("y")})
+            else:
+                out.append({"x": t, "y": None})
         else:
-            # 说明没有任何点 <= t
+            # 没有任何 <= t 的点（全部在未来）
             out.append({"x": t, "y": None})
+
     return out
 
 def _moving_average_time(points: List[Dict], window_minutes: int) -> List[Dict]:
@@ -145,6 +164,19 @@ def _downsample_minmax(points: List[Dict], target: int) -> List[Dict]:
         out.extend(sorted(uniq.values(), key=lambda p: p["x"]))
     return out
 
+def _compute_stride_indices(n: int, target: int) -> list[int]:
+    """给定序列长度 n 和目标点数 target，生成一组共享的等步长索引，保证首尾保留。"""
+    if target <= 0 or n <= target:
+        return list(range(n))
+    stride = max(1, n // target)
+    idxs = list(range(0, n, stride))
+    if idxs[0] != 0:
+        idxs.insert(0, 0)
+    if idxs[-1] != n - 1:
+        idxs.append(n - 1)
+    return idxs
+
+
 # =========================
 # 并行计算（Map / Reduce）
 # =========================
@@ -188,12 +220,14 @@ def _resample_task(args: Tuple[str, str, List[Dict], List[int]]) -> Tuple[str, s
     """
     color, shop, points, grid_ms = args
     seq = _resample_nearest(points, grid_ms)
+
     return color, shop, seq
 
 # =========================
 # 核心计算
 # =========================
-
+from datetime import datetime
+from django.db.models import Max
 def compute_trends_for_model_capacity(model_name: str,
                                       capacity_gb: int,
                                       days: int,
@@ -240,7 +274,38 @@ def compute_trends_for_model_capacity(model_name: str,
                 print(f"[warn] fetch color={color} failed: {e}")
 
     # 2) 生成网格
-    grid_ms = _build_time_grid(start_window, now, step_minutes=step_minutes, offset_minute=offset_minute)
+
+    def _ceil_to_grid(dt, step_minutes, offset_minute, tz):
+        # 将 dt（已是 tz aware）向上取整到 “0时offset分 + k*step” 的最近网格
+        base = dt.astimezone(tz).replace(second=0, microsecond=0)
+        # 当天 00:offset
+        day0 = base.replace(hour=0, minute=0)
+        first = day0 + timedelta(minutes=offset_minute)
+        if base <= first:
+            return first
+        delta_min = int((base - first).total_seconds() // 60)
+        k = (delta_min + step_minutes - 1) // step_minutes  # 向上取整
+        return first + timedelta(minutes=k * step_minutes)
+
+    # 以已抓到的点列求“窗口内的最后时间戳”（毫秒）
+    last_ts_ms = None
+    for color_store in per_color_store_raw.values():  # dict: shop -> [{x,y}...]
+        for seq in color_store.values():  # seq: [{x(ms),y}, ...] 已按时间升序
+            if seq:
+                # 末元素的 x 最大；若不保证排序，可用 max(p["x"] for p in seq)
+                cand = seq[-1]["x"]
+                if (last_ts_ms is None) or (cand > last_ts_ms):
+                    last_ts_ms = cand
+
+    # 以“now 或 最后点向上对齐网格”的更大者作为网格结束时间
+    end_dt = now
+    if last_ts_ms is not None:
+        last_dt = timezone.make_aware(datetime.fromtimestamp(last_ts_ms / 1000), tz)
+        end_dt = max(end_dt, _ceil_to_grid(last_dt, step_minutes, offset_minute, tz))
+
+    # 用新的 end_dt 生成网格
+    grid_ms = _build_time_grid(start_window, end_dt, step_minutes=step_minutes, offset_minute=offset_minute)
+    # grid_ms = _build_time_grid(start_window, now, step_minutes=step_minutes, offset_minute=offset_minute)
     grid_len = len(grid_ms)
 
     # 3) CPU 并行：对每个 (店,色) 做最近邻重采样
@@ -301,14 +366,24 @@ def compute_trends_for_model_capacity(model_name: str,
                 ys.append(float(y))
         if ys:
             seriesA_merged.append({"x": x, "y": sum(ys)/len(ys)})
+    # print(seriesA_merged)
     # B/C
     seriesB_merged = _moving_average_time(seriesA_merged, b_win)
     seriesC_merged = _moving_average_time(seriesA_merged, c_win)
     # 降采样（可选）
     if TREND_DOWNSAMPLE_TARGET > 0:
-        seriesA_merged = _downsample_minmax(seriesA_merged, TREND_DOWNSAMPLE_TARGET)
-        seriesB_merged = _downsample_minmax(seriesB_merged, TREND_DOWNSAMPLE_TARGET)
-        seriesC_merged = _downsample_minmax(seriesC_merged, TREND_DOWNSAMPLE_TARGET)
+        n = grid_len
+        idxs = _compute_stride_indices(n, TREND_DOWNSAMPLE_TARGET)
+
+        # ① 店铺曲线：所有店统一按 idxs 抽样
+        for shop in shop_order_present:
+            seq = merged_store_resampled_avg[shop]
+            merged_store_resampled_avg[shop] = [seq[i] for i in idxs if i < len(seq)]
+
+        # ② 平均线 A/B/C：同一 idxs 抽样
+        seriesA_merged = [seriesA_merged[i] for i in idxs if i < len(seriesA_merged)]
+        seriesB_merged = [seriesB_merged[i] for i in idxs if i < len(seriesB_merged)]
+        seriesC_merged = [seriesC_merged[i] for i in idxs if i < len(seriesC_merged)]
 
     merged = {
         "stores": [
@@ -343,9 +418,23 @@ def compute_trends_for_model_capacity(model_name: str,
         seriesC = _moving_average_time(seriesA, c_win)
 
         if TREND_DOWNSAMPLE_TARGET > 0:
-            seriesA = _downsample_minmax(seriesA, TREND_DOWNSAMPLE_TARGET)
-            seriesB = _downsample_minmax(seriesB, TREND_DOWNSAMPLE_TARGET)
-            seriesC = _downsample_minmax(seriesC, TREND_DOWNSAMPLE_TARGET)
+            n = grid_len
+            idxs = _compute_stride_indices(n, TREND_DOWNSAMPLE_TARGET)
+
+            # 店铺
+            for shop in shop_order_present:  # 或 shop_order_present 里在该 color 存在的店
+                if shop in stores_rs:
+                    seq = stores_rs[shop]
+                    stores_rs[shop] = [seq[i] for i in idxs if i < len(seq)]
+
+            # A/B/C
+            seriesA = [seriesA[i] for i in idxs if i < len(seriesA)]
+            seriesB = [seriesB[i] for i in idxs if i < len(seriesB)]
+            seriesC = [seriesC[i] for i in idxs if i < len(seriesC)]
+
+            # stores_list 用 stores_rs 抽样后的结果组装
+            stores_list = [{"label": shop, "data": stores_rs[shop]} for shop in shop_order_present if shop in stores_rs]
+
 
         per_color.append({
             "color": color,

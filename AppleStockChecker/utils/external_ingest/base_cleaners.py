@@ -6,6 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 import re
 import pandas as pd
+from typing import Optional, Tuple
 
 _NUM_MODEL_PAT = re.compile(r"(iPhone)\s*(\d{2})(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
 _AIR_PAT = re.compile(r"(iPhone)\s*(Air)(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
@@ -14,6 +15,30 @@ PN_REGEX = re.compile(r"\b[A-Z0-9]{4,6}\d{0,3}J/A\b")
 _YEN_RE = re.compile(r"[^\d]+")
 _CAP_RE = re.compile(r"(\d+)\s*(TB|GB)", re.IGNORECASE)
 
+_COLOR_DELTA_RE = re.compile(
+    r"""^\s*
+        (?P<label>全色|[\S　 ]*?[^\s　])     # 颜色名或“全色”
+        \s*
+        (?P<sign>[+\-−－])?                  # 可选符号
+        \s*
+        (?P<amount>\d[\d,]*)\s*円?           # 金额
+        \s*$
+    """,
+    re.VERBOSE,
+)
+
+COLOR_DELTA_ANY_RE = re.compile(
+    r"""(?P<label>[^：:\s]+)\s*[：:]\s*(?P<sign>[+\-−－])?\s*(?P<amount>\d[\d,]*)\s*円""",
+    re.UNICODE,
+)
+
+
+PAIRINGS: List[Tuple[str, str]] = [
+    ("iPhone17 Pro Max7",  "iPhone17 Pro Max3"),   # 1TB
+    ("iPhone17 Pro Max16", "iPhone17 Pro Max10"),  # 512GB
+    ("iPhone17 Pro5",      "iPhone17 Pro2"),       # 256GB
+]
+
 
 class Cleaner(Protocol):
     def __call__(self, df: pd.DataFrame) -> pd.DataFrame: ...
@@ -21,6 +46,70 @@ class Cleaner(Protocol):
 CLEANERS: Dict[str, Cleaner] = {}
 
 # === 可复用的小工具（如果你已有同名函数可删除这里并改用现有函数） ===
+
+def _parse_color_delta(line: str) -> Optional[Tuple[str, int]]:
+    """
+    解析“颜色 ± 金额” 或 “全色 ± 金额”。
+    返回: ("全色"或颜色名, delta_int)
+    若无法解析，返回 None。
+    """
+    if not line or not isinstance(line, str):
+        return None
+    s = line.strip()
+    m = _COLOR_DELTA_RE.match(s)
+    if not m:
+        # 某些行可能只有“全色”不带金额，视为 delta=0
+        if "全色" in s:
+            return ("全色", 0)
+        return None
+    label = m.group("label").strip()
+    sign = m.group("sign") or "+"
+    amt = to_int_yen(m.group("amount"))  # 只取绝对值
+    if sign in ("-", "−", "－"):
+        amt = -amt
+    return (label, amt)
+
+def _find_base_price(df: pd.DataFrame, idx: int) -> Optional[int]:
+    """
+    按规范：机种行(data11非空)的上一行 data 是基准价。
+    若上一行取不到，向上最多回溯 3 行找首个含“円”的金额。
+    """
+    for j in range(idx - 1, max(-1, idx - 4), -1):
+        if j < 0:
+            break
+        s = str(df["data"].iat[j]) if "data" in df.columns else ""
+        if s and ("円" in s or re.search(r"\d[\d,]*", s)):
+            price = to_int_yen(s)
+            if price:
+                return int(price)
+    return None
+
+def _collect_adjustments(df: pd.DataFrame, start_idx: int) -> Dict[str, int]:
+    """
+    从机种行【同一行】开始收集“颜色±金额”（含“全色”）。
+    一直向下，直到遇到下一个 data11 非空（下一机种）或到文件末尾。
+    返回：{ color_norm | "ALL" : delta_int }
+    """
+    result: Dict[str, int] = {}
+    n = len(df)
+    for j in range(start_idx, n):
+        # 下一个机种（且必须 j > start_idx 才算“下一个”）
+        nxt_model = str(df["data11"].iat[j]) if "data11" in df.columns and df["data11"].iat[j] is not None else ""
+        if j > start_idx and nxt_model.strip():
+            break
+
+        line = str(df["data"].iat[j]) if "data" in df.columns and df["data"].iat[j] is not None else ""
+        parsed = _parse_color_delta(line)
+        if not parsed:
+            continue
+
+        label, delta = parsed
+        if "全色" in label:
+            result["ALL"] = delta if isinstance(delta, int) else 0
+        else:
+            result[_norm(label)] = delta if isinstance(delta, int) else 0
+
+    return result
 
 
 def _parse_yen(val) -> int | None:
@@ -508,6 +597,81 @@ def _price_from_shop3(x: object) -> Optional[int]:
            .replace("未开封", ""))  # 安全冗余
     return to_int_yen(s)
 
+def _extract_color_deltas(text: str) -> List[Tuple[str, int]]:
+    """
+    从机型列文本中提取若干 '颜色：±金额円' 片段。
+    返回 [(原始标签, delta_int)]，不做颜色是否存在校验。
+    """
+    res: List[Tuple[str, int]] = []
+    if not text:
+        return res
+    for m in COLOR_DELTA_ANY_RE.finditer(str(text)):
+        label = m.group("label").strip()
+        sign = m.group("sign") or "+"
+        amt = to_int_yen(m.group("amount"))
+        if amt is None:
+            continue
+        if sign in ("-", "−", "－"):
+            amt = -amt
+        res.append((label, int(amt)))
+    return res
+
+def _build_color_maps(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict[str, Tuple[str, str]]]:
+    """
+    为每个 (model_norm, capacity_gb) 构建颜色映射：
+      key: (model_norm, cap_gb)
+      val: { color_norm : (part_number, color_raw) }
+    """
+    info_df = info_df.copy()
+    info_df["model_name_norm"] = info_df["model_name"].map(_normalize_model_generic)
+    info_df["capacity_gb"] = pd.to_numeric(info_df["capacity_gb"], errors="coerce").astype("Int64")
+    info_df["color_norm"] = info_df["color"].map(lambda x: _norm(str(x)))
+    cmap: Dict[Tuple[str, int], Dict[str, Tuple[str, str]]] = {}
+    for _, r in info_df.iterrows():
+        m = r["model_name_norm"]
+        cap = r["capacity_gb"]
+        col_norm = r["color_norm"]
+        pn = str(r["part_number"])
+        col_raw = str(r["color"])
+        if pd.isna(cap) or not m or not col_norm:
+            continue
+        key = (m, int(cap))
+        cmap.setdefault(key, {})
+        cmap[key][col_norm] = (pn, col_raw)
+    return cmap
+
+def _labels_to_color_deltas(
+    labels_and_deltas: List[Tuple[str, int]],
+    color_map_for_model: Dict[str, Tuple[str, str]],
+) -> Dict[str, int]:
+    """
+    将从文本里抓到的 [(label_raw, delta)] 映射到具体颜色键 color_norm。
+    匹配规则（按优先级）：
+      1) label_norm 与某个 color_norm 完全相等 → 命中该颜色
+      2) label_raw 子串出现在 color_raw 中（例如 'ブルー' 命中 'ディープブルー'）
+    允许多标签命中同一颜色，后者会覆盖前者（以最后一次出现为准）。
+    """
+    out: Dict[str, int] = {}
+    # 反查结构：norm -> (pn, raw)
+    items = list(color_map_for_model.items())
+    for label_raw, delta in labels_and_deltas:
+        label_norm = _norm(label_raw)
+        # 1) 完全相等
+        matched = False
+        for col_norm, (_pn, col_raw) in items:
+            if label_norm == col_norm:
+                out[col_norm] = delta
+                matched = True
+        if matched:
+            continue
+        # 2) 子串包含（适配“ブルー”命中“ディープブルー/スカイブルー/ミストブルー”）
+        for col_norm, (_pn, col_raw) in items:
+            if label_raw in col_raw:
+                out[col_norm] = delta
+    return out
+
+
+
 
 # =============== shop2 清洗器 ===============
 @register_cleaner("shop2")
@@ -693,6 +857,121 @@ def clean_shop3(df: pd.DataFrame) -> pd.DataFrame:
     if not out.empty:
         out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
         out["part_number"] = out["part_number"].astype(str)
+    return out
+
+@register_cleaner("shop4")
+def clean_shop4(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    输入 (shop4.csv):
+      - web-scraper-order, web-scraper-start-url, data, data11, time-scraped
+    规则：
+      - data11：机种名 + 容量（第二行起常见）
+      - 该机种的“基准价” = 上一行的 data（金额，如 212,000円）
+      - 机种行之后的若干行 data 可能出现“颜色 ± 金额”，对单色或全色调整
+      - 若机种行同一行的 data 含“全色”（可带 ±金额），则所有颜色同价（基准价±统一调整）
+      - 仅输出出现在 _load_iphone17_info_df_for_shop2() 的机种
+      - shop_name 固定为「モバイルミックス」
+      - recorded_at = parse_dt_aware(time-scraped)
+
+    输出：
+      - columns: part_number, shop_name, price_new, recorded_at
+    """
+    # 必要列
+    for c in ["data", "data11", "time-scraped"]:
+        if c not in df.columns:
+            raise ValueError(f"shop4 清洗器缺少必要列：{c}")
+
+    # 归一化信息表并建立 (model_norm, cap) → {color_norm: pn}
+    info_df = _load_iphone17_info_df_for_shop2().copy()
+    # 预期含：part_number, model_name, capacity_gb, color
+    info_df["model_name_norm"] = info_df["model_name"].map(_normalize_model_generic)
+    info_df["capacity_gb"] = pd.to_numeric(info_df["capacity_gb"], errors="coerce").astype("Int64")
+    info_df["color_norm"] = info_df["color"].map(lambda x: _norm(str(x)))
+
+    pn_map: Dict[Tuple[str, int], Dict[str, str]] = {}
+    for _, r in info_df.iterrows():
+        m = r["model_name_norm"]
+        cap = r["capacity_gb"]
+        col = r["color_norm"]
+        pn = str(r["part_number"])
+        if pd.isna(cap) or not m or not col:
+            continue
+        key = (m, int(cap))
+        pn_map.setdefault(key, {})
+        pn_map[key][col] = pn
+
+    rows: List[dict] = []
+
+    n = len(df)
+    for i in range(n):
+        model_text = str(df["data11"].iat[i]) if df["data11"].iat[i] is not None else ""
+        model_text = model_text.strip()
+        if not model_text:
+            continue
+
+        # 从 data11 提取 model + capacity
+        model_norm = _normalize_model_generic(model_text)
+        cap_gb = _parse_capacity_gb(model_text)
+        if not model_norm or pd.isna(cap_gb):
+            continue
+        cap_gb = int(cap_gb)
+
+        key = (model_norm, cap_gb)
+        color_to_pn = pn_map.get(key)
+        if not color_to_pn:
+            # 信息表没有该机种容量组合 → 跳过
+            continue
+
+        # 基准价：上一行 data
+        base_price = _find_base_price(df, i)
+        if base_price is None:
+            # 没有可用基准价，跳过该机种
+            continue
+
+        # 同行 data 若写“全色 ± n円”，优先应用统一调整
+        same_line = str(df["data"].iat[i]) if df["data"].iat[i] is not None else ""
+        same_line_adj = _parse_color_delta(same_line)
+        global_delta = None
+        if same_line_adj and ("全色" in same_line_adj[0]):
+            global_delta = same_line_adj[1]
+
+        # 其后续行的“颜色 ± n円”调整
+        adjustments = _collect_adjustments(df, i)
+
+        # 若同行已表明“全色”，且 adjustments 也包含 ALL，则以最近的声明为准：
+        # 优先使用同行的 global_delta（更接近机种行）
+        if global_delta is not None:
+            adjustments["ALL"] = global_delta
+
+        # recorded_at 取机种行 time-scraped
+        rec_at = parse_dt_aware(df["time-scraped"].iat[i])
+
+        # 价格生成：如果有 "ALL"，所有颜色都用 (base + ALL)
+        if "ALL" in adjustments:
+            final_price = base_price + adjustments["ALL"]
+            for col_norm, pn in color_to_pn.items():
+                rows.append({
+                    "part_number": pn,
+                    "shop_name": "モバイルミックス",
+                    "price_new": int(final_price),
+                    "recorded_at": rec_at,
+                })
+        else:
+            # 单色调整：出现在 adjustments 的颜色使用 base+delta；其余颜色用 base
+            for col_norm, pn in color_to_pn.items():
+                delta = adjustments.get(col_norm, 0)
+                rows.append({
+                    "part_number": pn,
+                    "shop_name": "モバイルミックス",
+                    "price_new": int(base_price + delta),
+                    "recorded_at": rec_at,
+                })
+
+    out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
+    if not out.empty:
+        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
+        out["part_number"] = out["part_number"].astype(str)
+        out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
     return out
 
 @register_cleaner("shop5-1")
@@ -1299,6 +1578,99 @@ def clean_shop10(df: pd.DataFrame) -> pd.DataFrame:
         out["part_number"] = out["part_number"].astype(str)
     return out
 
+@register_cleaner("shop11")
+def clean_shop11(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    输入：shop11.csv
+      - data：行内机型系列（用于人读，不强依赖）
+      - iPhone17 Pro Max7 / 16 / 5：机型+容量文本，可能包含“颜色：±金额円”
+      - iPhone17 Pro Max3 / 10 / 2：对应基础价格
+      - time-scraped：抓取时间
+    输出：
+      - part_number, shop_name, price_new, recorded_at
+    规则：
+      - 机型列为空或无法从 _load_iphone17_info_df_for_shop2() 匹配的 → 跳过
+      - 若机型列存在若干“颜色：±金额円”，则对命中的颜色应用差额；其它颜色用基础价
+      - 若未出现任何颜色差额，则该机型下所有颜色均用基础价
+      - shop_name 固定为「モバステ」
+      - recorded_at 取该行的 time-scraped（Asia/Tokyo aware）
+    """
+    # 必要列检查
+    needed = {"time-scraped"}
+    for pair in PAIRINGS:
+        needed.update(pair)
+    miss = [c for c in needed if c not in df.columns]
+    if miss:
+        raise ValueError(f"shop11 清洗器缺少必要列: {miss}")
+
+    # 建立 (model_norm, cap) -> {color_norm: (pn, color_raw)}
+    info_df = _load_iphone17_info_df_for_shop2()
+    cmap_all = _build_color_maps(info_df)
+
+    rows: List[dict] = []
+
+    for idx, row in df.iterrows():
+        recorded_at = parse_dt_aware(row.get("time-scraped"))
+
+        for model_col, price_col in PAIRINGS:
+            model_cell = row.get(model_col)
+            price_cell = row.get(price_col)
+
+            # 机型文本为空 → 跳过这对
+            if model_cell is None or str(model_cell).strip() == "":
+                continue
+
+            model_text = str(model_cell)
+            model_norm = _normalize_model_generic(model_text)
+            cap_gb = _parse_capacity_gb(model_text)
+            if not model_norm or pd.isna(cap_gb):
+                continue
+            cap_gb = int(cap_gb)
+
+            key = (model_norm, cap_gb)
+            color_map = cmap_all.get(key)
+            if not color_map:
+                # 信息表没有该（机型, 容量），跳过
+                continue
+
+            # 基础价
+            base_price = to_int_yen(price_cell)
+            if base_price is None:
+                # 没法得到基础价格，跳过
+                continue
+            base_price = int(base_price)
+
+            # 解析机型列中的“颜色：±金额”片段
+            labels_and_deltas = _extract_color_deltas(model_text)
+            color_deltas = _labels_to_color_deltas(labels_and_deltas, color_map)
+
+            if color_deltas:
+                # 对命中的颜色应用差额，其余颜色用基础价
+                for col_norm, (pn, _col_raw) in color_map.items():
+                    delta = color_deltas.get(col_norm, 0)
+                    rows.append({
+                        "part_number": pn,
+                        "shop_name": "モバステ",
+                        "price_new": base_price + delta,
+                        "recorded_at": recorded_at,
+                    })
+            else:
+                # 无颜色差额 → 所有颜色同价
+                for col_norm, (pn, _col_raw) in color_map.items():
+                    rows.append({
+                        "part_number": pn,
+                        "shop_name": "モバステ",
+                        "price_new": base_price,
+                        "recorded_at": recorded_at,
+                    })
+
+    out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
+    if not out.empty:
+        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
+        out["part_number"] = out["part_number"].astype(str)
+        out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
+    return out
+
 @register_cleaner("shop13")
 def clean_shop13(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -1388,6 +1760,5 @@ def clean_shop13(df: pd.DataFrame) -> pd.DataFrame:
         out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
         out["part_number"] = out["part_number"].astype(str)
     return out
-
 
 
