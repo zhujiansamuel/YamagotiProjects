@@ -55,9 +55,28 @@ def _build_time_grid(start_dt, end_dt, step_minutes: int = 15, offset_minute: in
     return grid
 
 
+# def _resample_nearest(points: List[Dict], grid_ms: List[int]) -> List[Dict]:
+#     """
+#     最近邻重采样：对每个网格 t，挑绝对时间差最小的历史点（允许“未来”点），保证 15min 连续。
+#     points: [{x(ms), y}...]（升序）
+#     返回与 grid 等长的 [{x,y}]
+#     """
+#     out = []
+#     n = len(points)
+#     if n == 0:
+#         return [{"x": t, "y": None} for t in grid_ms]
+#     i = 0
+#     for t in grid_ms:
+#         while i + 1 < n and abs(points[i + 1]["x"] - t) < abs(points[i]["x"] - t):
+#             i += 1
+#         out.append({"x": t, "y": points[i].get("y")})
+#     return out
+
 def _resample_nearest(points: List[Dict], grid_ms: List[int]) -> List[Dict]:
     """
-    最近邻重采样：对每个网格 t，挑绝对时间差最小的历史点（允许“未来”点），保证 15min 连续。
+    最近邻重采样（不允许未来点）：
+    对每个网格 t，挑 <= t 的最近历史点。
+    如果没有历史点则返回 None。
     points: [{x(ms), y}...]（升序）
     返回与 grid 等长的 [{x,y}]
     """
@@ -65,13 +84,18 @@ def _resample_nearest(points: List[Dict], grid_ms: List[int]) -> List[Dict]:
     n = len(points)
     if n == 0:
         return [{"x": t, "y": None} for t in grid_ms]
+
     i = 0
     for t in grid_ms:
-        while i + 1 < n and abs(points[i + 1]["x"] - t) < abs(points[i]["x"] - t):
+        # 找到最后一个 <= t 的点
+        while i + 1 < n and points[i + 1]["x"] <= t:
             i += 1
-        out.append({"x": t, "y": points[i].get("y")})
+        if points[i]["x"] <= t:
+            out.append({"x": t, "y": points[i].get("y")})
+        else:
+            # 说明没有任何点 <= t
+            out.append({"x": t, "y": None})
     return out
-
 
 def _moving_average_time(points: List[Dict], window_minutes: int) -> List[Dict]:
     """时间窗(分钟)移动平均（包含当前点），在 A 线结果上做平滑。"""
