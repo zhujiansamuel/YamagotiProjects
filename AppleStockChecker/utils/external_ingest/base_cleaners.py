@@ -1474,59 +1474,7 @@ def clean_shop8(df: pd.DataFrame) -> pd.DataFrame:
     out["part_number"] = out["part_number"].astype(str)
     return out
 
-@register_cleaner("shop9")
-def clean_shop9(df: pd.DataFrame) -> pd.DataFrame:
-    info_df = _load_iphone17_info_df()
-
-    col_model = "機種名"
-    col_price = "買取価格"
-    col_time  = "time-scraped"
-    for need in (col_model, col_price, col_time):
-        if need not in df.columns:
-            raise ValueError(f"shop9 清洗器缺少必要列：{need}")
-
-    # ★ 改这里：用通用归一（支持 iPhone Air）
-    model_norm = df[col_model].map(_normalize_model_generic)
-    cap_gb     = df[col_model].map(_parse_capacity_gb)
-
-    def _price_from_shop9(x):
-        if x is None: return None
-        s = str(x).replace("新品", "").replace("新\u54c1", "")
-        return to_int_yen(s)
-
-    price_new   = df[col_price].map(_price_from_shop9)
-    recorded_at = df[col_time].map(parse_dt_aware)
-
-    groups = (
-        info_df.groupby(["model_name_norm", "capacity_gb"])["part_number"]
-        .apply(list).to_dict()
-    )
-
-    rows = []
-    for i in range(len(df)):
-        m = model_norm.iat[i]
-        c = cap_gb.iat[i]
-        p = price_new.iat[i]
-        t = recorded_at.iat[i]
-        if not m or pd.isna(c) or p is None:
-            continue
-        pn_list = groups.get((m, int(c)), [])
-        if not pn_list:
-            continue
-        for pn in pn_list:
-            rows.append({
-                "part_number": str(pn),
-                "shop_name": "アキモバ",
-                "price_new": int(p),
-                "recorded_at": t,
-            })
-
-    out = pd.DataFrame(rows, columns=["part_number","shop_name","price_new","recorded_at"])
-    if not out.empty:
-        out = out.dropna(subset=["part_number","price_new"]).reset_index(drop=True)
-        out["part_number"] = out["part_number"].astype(str)
-    return out
-
+#ドラゴンモバイル    # shop10　　９
 @register_cleaner("shop10")
 def clean_shop10(df: pd.DataFrame) -> pd.DataFrame:
     info_df = _load_iphone17_info_df()
@@ -1578,6 +1526,7 @@ def clean_shop10(df: pd.DataFrame) -> pd.DataFrame:
         out["part_number"] = out["part_number"].astype(str)
     return out
 
+#モバステ  # shop11　          10
 @register_cleaner("shop11")
 def clean_shop11(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -1671,6 +1620,65 @@ def clean_shop11(df: pd.DataFrame) -> pd.DataFrame:
         out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
     return out
 
+#アキモバ  # shop9             11
+@register_cleaner("shop9")
+def clean_shop9(df: pd.DataFrame) -> pd.DataFrame:
+    info_df = _load_iphone17_info_df()
+
+    col_model = "機種名"
+    col_price = "買取価格"
+    col_time  = "time-scraped"
+    for need in (col_model, col_price, col_time):
+        if need not in df.columns:
+            raise ValueError(f"shop9 清洗器缺少必要列：{need}")
+
+    # ★ 改这里：用通用归一（支持 iPhone Air）
+    model_norm = df[col_model].map(_normalize_model_generic)
+    cap_gb     = df[col_model].map(_parse_capacity_gb)
+
+    def _price_from_shop9(x):
+        if x is None: return None
+        s = str(x).replace("新品", "").replace("新\u54c1", "")
+        return to_int_yen(s)
+
+    price_new   = df[col_price].map(_price_from_shop9)
+    recorded_at = df[col_time].map(parse_dt_aware)
+
+    groups = (
+        info_df.groupby(["model_name_norm", "capacity_gb"])["part_number"]
+        .apply(list).to_dict()
+    )
+
+    rows = []
+    for i in range(len(df)):
+        m = model_norm.iat[i]
+        c = cap_gb.iat[i]
+        p = price_new.iat[i]
+        t = recorded_at.iat[i]
+        if not m or pd.isna(c) or p is None:
+            continue
+        pn_list = groups.get((m, int(c)), [])
+        if not pn_list:
+            continue
+        for pn in pn_list:
+            rows.append({
+                "part_number": str(pn),
+                "shop_name": "アキモバ",
+                "price_new": int(p),
+                "recorded_at": t,
+            })
+
+    out = pd.DataFrame(rows, columns=["part_number","shop_name","price_new","recorded_at"])
+    if not out.empty:
+        out = out.dropna(subset=["part_number","price_new"]).reset_index(drop=True)
+        out["part_number"] = out["part_number"].astype(str)
+    return out
+
+# "トゥインクル", # shop12      12
+
+
+
+#家電市場   # shop13           13
 @register_cleaner("shop13")
 def clean_shop13(df: pd.DataFrame) -> pd.DataFrame:
     """
