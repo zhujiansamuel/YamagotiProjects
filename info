@@ -151,6 +151,36 @@ zoomAll(factor)、panAll(frac)、resetAllZoom() 对所有图统一操作，仅�
 
 
 
+    SHOP_DISPLAY_ORDER = [
+
+    "海峡通信",  # shop2　　　      ２
+    "買取一丁目",  # shop3         ３
+    "モバイルミックス",  # shop4         4
+    "森森買取",  # shop5           ５
+    "買取ルデヤ",  # shop6         ６
+    "買取wiki",  # shop8          ７
+    "買取ホムラ",  # shop7         ８
+    "ドラゴンモバイル",  # shop10　　９
+    "モバステ",  # shop11　         10
+    "アキモバ",  # shop9           11
+    "トゥインクル", # shop12        12
+    "家電市場", # shop13           13
+    "買取楽園", # shop14           14
+    "買取当番", # shop15           15
+    "携帯空間", # shop16           16
+    # "",  # shop17               17
+    # "",  # shop18               18
+    # "",  # shop19               19
+    "毎日買取", # shop20           20
+    # "",  # shop21
+    # "",  # shop22
+    # "",  # shop23
+    # "",  # shop24
+    # "",  # shop25
+]
+
+
+
 git fetch --all --prune
 git reset --hard origin/master
 git pull origin master

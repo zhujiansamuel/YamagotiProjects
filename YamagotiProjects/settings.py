@@ -47,7 +47,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "rest_framework",
     "drf_spectacular",
-'easyaudit',
+    'easyaudit',
 
 ]
 
@@ -61,7 +61,7 @@ MIDDLEWARE = [
     "YamagotiProjects.middleware.login_required.LoginRequiredMiddleware",
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-'easyaudit.middleware.easyaudit.EasyAuditMiddleware',
+    'easyaudit.middleware.easyaudit.EasyAuditMiddleware',
     'simplepro.middlewares.SimpleMiddleware'
 ]
 
@@ -496,7 +496,6 @@ else:
         ],
     }
 
-
 DJANGO_EASY_AUDIT_WATCH_MODEL_EVENTS = True
 DJANGO_EASY_AUDIT_WATCH_AUTH_EVENTS = True
 DJANGO_EASY_AUDIT_WATCH_REQUEST_EVENTS = False
@@ -507,9 +506,7 @@ DJANGO_EASY_AUDIT_UNREGISTERED_URLS_DEFAULT = [r'^/static/',
                                                r'^/ckeditor5/',
                                                ]
 
-
 TIME_INPUT_FORMATS = "%H:%M"
-
 
 SHOP_DISPLAY_ORDER = [
 
@@ -523,15 +520,15 @@ SHOP_DISPLAY_ORDER = [
     "ドラゴンモバイル",  # shop10　　９
     "モバステ",  # shop11　         10
     "アキモバ",  # shop9           11
-    "トゥインクル", # shop12        12
-    "家電市場", # shop13           13
-    "買取楽園", # shop14           14
-    "買取当番", # shop15           15
-    "携帯空間", # shop16           16
-    # "",  # shop17               17
-    # "",  # shop18               18
+    "トゥインクル",  # shop12        12
+    "家電市場",  # shop13           13
+    "買取楽園",  # shop14           14
+    "買取当番",  # shop15           15
+    "携帯空間",  # shop16           16
+    "ゲストモバイル",  # shop17               17
+    "買取オク",  # shop18               18
     # "",  # shop19               19
-    "毎日買取", # shop20           20
+    "毎日買取",  # shop20           20
     # "",  # shop21
     # "",  # shop22
     # "",  # shop23
@@ -539,20 +536,16 @@ SHOP_DISPLAY_ORDER = [
     # "",  # shop25
 ]
 
-
 FX_API_KEYS = {
     "alphavantage": "AlphaVantageKey",
     "finnhub": "FinnhubKey",
     "twelvedata": "603d21df9b194d9daeaccd898cee72a3",
 }
 
-
 TREND_MAX_LOOKBACK_DAYS = 90
-TREND_DB_MAX_WORKERS    = 6
-TREND_CPU_MAX_WORKERS   = 0    # 0/None=自动核数
-TREND_DOWNSAMPLE_TARGET = 0 # 每条曲线最多点数（0=关闭）
-
-
+TREND_DB_MAX_WORKERS = 6
+TREND_CPU_MAX_WORKERS = 0  # 0/None=自动核数
+TREND_DOWNSAMPLE_TARGET = 0  # 每条曲线最多点数（0=关闭）
 
 LIST_ORDER = [
     "iphone-17-pro-max-256",
