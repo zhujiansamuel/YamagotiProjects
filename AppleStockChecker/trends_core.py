@@ -9,10 +9,13 @@ from django.conf import settings
 import csv, io, re
 import math
 import os
+import pytz
 from concurrent.futures import ProcessPoolExecutor
 # =========================
 # 基础工具
 # =========================
+JST = pytz.timezone('Asia/Tokyo')
+
 
 TREND_MAX_LOOKBACK_DAYS = int(getattr(settings, "TREND_MAX_LOOKBACK_DAYS", 90))
 TREND_DB_MAX_WORKERS    = int(getattr(settings, "TREND_DB_MAX_WORKERS", 6))
@@ -237,6 +240,7 @@ def compute_trends_for_model_capacity(model_name: str,
     """
     见模块顶部说明
     """
+    timezone.activate(JST)
     tz = timezone.get_current_timezone()
     now = timezone.now()
     start_window = now - timedelta(days=max(1, int(days)))  # 展示窗口/网格范围

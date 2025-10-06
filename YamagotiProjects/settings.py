@@ -52,6 +52,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+'django.middleware.locale.LocaleMiddleware',       # 可选
     "corsheaders.middleware.CorsMiddleware",
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -200,9 +201,9 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = 'ja-jp'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'Asia/Tokyo'
 
 USE_I18N = True
 
@@ -267,8 +268,8 @@ WEB_SCRAPER_WEBHOOK_TOKEN = "0BkhVQJQPDe4IPfxfnw9bX8hYzxY29D48uGi8zq8TcjbsMIvXSh
 
 # 可选：把 WebScraper 的 sitemap 名 或 job 上的 custom_id 映射为清洗器名（shop3/shop4…）
 WEB_SCRAPER_SOURCE_MAP = {
+    "shop1": "shop1",
     "shop2": "shop2",
-    "shop10": "shop10",
     "shop3": "shop3",
     "shop4": "shop4",
     "shop5-1": "shop5-1",
@@ -282,6 +283,17 @@ WEB_SCRAPER_SOURCE_MAP = {
     "shop7": "shop7",
     "shop8": "shop8",
     "shop9": "shop9",
+    "shop10": "shop10",
+    "shop11": "shop11",
+    "shop12": "shop12",
+    "shop13": "shop13",
+    "shop14": "shop14",
+    "shop15": "shop15",
+    "shop16": "shop16",
+    "shop17": "shop17",
+    "shop18": "shop18",
+    "shop19": "shop19",
+    "shop20": "shop20",
 }
 
 # 部属用
@@ -413,11 +425,11 @@ SIMPLEUI_CONFIG = {
             {
                 'name': 'iPhone関連データ',
                 'icon': 'fa-solid fa-mobile-screen-button',
-                'models': [{'name': '中古店価格推移(PN別)',
+                'models': [{'name': '中古店価格推移(',
                             'icon': 'fa-solid fa-chart-line',
-                            'url': '/AppleStockChecker/resale-trend-pn-merged/',
+                            'url': '/AppleStockChecker/analysis-dashboard/',
                             },
-                           {'name': '中古店価格推移(Model別)',
+                           {'name': '価格推移(Model別)',
                             'icon': 'fa-solid fa-chart-line',
                             'url': '/AppleStockChecker/resale-trend-colors-merged/',
                             },

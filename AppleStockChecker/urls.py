@@ -16,7 +16,7 @@ from .views_frontend import ResaleTrendPNView
 from .views_frontend import ResaleTrendPNMergedView
 from .views_frontend import ImportResaleCSVView
 from .views_frontend import ImportTradeinCSVView, ImportIphoneCSVView, ExternalIngestView
-from .views_frontend import PriceMatrixView, ResaleTrendColorsMergedView, TemplateChartjsView
+from .views_frontend import PriceMatrixView, ResaleTrendColorsMergedView, TemplateChartjsView, AnalysisDashboardView
 from .api_trends_TrendsAvgOnly import TrendsAvgOnlyApiView
 from .api_trends_model_colors import trends_model_colors
 from .api_trends_color_std import TrendsColorStdApiView
@@ -41,18 +41,11 @@ urlpatterns = [
 
 urlpatterns = [
                   path("store-latest/", StoreLatestStockView.as_view(), name="store-latest"),
-              ] + urlpatterns
-urlpatterns = [
-                  path("delivery-trend/", DeliveryTrendView.as_view(), name="delivery-trend"),
-              ] + urlpatterns
-urlpatterns = [path("resale-trend-pn/", ResaleTrendPNView.as_view(), name="resale-trend-pn"), ] + urlpatterns
-urlpatterns = ([path("resale-trend-pn-merged/", ResaleTrendPNMergedView.as_view(), name="resale-trend-pn-merged"),
-                ] + urlpatterns)
-
-urlpatterns = [
+                  path("resale-trend-pn/", ResaleTrendPNView.as_view(), name="resale-trend-pn"),
                   path("import-resale-csv/", ImportResaleCSVView.as_view(), name="import-resale-csv"),
-              ] + urlpatterns
-urlpatterns = [
+                  path("resale-trend-pn-merged/", ResaleTrendPNMergedView.as_view(), name="resale-trend-pn-merged"),
+                  path("delivery-trend/", DeliveryTrendView.as_view(), name="delivery-trend"),
+
                   path("import-tradein-csv/", ImportTradeinCSVView.as_view(), name="import-tradein-csv"),
                   path("import-iphone-csv/", ImportIphoneCSVView.as_view(), name="import-iphone-csv"),
                   path("external-ingest/", ExternalIngestView.as_view(), name="external-ingest"),
@@ -63,6 +56,8 @@ urlpatterns = [
                   path("api/trends/model-colors/", trends_model_colors, name="trends-model-colors"),  # ★ 新增
                   path("api/trends/model-color/std/", TrendsColorStdApiView.as_view(), name="trends-color-std"),
                   path("api/trends/model-colors/avg-only/", TrendsAvgOnlyApiView.as_view(), name="trends-avg-only"),
+                  path("analysis-dashboard/", AnalysisDashboardView.as_view(), name="analysis-dashboard/"),
+
               ] + urlpatterns
 
 urlpatterns += router.urls

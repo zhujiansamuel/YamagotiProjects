@@ -46,3 +46,6 @@ class ResaleTrendColorsMergedView(TemplateView):
 
 class TemplateChartjsView(TemplateView):
     template_name = "apple_stock/TemplateChartjs.html"
+
+class AnalysisDashboardView(TemplateView):
+    template_name = "apple_stock/analysis_dashboard.html"

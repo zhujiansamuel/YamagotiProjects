@@ -1,0 +1,526 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>二手价分析仪表盘（模块化）</title>
+  <!-- 仅显示用：Tailwind（可选） -->
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <!-- Chart.js + time 适配器 -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+  <style>
+    *{scrollbar-width:thin}
+    ::-webkit-scrollbar{width:8px;height:8px}
+    ::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:8px}
+    .card{ @apply rounded-2xl border border-zinc-200 bg-white p-4 space-y-3; }
+    .hchart{ height:280px; }
+    .small{ font-size:12px; line-height:1.2; }
+    .grid-2{ display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+    .grid-3{ display:grid; grid-template-columns: repeat(3,1fr); gap:12px; }
+    .vlabel{ position:absolute; top:50%; transform:translateY(-50%) rotate(-90deg); transform-origin:left top; font-size:12px; color:#475569; }
+  </style>
+</head>
+<body class="bg-zinc-50 text-zinc-900">
+<div class="max-w-7xl mx-auto p-4 space-y-4">
+
+  <!-- 全局筛选（仅传参，不做任何计算） -->
+  <section class="card">
+    <div class="flex items-center gap-3">
+      <h1 class="text-lg font-semibold">二手店价格分析（前端只显示 · 后端做分析）</h1>
+    </div>
+    <div class="grid lg:grid-cols-6 gap-3 items-end">
+      <div class="lg:col-span-2">
+        <label class="block text-sm mb-1">机型 + 容量（固定顺序）</label>
+        <select id="combo" class="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white"></select>
+        <p class="small text-zinc-500 mt-1">值示例：<code>iPhone 17 Pro Max|256</code></p>
+      </div>
+      <div>
+        <label class="block text-sm mb-1">最近 N 天</label>
+        <input id="days" type="number" min="1" max="180" value="30"
+               class="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white"/>
+      </div>
+      <div>
+        <label class="block text-sm mb-1">网格步长(分钟)</label>
+        <input id="gridStep" type="number" min="1" max="180" value="15"
+               class="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white"/>
+      </div>
+      <div>
+        <label class="block text-sm mb-1">起始偏移(分钟)</label>
+        <input id="gridOffset" type="number" min="0" max="59" value="0"
+               class="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white"/>
+      </div>
+      <div class="lg:col-span-2">
+        <label class="block text-sm mb-1">店铺（可选，逗号分隔；空=全部）</label>
+        <input id="shops" type="text" placeholder="例：買取一丁目,森森買取"
+               class="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white"/>
+      </div>
+    </div>
+  </section>
+
+  <!-- 平均值曲线（复用 /model-colors/avg-only/） -->
+  <section class="card" id="blk-avg">
+    <div class="flex items-center justify-between">
+      <h2 class="font-semibold">平均值曲线（合并 · A/B/C）</h2>
+      <div class="flex items-center gap-2">
+        <button id="avgLoad"   class="px-3 py-1.5 bg-black text-white rounded">加载</button>
+        <button id="avgClear"  class="px-3 py-1.5 border rounded">取消</button>
+      </div>
+    </div>
+    <div class="grid-3">
+      <div>
+        <label class="block text-sm mb-1">A · 分桶(分钟)</label>
+        <input id="avgABucket" type="number" min="1" value="30"
+               class="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white"/>
+      </div>
+      <div>
+        <label class="block text-sm mb-1">B · 窗口(分钟)</label>
+        <input id="avgBWin" type="number" min="1" value="60"
+               class="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white"/>
+      </div>
+      <div>
+        <label class="block text-sm mb-1">C · 窗口(分钟)</label>
+        <input id="avgCWin" type="number" min="1" value="240"
+               class="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white"/>
+      </div>
+    </div>
+    <div class="relative">
+      <canvas id="avgChart" class="hchart"></canvas>
+      <div class="vlabel left-2"  id="avg-left"></div>
+      <div class="vlabel right-2" id="avg-right" style="right:8px; left:auto"></div>
+    </div>
+    <p class="small text-zinc-500">说明：A 为跨店均值；B/C 为 A 的时间窗移动均值。仅显示后端结果。</p>
+  </section>
+
+  <!-- 移动平均值及偏差（±σ） -->
+  <section class="card" id="blk-std">
+    <div class="flex items-center justify-between">
+      <h2 class="font-semibold">移动平均值及偏差（±σ）</h2>
+      <div class="flex items-center gap-2">
+        <button id="stdLoad"  class="px-3 py-1.5 bg-black text-white rounded">加载</button>
+        <button id="stdClear" class="px-3 py-1.5 border rounded">取消</button>
+      </div>
+    </div>
+    <div class="grid lg:grid-cols-5 gap-3 items-end">
+      <div>
+        <label class="block text-sm mb-1">目标</label>
+        <select id="stdTarget" class="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white">
+          <option value="__MERGED__">合并（跨颜色）</option>
+          <option value="COLOR">单色</option>
+        </select>
+      </div>
+      <div class="lg:col-span-2">
+        <label class="block text-sm mb-1">颜色（单色时必填）</label>
+        <input id="stdColor" type="text" placeholder="例：ミストブルー"
+               class="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white"/>
+      </div>
+      <div>
+        <label class="block text-sm mb-1">B · 窗口(分钟)</label>
+        <input id="stdBWin" type="number" min="1" value="60"
+               class="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white"/>
+      </div>
+      <div>
+        <label class="block text-sm mb-1">C · 窗口(分钟)</label>
+        <input id="stdCWin" type="number" min="1" value="240"
+               class="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white"/>
+      </div>
+    </div>
+    <div class="flex items-center gap-2 small">
+      <span>显示 ±σ：</span>
+      <label><input type="radio" name="stdWhich" value="A" checked> A</label>
+      <label><input type="radio" name="stdWhich" value="B"> B</label>
+      <label><input type="radio" name="stdWhich" value="C"> C</label>
+    </div>
+    <div class="relative">
+      <canvas id="stdChart" class="hchart"></canvas>
+      <div class="vlabel left-2"  id="std-left"></div>
+      <div class="vlabel right-2" id="std-right" style="right:8px; left:auto"></div>
+    </div>
+    <p class="small text-zinc-500">说明：后端返回 A/B/C 的均值与 std/upper/lower，本块只负责显示。</p>
+  </section>
+
+  <!-- 异常检测（占位：后端替换 URL 即可） -->
+  <section class="card" id="blk-anom">
+    <div class="flex items-center justify-between">
+      <h2 class="font-semibold">异常检测（框架占位）</h2>
+      <div class="flex items-center gap-2">
+        <button id="anomLoad"  class="px-3 py-1.5 bg-black text-white rounded">加载</button>
+        <button id="anomClear" class="px-3 py-1.5 border rounded">取消</button>
+      </div>
+    </div>
+    <div class="grid-3">
+      <div>
+        <label class="block text-sm mb-1">灵敏度</label>
+        <input id="anomSensitivity" type="number" min="1" max="10" value="5"
+               class="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white"/>
+      </div>
+      <div>
+        <label class="block text-sm mb-1">最小点数</label>
+        <input id="anomMinPts" type="number" min="5" value="30"
+               class="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white"/>
+      </div>
+      <div>
+        <label class="block text-sm mb-1">单色(可选)</label>
+        <input id="anomColor" type="text" placeholder="空=合并(__MERGED__)" class="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white"/>
+      </div>
+    </div>
+    <div class="relative">
+      <canvas id="anomChart" class="hchart"></canvas>
+      <div class="vlabel left-2"  id="anom-left"></div>
+      <div class="vlabel right-2" id="anom-right" style="right:8px; left:auto"></div>
+    </div>
+    <p class="small text-zinc-500">说明：请在后端实现 <code>/api/trends/anomaly/</code>，返回 {base:[{x,y}], anomalies:[{x,y}]}</p>
+  </section>
+
+  <!-- 预测（占位：后端替换 URL 即可） -->
+  <section class="card" id="blk-forecast">
+    <div class="flex items-center justify-between">
+      <h2 class="font-semibold">预测（框架占位）</h2>
+      <div class="flex items-center gap-2">
+        <button id="fcLoad"  class="px-3 py-1.5 bg-black text-white rounded">加载</button>
+        <button id="fcClear" class="px-3 py-1.5 border rounded">取消</button>
+      </div>
+    </div>
+    <div class="grid-3">
+      <div>
+        <label class="block text-sm mb-1">预测天数</label>
+        <input id="fcHorizon" type="number" min="1" value="7"
+               class="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white"/>
+      </div>
+      <div class="lg:col-span-2">
+        <label class="block text-sm mb-1">单色(可选)</label>
+        <input id="fcColor" type="text" placeholder="空=合并(__MERGED__)" class="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white"/>
+      </div>
+    </div>
+    <div class="relative">
+      <canvas id="fcChart" class="hchart"></canvas>
+      <div class="vlabel left-2"  id="fc-left"></div>
+      <div class="vlabel right-2" id="fc-right" style="right:8px; left:auto"></div>
+    </div>
+    <p class="small text-zinc-500">说明：请在后端实现 <code>/api/trends/forecast/</code>，返回 {history:[{x,y}], predict:[{x,y}]}</p>
+  </section>
+
+  <!-- 汇率（占位：后端替换 URL 即可） -->
+  <section class="card" id="blk-fx">
+    <div class="flex items-center justify-between">
+      <h2 class="font-semibold">汇率（USD/JPY · 框架占位）</h2>
+      <div class="flex items-center gap-2">
+        <button id="fxLoad"  class="px-3 py-1.5 bg-black text-white rounded">加载</button>
+        <button id="fxClear" class="px-3 py-1.5 border rounded">取消</button>
+      </div>
+    </div>
+    <div class="grid-2">
+      <div>
+        <label class="block text-sm mb-1">标准化（可选）</label>
+        <select id="fxNorm" class="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white">
+          <option value="none">无</option>
+          <option value="zscore">Z-Score</option>
+          <option value="minmax">Min-Max</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-sm mb-1">对齐方式</label>
+        <select id="fxAlign" class="w-full px-3 py-2 rounded-lg border border-zinc-200 bg-white">
+          <option value="grid">对齐到价格网格</option>
+          <option value="raw">原始时间</option>
+        </select>
+      </div>
+    </div>
+    <div class="relative">
+      <canvas id="fxChart" class="hchart"></canvas>
+      <div class="vlabel left-2"  id="fx-left"></div>
+      <div class="vlabel right-2" id="fx-right" style="right:8px; left:auto"></div>
+    </div>
+    <p class="small text-zinc-500">说明：请在后端实现 <code>/api/trends/fx/usdjpy/</code>，返回 {series:[{x,y}]}</p>
+  </section>
+
+</div>
+
+<script>
+/* ===================== 基础常量 ===================== */
+const API = {
+  BASE: '/AppleStockChecker',
+  AVG_ONLY: '/api/trends/model-colors/avg-only/',   // 已有
+  STD:      '/api/trends/model-color/std/',         // 已有
+  ANOM:     '/api/trends/anomaly/',                 // 你实现后替换
+  FC:       '/api/trends/forecast/',                // 你实现后替换
+  FX:       '/api/trends/fx/usdjpy/',               // 你实现后替换
+};
+const FIXED_MODELS = [
+  { model:"iPhone 17 Pro Max", cap:256  },
+  { model:"iPhone 17 Pro Max", cap:512  },
+  { model:"iPhone 17 Pro Max", cap:1024 },
+  { model:"iPhone 17 Pro Max", cap:2048 },
+  { model:"iPhone 17 Pro",     cap:256  },
+  { model:"iPhone 17 Pro",     cap:512  },
+  { model:"iPhone 17 Pro",     cap:1024 },
+  { model:"iPhone Air",        cap:256  },
+  { model:"iPhone Air",        cap:512  },
+  { model:"iPhone Air",        cap:1024 },
+  { model:"iPhone 17",         cap:256  },
+  { model:"iPhone 17",         cap:512  },
+];
+
+/* ===================== 小工具 ===================== */
+const $ = s => document.querySelector(s);
+function esc(s){return (s??'').toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;","&gt;":"&gt;","\"":"&quot;"}[c]));}
+function getCSRF(){ const m=document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/); return m?decodeURIComponent(m[1]):''; }
+function xLabel(v){ const d=new Date(v); if(d.getHours()===0&&d.getMinutes()===0){ const w=['周日','周一','周二','周三','周四','周五','周六'][d.getDay()]; const mm=String(d.getMonth()+1).padStart(2,'0'); const dd=String(d.getDate()).padStart(2,'0'); return `${mm}/${dd} (${w})`; } return ''; }
+function handleAuth(r){ if(r.status===401||r.status===403||(r.redirected&&r.url.includes('/accounts/login'))){ location.href=`/accounts/login/?next=${encodeURIComponent(location.pathname+location.search)}`; return false;} return true;}
+async function postJSON(path, payload){
+  const r=await fetch(API.BASE+path, {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json','X-CSRFToken':getCSRF()}, body: JSON.stringify(payload)});
+  if(!handleAuth(r)) throw new Error('未登录');
+  if(!r.ok) throw new Error(`${path} 请求失败: ${r.status}`);
+  return r.json();
+}
+function recomputeDomain(chart){
+  if(!chart) return;
+  const pts=(chart.data.datasets||[]).flatMap(ds=>ds.data||[]);
+  const xs=pts.map(p=>p?.x).filter(v=>typeof v==='number'&&!Number.isNaN(v));
+  const ys=pts.map(p=>p?.y).filter(v=>typeof v==='number'&&!Number.isNaN(v));
+  if(!xs.length||!ys.length) return;
+  const xMin=Math.min(...xs), xMax=Math.max(...xs);
+  const yMin=Math.min(...ys), yMax=Math.max(...ys), pad=(yMax-yMin)*0.05;
+  chart.__domain={xMin,xMax,yMin:yMin-pad,yMax:yMax+pad,yCurMin:yMin-pad,yCurMax:yMax+pad};
+  chart.options.scales.x.min=Math.floor(xMin);
+  chart.options.scales.x.max=Math.ceil(xMax);
+  chart.options.scales.y.min=chart.__domain.yCurMin;
+  chart.options.scales.y.max=chart.__domain.yCurMax;
+  chart.update('none');
+}
+function initChartOptions(){
+  return {
+    parsing:false, animation:false, normalized:true, spanGaps:false,
+    interaction:{ mode:'index', axis:'x', intersect:false },
+    plugins:{
+      legend:{display:true, position:'top'},
+      tooltip:{ mode:'index', intersect:false,
+        callbacks:{ label:(it)=>`${it.dataset.label}: ¥${Number(it.parsed.y).toLocaleString()}` } }
+    },
+    scales:{
+      x:{ type:'time', time:{unit:'day'}, ticks:{ callback:xLabel, minRotation:90, maxRotation:90 }, title:{display:true,text:'日期'} },
+      y:{ position:'right', beginAtZero:false, title:{display:true,text:'价格（円）'} }
+    },
+    elements:{ line:{ tension:0.2 } }
+  };
+}
+
+/* ===================== 全局筛选填充 ===================== */
+function initCombo(){
+  const sel = $('#combo');
+  sel.innerHTML = FIXED_MODELS.map(m=>{
+    const capLabel=(m.cap%1024===0)?`${m.cap/1024}TB`:`${m.cap}GB`;
+    return `<option value="${esc(m.model)}|${m.cap}">${esc(m.model)} ${capLabel}</option>`;
+  }).join('');
+}
+
+/* ===================== 各块的图实例 ===================== */
+let avgChart, stdChart, anomChart, fcChart, fxChart;
+
+/* ===================== 平均值曲线块 ===================== */
+async function loadAvg(){
+  try{
+    const [model, cap] = $('#combo').value.split('|');
+    const payload = {
+      model_name:model, capacity_gb:parseInt(cap,10),
+      days: parseInt($('#days').value||'30',10),
+      shops: ($('#shops').value||'').split(',').map(s=>s.trim()).filter(Boolean),
+      avg:{
+        A:{ bucketMinutes: parseInt($('#avgABucket').value||'30',10) },
+        B:{ windowMinutes: parseInt($('#avgBWin').value||'60',10) },
+        C:{ windowMinutes: parseInt($('#avgCWin').value||'240',10) }
+      },
+      grid:{ stepMinutes: parseInt($('#gridStep').value||'15',10), offsetMinute: parseInt($('#gridOffset').value||'0',10) }
+    };
+    const data = await postJSON(API.AVG_ONLY, payload);
+
+    // 画图：只显示 A/B/C 均值
+    const ctx = $('#avgChart').getContext('2d');
+    if(avgChart){ avgChart.destroy(); avgChart=null; }
+    avgChart = new Chart(ctx, {
+      type:'line',
+      data:{ datasets:[
+        {label:'平均线 A(黑)', data:data.merged.avg.A, borderColor:'#000',    backgroundColor:'#000',    borderWidth:2, pointRadius:0, spanGaps:false, order:0},
+        {label:'平均线 B',     data:data.merged.avg.B, borderColor:'#ff0077', backgroundColor:'#ff0077', borderWidth:2, pointRadius:0, spanGaps:false, order:0},
+        {label:'平均线 C',     data:data.merged.avg.C, borderColor:'#00bcd4', backgroundColor:'#00bcd4', borderWidth:2, pointRadius:0, spanGaps:false, order:0},
+      ]},
+      options: initChartOptions()
+    });
+    recomputeDomain(avgChart);
+    updateEdgeLabels(avgChart,'avg-left','avg-right');
+  }catch(e){ alert('平均值曲线加载失败：'+(e.message||e)); }
+}
+function clearAvg(){ if(avgChart){ avgChart.destroy(); avgChart=null; } $('#avg-left').textContent=''; $('#avg-right').textContent=''; }
+
+/* ===================== 移动均值 ±σ 块 ===================== */
+function updateEdgeLabels(chart, leftId, rightId){
+  if(!chart) return;
+  const s = chart.scales?.x; if(!s) return;
+  const L=$('#'+leftId), R=$('#'+rightId);
+  const fmt=(ts)=>{const d=new Date(ts); const w=['周日','周一','周二','周三','周四','周五','周六'][d.getDay()]; const mm=String(d.getMonth()+1).padStart(2,'0'); const dd=String(d.getDate()).padStart(2,'0'); return `${mm}/${dd} (${w})`;};
+  if (L) L.textContent = fmt(s.min);
+  if (R) R.textContent = fmt(s.max);
+}
+function applyStdBand(which, j, chart){
+  if(!chart) return;
+  chart.data.datasets = chart.data.datasets.filter(ds=>!ds.__isStd);
+  const add=(lab, up, low, color)=>[
+    {label:`${lab} +σ`, data:up,  borderColor:color, backgroundColor:color, borderWidth:1, pointRadius:0, spanGaps:false, order:-1, borderDash:[4,3], __isStd:true},
+    {label:`${lab} -σ`, data:low, borderColor:color, backgroundColor:color, borderWidth:1, pointRadius:0, spanGaps:false, order:-1, borderDash:[4,3], __isStd:true},
+  ];
+  if(which==='A') chart.data.datasets.push(...add('A', j.A.upper, j.A.lower, '#000'));
+  if(which==='B') chart.data.datasets.push(...add('B', j.B.upper, j.B.lower, '#ff0077'));
+  if(which==='C') chart.data.datasets.push(...add('C', j.C.upper, j.C.lower, '#00bcd4'));
+  chart.update('none');
+  recomputeDomain(chart);
+  updateEdgeLabels(chart,'std-left','std-right');
+}
+async function loadStd(){
+  try{
+    const [model, cap] = $('#combo').value.split('|');
+    const target = $('#stdTarget').value;
+    const color  = (target==='COLOR') ? ($('#stdColor').value||'').trim() : '__MERGED__';
+    if (target==='COLOR' && !color){ alert('请选择颜色'); return; }
+
+    const payload = {
+      model_name:model, capacity_gb:parseInt(cap,10), color,
+      days: parseInt($('#days').value||'30',10),
+      shops: ($('#shops').value||'').split(',').map(s=>s.trim()).filter(Boolean),
+      grid:{ stepMinutes: parseInt($('#gridStep').value||'15',10), offsetMinute: parseInt($('#gridOffset').value||'0',10) },
+      avg:{
+        A:{ bucketMinutes: 30 },  // A 的桶在后端已定义，此处不设参数也可
+        B:{ windowMinutes: parseInt($('#stdBWin').value||'60',10) },
+        C:{ windowMinutes: parseInt($('#stdCWin').value||'240',10) }
+      }
+    };
+    const j = await postJSON(API.STD, payload);
+
+    const ctx = $('#stdChart').getContext('2d');
+    if(stdChart){ stdChart.destroy(); stdChart=null; }
+    stdChart = new Chart(ctx, {
+      type:'line',
+      data:{ datasets:[
+        {label:'平均线 A(黑)', data:j.A.mean, borderColor:'#000',    backgroundColor:'#000',    borderWidth:2, pointRadius:0, spanGaps:false, order:0},
+        {label:'平均线 B',     data:j.B.mean, borderColor:'#ff0077', backgroundColor:'#ff0077', borderWidth:2, pointRadius:0, spanGaps:false, order:0},
+        {label:'平均线 C',     data:j.C.mean, borderColor:'#00bcd4', backgroundColor:'#00bcd4', borderWidth:2, pointRadius:0, spanGaps:false, order:0},
+      ]},
+      options: initChartOptions()
+    });
+    recomputeDomain(stdChart);
+    updateEdgeLabels(stdChart,'std-left','std-right');
+
+    const apply = ()=> applyStdBand(document.querySelector('input[name="stdWhich"]:checked').value, j, stdChart);
+    document.querySelectorAll('input[name="stdWhich"]').forEach(r=>r.addEventListener('change', apply));
+    apply(); // 默认应用 A 的 ±σ
+  }catch(e){ alert('移动均值±σ 加载失败：'+(e.message||e)); }
+}
+function clearStd(){ if(stdChart){ stdChart.destroy(); stdChart=null; } $('#std-left').textContent=''; $('#std-right').textContent=''; }
+
+/* ===================== 异常检测（占位） ===================== */
+async function loadAnom(){
+  try{
+    const [model, cap] = $('#combo').value.split('|');
+    const payload = {
+      model_name:model, capacity_gb:parseInt(cap,10),
+      days: parseInt($('#days').value||'30',10),
+      shops: ($('#shops').value||'').split(',').map(s=>s.trim()).filter(Boolean),
+      sensitivity: parseInt($('#anomSensitivity').value||'5',10),
+      min_points:  parseInt($('#anomMinPts').value||'30',10),
+      color: ($('#anomColor').value||'').trim() || '__MERGED__',
+      grid:{ stepMinutes: parseInt($('#gridStep').value||'15',10), offsetMinute: parseInt($('#gridOffset').value||'0',10) },
+    };
+    const j = await postJSON(API.ANOM, payload); // 你实现后端即用
+    const ctx = $('#anomChart').getContext('2d');
+    if(anomChart){ anomChart.destroy(); anomChart=null; }
+    anomChart = new Chart(ctx, {
+      type:'line',
+      data:{ datasets:[
+        {label:'基线', data:j.base||[], borderColor:'#0ea5e9', backgroundColor:'#0ea5e9', borderWidth:2, pointRadius:0, spanGaps:false},
+        {label:'异常', data:j.anomalies||[], borderColor:'#ef4444', backgroundColor:'#ef4444', borderWidth:0, pointRadius:4, showLine:false}
+      ]},
+      options: initChartOptions()
+    });
+    recomputeDomain(anomChart);
+    updateEdgeLabels(anomChart,'anom-left','anom-right');
+  }catch(e){ alert('异常检测加载失败（请先实现后端接口）：'+(e.message||e)); }
+}
+function clearAnom(){ if(anomChart){ anomChart.destroy(); anomChart=null; } $('#anom-left').textContent=''; $('#anom-right').textContent=''; }
+
+/* ===================== 预测（占位） ===================== */
+async function loadFc(){
+  try{
+    const [model, cap] = $('#combo').value.split('|');
+    const payload = {
+      model_name:model, capacity_gb:parseInt(cap,10),
+      days: parseInt($('#days').value||'30',10),
+      shops: ($('#shops').value||'').split(',').map(s=>s.trim()).filter(Boolean),
+      horizon_days: parseInt($('#fcHorizon').value||'7',10),
+      color: ($('#fcColor').value||'').trim() || '__MERGED__',
+      grid:{ stepMinutes: parseInt($('#gridStep').value||'15',10), offsetMinute: parseInt($('#gridOffset').value||'0',10) },
+    };
+    const j = await postJSON(API.FC, payload); // 你实现后端即用
+    const ctx = $('#fcChart').getContext('2d');
+    if(fcChart){ fcChart.destroy(); fcChart=null; }
+    fcChart = new Chart(ctx, {
+      type:'line',
+      data:{ datasets:[
+        {label:'历史', data:j.history||[], borderColor:'#64748b', backgroundColor:'#64748b', borderWidth:2, pointRadius:0, spanGaps:false},
+        {label:'预测', data:j.predict||[], borderColor:'#10b981', backgroundColor:'#10b981', borderWidth:2, pointRadius:0, borderDash:[6,4], spanGaps:false}
+      ]},
+      options: initChartOptions()
+    });
+    recomputeDomain(fcChart);
+    updateEdgeLabels(fcChart,'fc-left','fc-right');
+  }catch(e){ alert('预测加载失败（请先实现后端接口）：'+(e.message||e)); }
+}
+function clearFc(){ if(fcChart){ fcChart.destroy(); fcChart=null; } $('#fc-left').textContent=''; $('#fc-right').textContent=''; }
+
+/* ===================== 汇率（占位） ===================== */
+async function loadFx(){
+  try{
+    const payload = {
+      days: parseInt($('#days').value||'30',10),
+      align: $('#fxAlign').value,   // 'grid' 或 'raw'
+      norm:  $('#fxNorm').value    // 'none' | 'zscore' | 'minmax'
+    };
+    const j = await postJSON(API.FX, payload); // 你实现后端即用
+    const ctx = $('#fxChart').getContext('2d');
+    if(fxChart){ fxChart.destroy(); fxChart=null; }
+    fxChart = new Chart(ctx, {
+      type:'line',
+      data:{ datasets:[ {label:'USD/JPY', data:j.series||[], borderColor:'#0ea5e9', backgroundColor:'#0ea5e9', borderWidth:2, pointRadius:0, spanGaps:false} ]},
+      options: initChartOptions()
+    });
+    recomputeDomain(fxChart);
+    updateEdgeLabels(fxChart,'fx-left','fx-right');
+  }catch(e){ alert('汇率加载失败（请先实现后端接口）：'+(e.message||e)); }
+}
+function clearFx(){ if(fxChart){ fxChart.destroy(); fxChart=null; } $('#fx-left').textContent=''; $('#fx-right').textContent=''; }
+
+/* ===================== 事件绑定 & 初始化 ===================== */
+document.addEventListener('DOMContentLoaded', ()=>{
+  initCombo();
+
+  // 平均值曲线
+  $('#avgLoad').addEventListener('click', loadAvg);
+  $('#avgClear').addEventListener('click', clearAvg);
+
+  // 移动均值±σ
+  $('#stdLoad').addEventListener('click', loadStd);
+  $('#stdClear').addEventListener('click', clearStd);
+
+  // 异常检测
+  $('#anomLoad').addEventListener('click', loadAnom);
+  $('#anomClear').addEventListener('click', clearAnom);
+
+  // 预测
+  $('#fcLoad').addEventListener('click', loadFc);
+  $('#fcClear').addEventListener('click', clearFc);
+
+  // 汇率
+  $('#fxLoad').addEventListener('click', loadFx);
+  $('#fxClear').addEventListener('click', clearFx);
+});
+</script>
+</body>
+</html>
