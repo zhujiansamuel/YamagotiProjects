@@ -393,6 +393,29 @@
     ];
 
 
+    // 1) 在这里定义“临时补丁”函数（调用前定义即可）
+    function shiftChartHours(chart, hours = 9) {
+        const ms = hours * 3600 * 1000;
+        chart.data.datasets.forEach(ds => {
+            // 缓存原始数据，避免多次偏移累计误差
+            if (!ds._origData) {
+                ds._origData = ds.data.map(p => ({x: p.x, y: p.y}));
+            }
+            ds.data = ds._origData.map(p => ({x: p.x + ms, y: p.y}));
+        });
+        chart._shiftedHours = hours; // 记录当前偏移量（可选）
+        chart.update('none');
+    }
+
+    function unshiftChart(chart) {
+        chart.data.datasets.forEach(ds => {
+            if (ds._origData) ds.data = ds._origData.map(p => ({x: p.x, y: p.y}));
+        });
+        chart._shiftedHours = 0;
+        chart.update('none');
+    }
+
+
     function recomputeDomain(c) {
         if (!c) return;
         const pts = (c.data.datasets || []).flatMap(ds => ds.data || []);
@@ -584,6 +607,8 @@
                 elements: {line: {tension: 0.2}}
             }
         });
+        shiftChartHours(mergedStatsChart, 9);
+
         initFixedDomains(mergedStatsChart);
 
         // 绑定单选控制 ±σ
@@ -794,7 +819,6 @@
             }
 
 
-
             if (statusEl) statusEl.textContent = '已仅重算平均线';
         } catch (e) {
             console.warn('recalcAveragesOnly error:', e);
@@ -903,6 +927,9 @@
                 elements: {line: {tension: 0.2}}
             }
         });
+
+        shiftChartHours(chart, 9);
+
         ctxCanvas.__chart = chart;
 
         // 一个小的助手：把 std 上下界加入/移除
@@ -1149,10 +1176,10 @@
     }
 
     /* ========= 缩放/平移（X/Y 独立） ========= */
-function initFixedDomains(c){
- if (!c || c.__domain) return;
-  recomputeDomain(c); // 统一走完整的 X/Y 计算，确保 xMin/xMax 与最新数据对齐
-}
+    function initFixedDomains(c) {
+        if (!c || c.__domain) return;
+        recomputeDomain(c); // 统一走完整的 X/Y 计算，确保 xMin/xMax 与最新数据对齐
+    }
 
     function getXRange(c) {
         const d = c.__domain || {};
@@ -1439,6 +1466,8 @@ function initFixedDomains(c){
                 elements: {line: {tension: 0.2}}
             }
         });
+        shiftChartHours(chart, 9);
+
         initFixedDomains(chart);
         return {chart, storeColorMap};
     }
@@ -1538,6 +1567,7 @@ function initFixedDomains(c){
             }
 
         });
+        shiftChartHours(chart, 9);
 
         ctxCanvas.__chart = chart;
 
@@ -1593,6 +1623,7 @@ function initFixedDomains(c){
 
             chart.update('none');
         }
+
         // 默认 A
         applyStdBand('A');
         // 单选切换
@@ -2248,6 +2279,8 @@ function initFixedDomains(c){
                 }
             }
         });
+        shiftChartHours(usdjpyChart, 9);
+
     }
 
     async function loadUsdJpy() {
