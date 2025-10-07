@@ -53,7 +53,7 @@ urlpatterns = [
                   path("resale-trend-colors-merged/", ResaleTrendColorsMergedView.as_view(),
                        name="resale-trend-colors-merged"),
                   path("template-chartjs/", TemplateChartjsView.as_view(), name="template-chartjs"),
-                  path("api/trends/model-colors/", trends_model_colors, name="trends-model-colors"),  # ★ 新增
+                  path("api/trends/model-colors/", trends_model_colors, name="trends-model-colors"),
                   path("api/trends/model-color/std/", TrendsColorStdApiView.as_view(), name="trends-color-std"),
                   path("api/trends/model-colors/avg-only/", TrendsAvgOnlyApiView.as_view(), name="trends-avg-only"),
                   path("analysis-dashboard/", AnalysisDashboardView.as_view(), name="analysis-dashboard/"),

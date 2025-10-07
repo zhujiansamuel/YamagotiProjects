@@ -192,4 +192,6 @@ docker compose logs -f celery
 docker compose logs -f nginx
 
 
-docker compose run web bash
+
+
+
