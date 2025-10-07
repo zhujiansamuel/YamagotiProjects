@@ -43,6 +43,20 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from .models import Iphone, PurchasingShopPriceRecord
 
+from rest_framework.parsers import JSONParser, FormParser, MultiPartParser, FileUploadParser
+from rest_framework.parsers import BaseParser
+
+from rest_framework.decorators import parser_classes
+
+class PlainTextParser(BaseParser):
+    media_type = 'text/plain'
+    def parse(self, stream, media_type=None, parser_context=None):
+        return stream.read()  # 交给你的视图里 to_dataframe_from_request 自己处理
+
+class TextCsvParser(BaseParser):
+    media_type = 'text/csv'
+    def parse(self, stream, media_type=None, parser_context=None):
+        return stream.read()
 
 
 def _get_bool_param(request, name: str, default=False):
@@ -1361,6 +1375,7 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
         responses={202: OpenApiTypes.OBJECT, 200: OpenApiTypes.OBJECT}
     )
     @action(detail=False, methods=["post"], url_path="ingest-webscraper", permission_classes=[AllowAny])
+    @parser_classes([JSONParser, FormParser, MultiPartParser, FileUploadParser, PlainTextParser, TextCsvParser])
     def ingest_webscraper(self, request):
         dry_run = str(request.query_params.get("dry_run") or "").lower() in {"1", "true", "t", "yes", "y"}
         dedupe = _get_bool_param(request, "dedupe", True)
@@ -1425,6 +1440,7 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
     @extend_schema(tags=["Resale / Price"], summary="Webhook（Path Token 版）")
     @action(detail=False, methods=["post"], url_path=r"ingest-webscraper/(?P<ptoken>[-A-Za-z0-9_]+)",
             permission_classes=[AllowAny])
+    @parser_classes([JSONParser, FormParser, MultiPartParser, FileUploadParser, PlainTextParser, TextCsvParser])
     def ingest_webscraper_with_path_token(self, request, ptoken: str = ""):
         if not _check_token(request, path_token=ptoken):
             return Response({"detail": "Webhook token 不匹配"}, status=status.HTTP_403_FORBIDDEN)

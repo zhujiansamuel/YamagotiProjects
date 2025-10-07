@@ -350,7 +350,7 @@
     const CHART_HEIGHT = 130;
     const LINE_DASH = {solid: [], dash: [6, 4], dot: [2, 3], dashdot: [6, 4, 2, 3]};
     const LINE_PALETTE = [
-        {#"#DD1133",　　/* ========= 買取商店 ========= */#}
+        "#DD1133",　　/* ========= 買取商店 ========= */
         "#478CD8",　　/* ========= 海峡通信 ========= */
         "#B41524",　　/* ========= 買取１丁目 ========= */
         "#DD1133",　/* ========= モバイルミックス ========= */
@@ -607,7 +607,7 @@
                 elements: {line: {tension: 0.2}}
             }
         });
-        shiftChartHours(mergedStatsChart, 9);
+        shiftChartHours(mergedStatsChart, 0);
 
         initFixedDomains(mergedStatsChart);
 
@@ -928,7 +928,7 @@
             }
         });
 
-        shiftChartHours(chart, 9);
+        shiftChartHours(chart, 0);
 
         ctxCanvas.__chart = chart;
 
@@ -1466,7 +1466,7 @@
                 elements: {line: {tension: 0.2}}
             }
         });
-        shiftChartHours(chart, 9);
+        shiftChartHours(chart, 0);
 
         initFixedDomains(chart);
         return {chart, storeColorMap};
@@ -1567,7 +1567,7 @@
             }
 
         });
-        shiftChartHours(chart, 9);
+        shiftChartHours(chart, 0);
 
         ctxCanvas.__chart = chart;
 
@@ -2279,7 +2279,7 @@
                 }
             }
         });
-        shiftChartHours(usdjpyChart, 9);
+        shiftChartHours(usdjpyChart, 0);
 
     }
 
