@@ -232,11 +232,10 @@ def _apply_adjust_for_colorname(color_name: str, rules: dict) -> int:
 #
 def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
     """
-    读取 AppleStockChecker/data/iphone17_info.csv 或 settings / env 指定的路径。
-    输出列：part_number, model_name_norm, capacity_gb
+    读取 iphone17_info，并尽量保留 jan 列以供 shop1 做 JAN→PN 映射。
+    输出列至少包含：part_number, model_name, capacity_gb, color，
+    若检测到任何 jan 列，则额外返回标准化列 'jan'。
     """
-
-
     try:
         from django.conf import settings
         p = getattr(settings, "EXTERNAL_IPHONE17_INFO_PATH", None)
@@ -246,6 +245,7 @@ def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
             raise AttributeError
     except Exception:
         path = os.getenv("IPHONE17_INFO_CSV") or str(Path(__file__).resolve().parents[2] / "data" / "iphone17_info.csv")
+
     pth = Path(path)
     if not pth.exists():
         raise FileNotFoundError(f"未找到 iphone17_info：{pth}")
@@ -255,16 +255,32 @@ def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
     else:
         df = pd.read_csv(pth, encoding="utf-8-sig")
 
-    need = {"part_number", "model_name", "capacity_gb","color"}
+    need = {"part_number", "model_name", "capacity_gb", "color"}
     missing = need - set(df.columns)
     if missing:
         raise ValueError(f"iphone17_info 缺少必要列：{missing}")
 
     df = df.copy()
-    # df["model_name_norm"] = df["model_name"].map(_normalize_model_generic)
     df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
-    df = df.dropna(subset=["model_name", "capacity_gb", "part_number","color"])
-    return df[["part_number", "model_name", "capacity_gb","color"]]
+    df = df.dropna(subset=["model_name", "capacity_gb", "part_number", "color"])
+
+    # ★ 检测并标准化 jan 列（尽最大可能适配命名）
+    jan_candidates = []
+    for c in df.columns:
+        cl = str(c).strip().lower()
+        if cl in {"jan", "jancode", "jan_code", "jan13", "jan14"}:
+            jan_candidates.append(c)
+        elif "jan" in cl or "jan" in str(c):  # 兼容 'JANコード' 等
+            jan_candidates.append(c)
+    jan_candidates = list(dict.fromkeys(jan_candidates))  # 去重保序
+
+    cols = ["part_number", "model_name", "capacity_gb", "color"]
+    if jan_candidates:
+        src = jan_candidates[0]
+        df["jan"] = df[src]
+        cols.append("jan")
+
+    return df[cols]
 
 def pick_first_col(df: pd.DataFrame, *candidates: str) -> pd.Series:
     """
@@ -3344,31 +3360,31 @@ def clean_shop20(df: pd.DataFrame) -> pd.DataFrame:
 
 
 
-JAN_RE = re.compile(r"(\d{8,})")
+JAN_RE_shop1 = re.compile(r"(\d{8,})")
 
 def _extract_jan_digits_shop1(v) -> Optional[str]:
     if v is None:
         return None
-    m = JAN_RE.search(str(v))
+    m = JAN_RE_shop1.search(str(v))
     return m.group(1) if m else None
 
-def _pick_info_jan_col(info_df: pd.DataFrame) -> Optional[str]:
+def _pick_info_jan_col_shop1(info_df: pd.DataFrame) -> Optional[str]:
     for c in info_df.columns:
         if str(c).strip().lower() in {"jan", "jancode", "jan_code"}:
             return c
     return None
 
-def _build_jan_to_pn_map(info_df: pd.DataFrame) -> Dict[str, str]:
-    jan_to_pn: Dict[str, str] = {}
-    jcol = _pick_info_jan_col(info_df)
+def _build_jan_to_pn_map_shop1(info_df: pd.DataFrame) -> Dict[str, str]:
+    jan_map: Dict[str, str] = {}
+    jcol = _pick_info_jan_col_shop1(info_df)
     if not jcol:
-        return jan_to_pn
+        return jan_map
     for _, r in info_df.iterrows():
-        jan = _extract_jan_digits(r.get(jcol))
+        jan_digits = _extract_jan_digits_shop1(r.get(jcol))
         pn = r.get("part_number")
-        if jan and pd.notna(pn):
-            jan_to_pn[str(jan)] = str(pn)
-    return jan_to_pn
+        if jan_digits and pd.notna(pn):
+            jan_map[str(jan_digits)] = str(pn)
+    return jan_map
 
 def _iter_records(df: pd.DataFrame):
     """
@@ -3436,17 +3452,17 @@ def clean_shop1(df: pd.DataFrame) -> pd.DataFrame:
     """
     # 准备 JAN->PN 映射
     info_df = _load_iphone17_info_df_for_shop2()
-    jan_map = _build_jan_to_pn_map(info_df)
+    jan_map = _build_jan_to_pn_map_shop1(info_df)
 
     rows: List[dict] = []
 
     for rec in _iter_records(df):
         jan = _extract_jan_digits_shop1(rec.get("JAN"))
-
+        print(jan)
         if not jan:
             continue
         pn = jan_map.get(jan)
-        # print(pn)
+        print(pn)
         if not pn:
             continue
 
