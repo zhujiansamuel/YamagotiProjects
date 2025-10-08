@@ -315,16 +315,15 @@ if __name__ == "__main__":
 
                 # 6) 解码整页价格并打印
                 # print("\n=== 解码结果 ===")
+
                 rows = []
                 for tr in soup.select("tr.price_list_item"):
-                    # 只取该行“第一个”价格块（新品）
                     first_box = tr.select_one('div.item-price.encrypt-price')
                     if not first_box:
                         continue
                     price = decode_price_in(first_box, cell_w, {int(k): v for k, v in idx2char.items()})
-                    price = price.replace(',', '')  # 如要纯数字可放开
+                    price = price.replace(',', '')
 
-                    # 提取 JAN（保持你原来的写法）
                     jan = None
                     spans = tr.select('span.product-code-default')
                     for i, sp in enumerate(spans):
@@ -338,20 +337,27 @@ if __name__ == "__main__":
                             jan = m.group(1)
 
                     if jan and price:
-                        tokyo_tz = pytz.timezone('Asia/Tokyo')
-                        tokyo_tz_ = datetime.datetime.now(tokyo_tz)
-                        rows.append({'JAN': jan, 'price': price,"time-scraped":tokyo_tz_})
-
-                print(index)
+                        tokyo = pytz.timezone('Asia/Tokyo')
+                        ts = datetime.datetime.now(tokyo).isoformat(
+                            timespec='seconds')  # e.g. 2025-10-08T18:22:31+09:00
+                        rows.append({'JAN': jan, 'price': int(price), 'time-scraped': ts})
                 if index==0:
-                    with open('shop1.csv', 'w', newline='', encoding='utf-8') as f:
-                        writer = csv.DictWriter(f, fieldnames=['JAN', 'price',"time-scraped"])
-                        writer.writeheader()
-                        writer.writerows(rows)
+                    with open('shop1_1.json', 'w', encoding='utf-8') as f:
+                        json.dump(rows, f, ensure_ascii=False, indent=2)
                 else:
-                    with open('shop1.csv', 'a', newline='', encoding='utf-8') as f:
-                        writer = csv.DictWriter(f, fieldnames=['JAN', 'price',"time-scraped"])
-                        writer.writerows(rows)
+                    with open('shop1_1.json', 'a', encoding='utf-8') as f:
+                        json.dump(rows, f, ensure_ascii=False, indent=2)
+                print(f"Wrote {len(rows)} rows to shop1.json")
+
+        with open('shop1_1.json', 'r', encoding='utf-8') as f:
+            text = f.read().strip()
+        arrays = re.findall(r'\[[^\[\]]*\]', text)
+        merged = []
+        for arr in arrays:
+            merged.extend(json.loads(arr))
+        with open('shop1.json', 'w', encoding='utf-8') as f:
+            json.dump(merged, f, ensure_ascii=False, indent=2)
+
 
     except Exception as e:
         print("ERROR:", e)

@@ -59,9 +59,68 @@ class TextCsvParser(BaseParser):
         return stream.read()
 
 
-def _get_bool_param(request, name: str, default=False):
-    return str(request.query_params.get(name) or request.data.get(name) or "").lower() in {"1", "true", "t", "yes",
-                                                                                           "y"} or default
+def _get_bool_param(request, name: str, default: bool = False) -> bool:
+    # query 优先；body 仅当 data 是 dict 才读取
+    val = request.query_params.get(name, None)
+    if val is None and isinstance(getattr(request, "data", None), dict):
+        val = request.data.get(name, None)
+    if val is None or (isinstance(val, str) and val.strip() == ""):
+        return default
+    if isinstance(val, bool): return val
+    s = str(val).strip().lower()
+    if s in {"1","true","t","yes","y","on"}: return True
+    if s in {"0","false","f","no","n","off"}: return False
+    return default
+
+def _classify_mode(request):
+    """
+    根据 Content-Type + JSON 形态判断 'direct' or 'webhook'。
+    返回: (mode, body_bytes, effective_ct)
+    直传: 我们需要 body_bytes + effective_ct 交给 to_dataframe_from_request
+    Webhook: 返回 (mode, None, None)
+    """
+    ct = (request.content_type or "").lower()
+    data_obj = getattr(request, "data", None)
+
+    # 1) CSV 直传
+    if "csv" in ct:
+        return "direct", (request.body or b""), ct
+
+    # 2) JSON
+    if "json" in ct:
+        # JSON 数组 -> 直传
+        if isinstance(data_obj, list):
+            return "direct", (request.body or b""), "application/json"
+        # JSON 对象 -> 可能是 webhook
+        if isinstance(data_obj, dict):
+            keys = set(data_obj.keys())
+            if (
+                ("scrapingjob_id" in keys) or ("job_id" in keys)
+                or (("status" in keys) and (("sitemap_id" in keys) or ("sitemap_name" in keys)))
+            ):
+                return "webhook", None, None
+            # 不是 webhook 特征，当作直传 JSON 对象（看你的使用场景也可拒绝）
+            return "direct", (request.body or b""), "application/json"
+
+    # 3) multipart/form-data -> 直传（从 request.FILES 取）
+    if ct.startswith("multipart/form-data"):
+        up = next(iter(request.FILES.values()), None)
+        if up:
+            return "direct", up.read(), (up.content_type or "text/csv").lower()
+        return "direct", (request.body or b""), "application/octet-stream"
+
+    # 4) text/plain -> 直传
+    if ct.startswith("text/plain"):
+        return "direct", (request.body or b""), "text/plain"
+
+    # 5) fallback: 看 query 上有没有 job_id
+    if request.query_params.get("scrapingjob_id") or request.query_params.get("job_id"):
+        return "webhook", None, None
+
+    # 默认按直传处理（也可改为 400）
+    return "direct", (request.body or b""), ct
+
+
 
 
 def _check_token(request, path_token=None):
@@ -1300,13 +1359,15 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
     #     url_path="ingest-webscraper",
     #     permission_classes=[AllowAny],  # 外部回调需匿名可达，用 token 校验
     # )
-    # def ingest_webscraper(self, request):
+    # @parser_classes([JSONParser, FormParser, MultiPartParser, FileUploadParser, PlainTextParser, TextCsvParser])
+    # def ingest_webscraper_csv(self, request):
     #     dry_run = str(request.query_params.get("dry_run") or "").lower() in {"1", "true", "t", "yes", "y"}
     #     if not _check_token(request, path_token=None):
     #         return Response({"detail": "Webhook token 不匹配"}, status=status.HTTP_403_FORBIDDEN)
     #
     #     ct = (request.content_type or "").lower()
-    #
+    #     is_direct = ("csv" in ct) or ("json" in ct) or ct.startswith("text/plain") or ct.startswith(
+    #         "multipart/form-data")
     #     # A) 直传 CSV/JSON → 同步处理
     #     if ("csv" in ct) or ("json" in ct) or ct.startswith("text/plain"):
     #         source_name = _resolve_source(request)
@@ -1350,17 +1411,18 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
     #     result = ingest_external_dataframe(source_name, df, dry_run=dry_run, pn_only=True, create_shop=True)
     #     return Response({"mode": "webhook", "dry_run": dry_run, "job_id": job_id, "source": source_name, **result},
     #                     status=status.HTTP_200_OK)
-
+    #
     # # —— Path Token 版（更短的 URL）：/ingest-webscraper/<token>/ —— #
     # # 最短路径：/.../ingest-webscraper/<token>/
     # @action(detail=False, methods=["post"],
     #         url_path=r"ingest-webscraper/(?P<ptoken>[-A-Za-z0-9_]+)",
     #         permission_classes=[AllowAny])
-    # def ingest_webscraper_with_path_token(self, request, ptoken=""):
+    # @parser_classes([JSONParser, FormParser, MultiPartParser, FileUploadParser, PlainTextParser, TextCsvParser])
+    # def ingest_webscraper_csv_with_path_token(self, request, ptoken=""):
     #     if not _check_token(request, path_token=ptoken):
     #         return Response({"detail": "Webhook token 不匹配"}, status=403)
-    #     return self.ingest_webscraper(request)  # 复用主体逻辑
-    #
+    #     return self.ingest_webscraper_csv(request)  # 复用主体逻辑
+
     #
     # —— Webhook/直传入口（异步：Webhook 入队；直传：仍同步） —— #
     @extend_schema(
@@ -1390,32 +1452,40 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
         if not _check_token(request, path_token=None):
             return Response({"detail": "Webhook token 不匹配"}, status=status.HTTP_403_FORBIDDEN)
 
+        mode, body_bytes, eff_ct = _classify_mode(request)
+
         # 只在 finished 时处理（可选优化）
-        status_str = (request.data.get("status") or request.query_params.get("status") or "").lower()
-        if status_str and status_str != "finished":
-            return Response({"accepted": True, "reason": f"skip status={status_str}"}, status=status.HTTP_202_ACCEPTED)
 
         ct = (request.content_type or "").lower()
 
-        # A) 直传 CSV/JSON：同步处理（便于调试或第三方直推）
-        if ("csv" in ct) or ("json" in ct) or ct.startswith("text/plain"):
+        if mode == "direct":
             source_name = _resolve_source(request)
-            if not source_name:
-                return Response({"detail": "直传数据必须提供 source（或映射）"}, status=status.HTTP_400_BAD_REQUEST)
-            try:
-                get_cleaner(source_name)
-            except Exception:
-                return Response({"detail": f"未知清洗器: {source_name}"}, status=status.HTTP_400_BAD_REQUEST)
-            try:
-                df = to_dataframe_from_request(request.content_type, request.body or b"")
-            except Exception as e:
-                return Response({"detail": f"载入数据失败: {e}"}, status=status.HTTP_400_BAD_REQUEST)
+            dedupe = _get_bool_param(request, "dedupe", True)
+            upsert = _get_bool_param(request, "upsert", False)
 
-            result = ingest_external_dataframe(source_name, df, dry_run=dry_run, pn_only=True, create_shop=True,
-                                               dedupe=dedupe, upsert=upsert, batch_id=str(batch_uuid))
-            return Response(
-                {"mode": "direct", "dry_run": dry_run, "source": source_name, "batch_id": str(batch_uuid), **result},
-                status=200)
+            # A) 直传 CSV/JSON：同步处理（便于调试或第三方直推）
+            if ("csv" in ct) or ("json" in ct) or ct.startswith("text/plain"):
+                source_name = _resolve_source(request)
+                if not source_name:
+                    return Response({"detail": "直传数据必须提供 source（或映射）"}, status=status.HTTP_400_BAD_REQUEST)
+                try:
+                    get_cleaner(source_name)
+                except Exception:
+                    return Response({"detail": f"未知清洗器: {source_name}"}, status=status.HTTP_400_BAD_REQUEST)
+                try:
+                    df = to_dataframe_from_request(request.content_type, request.body or b"")
+                except Exception as e:
+                    return Response({"detail": f"载入数据失败: {e}"}, status=status.HTTP_400_BAD_REQUEST)
+
+                result = ingest_external_dataframe(source_name, df, dry_run=dry_run, pn_only=True, create_shop=True,
+                                                   dedupe=dedupe, upsert=upsert, batch_id=str(batch_uuid))
+                return Response(
+                    {"mode": "direct", "dry_run": dry_run, "source": source_name, "batch_id": str(batch_uuid), **result},
+                    status=200)
+
+        status_str = (request.data.get("status") or request.query_params.get("status") or "").lower()
+        if status_str and status_str != "finished":
+            return Response({"accepted": True, "reason": f"skip status={status_str}"}, status=status.HTTP_202_ACCEPTED)
 
         # B) Webhook：job_id + source → 入队 Celery，立即 202
         job_id = request.data.get("scrapingjob_id") or request.data.get("job_id") \
