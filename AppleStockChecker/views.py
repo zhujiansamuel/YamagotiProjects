@@ -1437,7 +1437,7 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
         responses={202: OpenApiTypes.OBJECT, 200: OpenApiTypes.OBJECT}
     )
     @action(detail=False, methods=["post"], url_path="ingest-webscraper", permission_classes=[AllowAny])
-    @parser_classes([JSONParser, FormParser, MultiPartParser, FileUploadParser, PlainTextParser, TextCsvParser])
+    # @parser_classes([JSONParser, FormParser, MultiPartParser, FileUploadParser, PlainTextParser, TextCsvParser])
     def ingest_webscraper(self, request):
         dry_run = str(request.query_params.get("dry_run") or "").lower() in {"1", "true", "t", "yes", "y"}
         dedupe = _get_bool_param(request, "dedupe", True)
@@ -1452,7 +1452,7 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
         if not _check_token(request, path_token=None):
             return Response({"detail": "Webhook token 不匹配"}, status=status.HTTP_403_FORBIDDEN)
 
-        mode, body_bytes, eff_ct = _classify_mode(request)
+        # mode, body_bytes, eff_ct = _classify_mode(request)
 
         # 只在 finished 时处理（可选优化）
 
