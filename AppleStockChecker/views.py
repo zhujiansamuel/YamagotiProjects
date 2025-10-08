@@ -1458,30 +1458,30 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
 
         ct = (request.content_type or "").lower()
 
-        if mode == "direct":
+        # if mode == "direct":
+        #     source_name = _resolve_source(request)
+        #     dedupe = _get_bool_param(request, "dedupe", True)
+        #     upsert = _get_bool_param(request, "upsert", False)
+
+        # A) 直传 CSV/JSON：同步处理（便于调试或第三方直推）
+        if ("csv" in ct) or ("json" in ct) or ct.startswith("text/plain"):
             source_name = _resolve_source(request)
-            dedupe = _get_bool_param(request, "dedupe", True)
-            upsert = _get_bool_param(request, "upsert", False)
+            if not source_name:
+                return Response({"detail": "直传数据必须提供 source（或映射）"}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                get_cleaner(source_name)
+            except Exception:
+                return Response({"detail": f"未知清洗器: {source_name}"}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                df = to_dataframe_from_request(request.content_type, request.body or b"")
+            except Exception as e:
+                return Response({"detail": f"载入数据失败: {e}"}, status=status.HTTP_400_BAD_REQUEST)
 
-            # A) 直传 CSV/JSON：同步处理（便于调试或第三方直推）
-            if ("csv" in ct) or ("json" in ct) or ct.startswith("text/plain"):
-                source_name = _resolve_source(request)
-                if not source_name:
-                    return Response({"detail": "直传数据必须提供 source（或映射）"}, status=status.HTTP_400_BAD_REQUEST)
-                try:
-                    get_cleaner(source_name)
-                except Exception:
-                    return Response({"detail": f"未知清洗器: {source_name}"}, status=status.HTTP_400_BAD_REQUEST)
-                try:
-                    df = to_dataframe_from_request(request.content_type, request.body or b"")
-                except Exception as e:
-                    return Response({"detail": f"载入数据失败: {e}"}, status=status.HTTP_400_BAD_REQUEST)
-
-                result = ingest_external_dataframe(source_name, df, dry_run=dry_run, pn_only=True, create_shop=True,
-                                                   dedupe=dedupe, upsert=upsert, batch_id=str(batch_uuid))
-                return Response(
-                    {"mode": "direct", "dry_run": dry_run, "source": source_name, "batch_id": str(batch_uuid), **result},
-                    status=200)
+            result = ingest_external_dataframe(source_name, df, dry_run=dry_run, pn_only=True, create_shop=True,
+                                               dedupe=dedupe, upsert=upsert, batch_id=str(batch_uuid))
+            return Response(
+                {"mode": "direct", "dry_run": dry_run, "source": source_name, "batch_id": str(batch_uuid), **result},
+                status=200)
 
         status_str = (request.data.get("status") or request.query_params.get("status") or "").lower()
         if status_str and status_str != "finished":

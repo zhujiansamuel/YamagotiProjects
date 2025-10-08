@@ -521,7 +521,7 @@ DJANGO_EASY_AUDIT_UNREGISTERED_URLS_DEFAULT = [r'^/static/',
 TIME_INPUT_FORMATS = "%H:%M"
 
 SHOP_DISPLAY_ORDER = [
-
+    "買取商店",
     "海峡通信",  # shop2　　　      ２
     "買取一丁目",  # shop3         ３
     "モバイルミックス",  # shop4         4
