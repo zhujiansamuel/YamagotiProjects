@@ -11,7 +11,9 @@ EXEMPT_URLS = [
     r"^/static/.*$",
     r"^/AppleStockChecker/auth/.*$",         # JWT 获取/刷新
     r"^/AppleStockChecker/docs/.*$",         # Swagger 文档（按需放行）
-    r"^/healthz$",                           # 健康检查（如果有）
+    r"^/healthz$",
+    r'^/AppleStockChecker/purchasing-price-records/ingest-json/?$',  # ← 新接口
+
 ]
 
 class LoginRequiredMiddleware(MiddlewareMixin):

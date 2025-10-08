@@ -52,7 +52,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-'django.middleware.locale.LocaleMiddleware',       # 可选
+    'django.middleware.locale.LocaleMiddleware',       # 可选
     "corsheaders.middleware.CorsMiddleware",
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -118,10 +118,13 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     # 部署后把前端域名加进来
+    "http://127.0.0.1:8000",
+
 ]
 # 若你在本地调试 CSRF：
-CSRF_TRUSTED_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000",
-                        "http://127.0.0.1:8000/AppleStockChecker/dashboard/"]
+CSRF_TRUSTED_ORIGINS = ["http://localhost:3000",
+                        "http://127.0.0.1:3000",
+                        "http://127.0.0.1:8000",]
 
 TEMPLATES = [
     {
@@ -572,4 +575,12 @@ LIST_ORDER = [
     "iphone-Air-1024",
     "iphone-17-256",
     "iphone-17-512"
+]
+
+
+LOGIN_EXEMPT_URLS = [
+    r'^AppleStockChecker/purchasing-price-records/ingest-json/?$',  # ← 新接口
+    # 如还有 path-token 版/webhook 版，也一并加上
+    r'^AppleStockChecker/purchasing-price-records/ingest-webscraper/?$',
+    r'^AppleStockChecker/purchasing-price-records/ingest-webscraper/[-A-Za-z0-9_]+/?$',
 ]

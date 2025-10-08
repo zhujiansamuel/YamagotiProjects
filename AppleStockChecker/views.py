@@ -47,6 +47,21 @@ from rest_framework.parsers import JSONParser, FormParser, MultiPartParser, File
 from rest_framework.parsers import BaseParser
 
 from rest_framework.decorators import parser_classes
+from rest_framework.decorators import action, parser_classes
+from rest_framework.parsers import JSONParser
+from rest_framework import permissions, status
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
+
+import io
+import pandas as pd
+import uuid
+from rest_framework.decorators import action, parser_classes, authentication_classes, permission_classes
+from rest_framework.parsers import JSONParser
+from rest_framework.permissions import AllowAny
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
+from AppleStockChecker.tasks.webscraper_tasks import task_ingest_json_shop1
+
 
 class PlainTextParser(BaseParser):
     media_type = 'text/plain'
@@ -119,9 +134,6 @@ def _classify_mode(request):
 
     # 默认按直传处理（也可改为 400）
     return "direct", (request.body or b""), ct
-
-
-
 
 def _check_token(request, path_token=None):
     shared = settings.WEB_SCRAPER_WEBHOOK_TOKEN
@@ -783,6 +795,7 @@ class SecondHandShopViewSet(viewsets.ModelViewSet):
     partial_update=extend_schema(tags=["Resale / Price"], summary="更新回收价格记录（部分）"),
     destroy=extend_schema(tags=["Resale / Price"], summary="删除回收价格记录"),
 )
+
 class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
     queryset = PurchasingShopPriceRecord.objects.select_related("shop", "iphone").all()
     serializer_class = PurchasingShopPriceRecordSerializer
@@ -1533,7 +1546,78 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
         return Response(data, status=status.HTTP_200_OK)
 
 
+    @extend_schema(
+        tags=["Resale / Price"],
+        summary="直传 JSON → 清洗器 shop1 → （预览或落库）",
+        description=(
+                "接收 JSON 正文，走清洗器 `shop1` 做清洗与写库。\n\n"
+                "入参：application/json；正文可以是 **数组**（每个元素一行）或 **对象**（键值对集合）。\n"
+                "参数：`?dry_run=1` 仅预览不落库；`?dedupe=1|0`；`?upsert=1|0`；Header: `X-Batch-Id`（可选 UUID）。\n"
+                "安全：默认免登录，用 `_check_token` 校验。若只给管理员用，请把 AllowAny 改回 IsAdminUser 并按会话/CSRF 调用。"
+        ),
+        parameters=[
+            OpenApiParameter("t", OpenApiTypes.STR, required=False, description="短 token（或 Header: X-Webhook-Token）"),
+            OpenApiParameter("dry_run", OpenApiTypes.BOOL, required=False, description="1=仅预览"),
+            OpenApiParameter("dedupe", OpenApiTypes.BOOL, required=False,
+                             description="同店+PN+recorded_at 去重更新（默认 true）"),
+            OpenApiParameter("upsert", OpenApiTypes.BOOL, required=False, description="按业务键 upsert（默认 false）"),
+        ],
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT, 403: OpenApiTypes.OBJECT}
+    )
+    @action(
+        detail=False, methods=["post"], url_path="ingest-json",
+    )
+    @authentication_classes([])  # ★ 禁用 Session/JWT 认证 → 不触发 CSRF
+    @permission_classes([AllowAny])  # ★ 允许匿名（配合我们自己的 token 校验）
+    @parser_classes([JSONParser])  # 仅接收 application/json
+    @method_decorator(csrf_exempt)  # ★ 再保险：对该视图禁用 CSRF
+    def ingest_json(self, request):
+        if not _check_token(request, path_token=None):
+            return Response({"detail": "Webhook token 不匹配"}, status=status.HTTP_403_FORBIDDEN)
 
+        dry_run = _get_bool_param(request, "dry_run", False)
+        dedupe = _get_bool_param(request, "dedupe", True)
+        upsert = _get_bool_param(request, "upsert", False)
 
+        bid = request.headers.get("X-Batch-Id") \
+              or request.query_params.get("batch_id") \
+              or (request.data.get("batch_id") if isinstance(request.data, dict) else None)
+        try:
+            batch_uuid = uuid.UUID(str(bid)) if bid else uuid.uuid4()
+        except Exception:
+            batch_uuid = uuid.uuid4()
+
+        # 解析 JSON -> records（避免 DataFrame 在 Celery 序列化时过大/复杂）
+        try:
+            payload = request.data
+            if isinstance(payload, list):
+                records = payload
+            elif isinstance(payload, dict):
+                records = [payload]
+            else:
+                return Response({"detail": "JSON 结构不支持（应为数组或对象）"}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({"detail": f"解析 JSON 失败: {e}"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 校验清洗器是否存在
+        try:
+            get_cleaner("shop1")
+        except Exception:
+            return Response({"detail": "未知清洗器: shop1"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 入队 Celery
+        task = task_ingest_json_shop1.delay(
+            records,  # list[dict] 原始 JSON
+            {
+                "dry_run": bool(dry_run),
+                "dedupe": bool(dedupe),
+                "upsert": bool(upsert),
+                "batch_id": str(batch_uuid),
+                "source": "shop1",
+            }
+        )
+        return Response({"accepted": True, "task_id": task.id, "batch_id": str(batch_uuid)},
+                        status=status.HTTP_202_ACCEPTED)
 
 
