@@ -898,72 +898,210 @@ def clean_shop2(shop2_df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(out_rows, columns=["part_number","shop_name","price_new","recorded_at"])
     return out
 
+FAMILY_SYNONYMS_shop3 = {
+    "blue": ["ブルー", "青", "ディープブルー"],
+    "ブルー": ["ブルー", "青", "ディープブルー"],
+    "青": ["ブルー", "青", "ディープブルー"],
+    "ディープブルー": ["ディープブルー", "ブルー", "青"],
+    "silver": ["シルバー", "銀"],
+    "シルバー": ["シルバー", "銀"],
+    "銀": ["シルバー", "銀"],
+    # 可继续加入 'sv'/'bl' 等缩写
+}
+
+_SPLIT = re.compile(r"[／/、，,；;]|(?:\s+\+\s+)|\n")
+
+# 捕获 “颜色 ± 金额” 片段，如：
+#   'シルバー-7500円'、'ディープブルー -9,000'、'ブルー：-4000'
+_COLOR_DELTA = re.compile(
+    r"""(?P<label>[^：:\-\s/、／]+)\s*
+        (?P<sep>[：:\-])?\s*
+        (?P<sign>[+\-−－])?\s*
+        (?P<amount>\d[\d,]*)\s*(?:円)?
+    """,
+    re.UNICODE | re.VERBOSE,
+)
+
+def _extract_color_deltas_with_pending(text: str) -> List[Tuple[str, int]]:
+    """
+    支持：
+      - 'シルバー-7500円/ディープブルー-9,000円'
+      - 'シルバー/ディープブルー-1,000円'  ← 多标签共用金额
+      - 'ブルー　-4000'
+    返回 [(label_raw, delta_int)]；负号解析规则：
+      - 显式 sign 优先；
+      - sign 缺省时，若 sep 是 '-' 也按负号处理。
+    """
+    out: List[Tuple[str, int]] = []
+    if not text:
+        return out
+
+    s = str(text).strip()
+    parts = [p.strip() for p in _SPLIT.split(s) if p and p.strip()]
+    if not parts:
+        parts = [s]
+
+    pending: List[str] = []
+
+    def _norm_label(lbl: str) -> str:
+        return re.sub(r"[\s\u3000\xa0]+", "", lbl or "")
+
+    for part in parts:
+        matches = list(_COLOR_DELTA.finditer(part))
+        if matches:
+            for m in matches:
+                label = _norm_label(m.group("label"))
+                if not label:
+                    continue
+                sep = m.group("sep")
+                sign = m.group("sign")
+                amt = to_int_yen(m.group("amount"))
+                if amt is None:
+                    continue
+                if sign:
+                    negative = sign in ("-", "−", "－")
+                else:
+                    negative = (sep in ("-", "−", "－")) if sep else False
+                delta = -int(amt) if negative else int(amt)
+
+                # 当前标签
+                out.append((label, delta))
+                # 把之前缓存的“无金额标签”也应用同一金额
+                for pl in pending:
+                    out.append((_norm_label(pl), delta))
+            pending = []  # 清空缓存
+            continue
+
+        # 没有金额，只是标签（如 'シルバー'），先缓存下来
+        for tok in re.split(r"[／/]", part):
+            tok = _norm_label(tok)
+            if tok:
+                pending.append(tok)
+
+    return out
+
+def _label_matches_color_shop3(label_raw: str, color_raw: str, color_norm: str) -> bool:
+    """宽松匹配：归一等值 | 文本子串 | 家族词命中"""
+    label_norm = _norm(label_raw)
+    if label_norm == color_norm:
+        return True
+    if label_raw and str(label_raw) in str(color_raw):
+        return True
+    keys = {label_raw.strip(), label_raw.strip().lower(), label_norm}
+    candidates = set()
+    for k in keys:
+        if k in FAMILY_SYNONYMS_shop3:
+            candidates.update(FAMILY_SYNONYMS_shop3[k])
+    if not candidates:
+        for _, toks in FAMILY_SYNONYMS_shop3.items():
+            if any((t == label_raw) or (t == label_norm) or (t in str(label_raw)) for t in toks):
+                candidates.update(toks)
+                break
+    return any(tok in str(color_raw) for tok in candidates)
+
+def _build_color_map_shop3(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict[str, Tuple[str, str]]]:
+    """
+    (model_norm, cap_gb) -> { color_norm: (part_number, color_raw) }
+    依赖 _load_iphone17_info_df_for_shop2()（含 color 列）
+    """
+    df = info_df.copy()
+    df["model_name_norm"] = df["model_name"].map(_normalize_model_generic)
+    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
+    df["color_norm"] = df["color"].map(lambda x: _norm(str(x)))
+    cmap: Dict[Tuple[str, int], Dict[str, Tuple[str, str]]] = {}
+    for _, r in df.iterrows():
+        m = r["model_name_norm"]
+        cap = r["capacity_gb"]
+        if not m or pd.isna(cap):
+            continue
+        key = (m, int(cap))
+        cmap.setdefault(key, {})
+        cmap[key][_norm(str(r["color"]))] = (str(r["part_number"]), str(r["color"]))
+    return cmap
+
 @register_cleaner("shop3")
 def clean_shop3(df: pd.DataFrame) -> pd.DataFrame:
     """
     输入列：
-      web-scraper-order, web-scraper-start-url, data4, data5, data6, data8, title, time-scraped
+      web-scraper-order, web-scraper-start-url, data4, data5, data6, data8, title, 减价1, time-scraped
     规则：
       - shop_name 固定 '買取一丁目'
       - title 含“机种名 + 容量” → 归一(model_norm) + 解析容量(capacity_gb)
-      - 通过 iphone17_info.csv 对应 (model_norm, capacity_gb) 获取“所有颜色”的 part_number 列表并展开
-      - data5 为新品 price_new（解析日元/区间）
+      - 通过 iphone17_info 对应 (model_norm, capacity_gb) 获取“所有颜色”的 part_number 并展开
+      - data5 为新品基准价 price_new（解析日元/区间）
+      - “减价1”里出现单色/多色的差额（±N円）时，对应颜色在基准价上加/减
       - time-scraped 为 recorded_at（为空行直接跳过）
-    输出：
-      part_number, shop_name, price_new, recorded_at
+    输出：part_number, shop_name, price_new, recorded_at
     """
-    info_df = _load_iphone17_info_df()  # -> part_number, model_name_norm, capacity_gb
-
     # 必要列检查
     need_cols = ["title", "data5", "time-scraped"]
     for c in need_cols:
         if c not in df.columns:
             raise ValueError(f"shop3 清洗器缺少必要列：{c}")
 
+    # 过滤掉 time-scraped 为空的行
     src = df.copy()
-
-    # 过滤：time-scraped 为空的行跳过，避免时间解析问题
     mask_time_ok = src["time-scraped"].astype(str).str.strip().ne("") & src["time-scraped"].notna()
     src = src[mask_time_ok]
     if src.empty:
         return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
 
-    # 1) 从 title 解析 机型 & 容量
+    # 载入信息表（含颜色）
+    info_df = _load_iphone17_info_df_for_shop2()
+    color_maps = _build_color_map_shop3(info_df)
+
+    # 解析 model/cap
     model_norm = src["title"].map(_normalize_model_generic)
     cap_gb     = src["title"].map(_parse_capacity_gb)
 
-    # 2) 价格 & 时间
-    price_new   = src["data5"].map(_price_from_shop3)
+    # 解析价格/时间
+    try:
+        base_price = src["data5"].map(_price_from_shop3)
+    except Exception:
+        base_price = src["data5"].map(to_int_yen)
     recorded_at = src["time-scraped"].map(parse_dt_aware)
 
-    # 3) (model_norm, capacity_gb) -> 所有颜色的 PN 列表
-    groups = (
-        info_df.groupby(["model_name_norm", "capacity_gb"])["part_number"]
-        .apply(list).to_dict()
-    )
+    # 减价文本（可能不存在）
+    remark = src.get("减价1") if "减价1" in src.columns else None
 
-    # 4) 展开为多行
     rows: List[dict] = []
     for i in range(len(src)):
         m = model_norm.iat[i]
         c = cap_gb.iat[i]
-        p = price_new.iat[i]
-        t = recorded_at.iat[i]
-
-        # 缺关键字段跳过
-        if not m or pd.isna(c) or p is None:
+        p0 = base_price.iat[i]
+        t  = recorded_at.iat[i]
+        if not m or pd.isna(c) or p0 is None:
             continue
 
-        pn_list = groups.get((m, int(c)), [])
-        if not pn_list:
-            # info 映射中无该型号/容量，跳过（服务层 unmatched 会统计）
+        key = (m, int(c))
+        cmap = color_maps.get(key)  # { color_norm: (pn, color_raw) }
+        if not cmap:
+            # 未收录（机型或容量不在信息表）
             continue
 
-        for pn in pn_list:
+        # 默认所有颜色 = 基准价
+        per_color_abs: Dict[str, int] = {}    # 若你后续想支持“绝对价”，可在此填入
+        per_color_delta: Dict[str, int] = {}
+
+        # 解析“减价1”中的差额
+        rem_text = str(remark.iat[i]) if remark is not None else ""
+        deltas = _extract_color_deltas_with_pending(rem_text)
+        if deltas:
+            for col_norm, (pn, col_raw) in cmap.items():
+                for label_raw, delta in deltas:
+                    if _label_matches_color_shop3(label_raw, col_raw, col_norm):
+                        per_color_delta[col_norm] = delta  # 多次命中以后者为准
+
+        # 生成输出：若存在绝对价则优先（此处暂无），否则 base±delta
+        for col_norm, (pn, col_raw) in cmap.items():
+            if col_norm in per_color_abs:
+                price_val = per_color_abs[col_norm]
+            else:
+                price_val = int(p0) + per_color_delta.get(col_norm, 0)
             rows.append({
                 "part_number": str(pn),
                 "shop_name": "買取一丁目",
-                "price_new": int(p),
+                "price_new": int(price_val),
                 "recorded_at": t,
             })
 
@@ -2147,6 +2285,41 @@ def _build_color_map_shop14(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict
         cmap[key][_norm(str(r["color"]))] = (str(r["part_number"]), str(r["color"]))
     return cmap
 
+# 颜色绝对价（无 +/- 号）：'銀206000' / '青 205,500' / 'シルバー：206000円' / '青¥205500'
+COLOR_ABS_PRICE_RE = re.compile(
+    r"""(?P<label>[^：:\-\s/、／¥円]+)\s*      # 颜色标签（不能以 +/- 开头）
+        (?:[:：]?\s*)                         # 可选分隔
+        (?:¥|￥)?\s*                          # 可选货币符号
+        (?P<amount>\d[\d,]*)\s*               # 金额
+        (?:円)?\s*$                           # 可选 '円'
+    """,
+    re.UNICODE | re.VERBOSE,
+)
+
+def _extract_color_abs_prices(text: str) -> List[Tuple[str, int]]:
+    """
+    从文本里提取若干 (label_raw, abs_price) 绝对价。
+    仅当片段中 **不含** '+' 或 '-' 时才视作绝对价，避免与差额冲突。
+    例：'銀206000,青205500' -> [('銀',206000), ('青',205500)]
+    """
+    out: List[Tuple[str, int]] = []
+    if not text:
+        return out
+    for part in [p.strip() for p in SPLIT_TOKENS_RE.split(str(text)) if p and p.strip()]:
+        # 有显式 + / - 的片段交给差额解析
+        if '+' in part or '-' in part or '－' in part or '−' in part:
+            continue
+        m = COLOR_ABS_PRICE_RE.search(part)
+        if not m:
+            continue
+        label = m.group("label").strip()
+        amt = to_int_yen(m.group("amount"))
+        if amt is None:
+            continue
+        out.append((label, int(amt)))
+    return out
+
+
 @register_cleaner("shop14")
 def clean_shop14(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -2199,8 +2372,8 @@ def clean_shop14(df: pd.DataFrame) -> pd.DataFrame:
         remark2 = row.get("减价条件2") or ""
         rec_at = parse_dt_aware(row.get("time-scraped"))
 
-        # 优先处理“全色”
-        all_delta = _has_all_colors_shop14(remark2)
+        # 先看“全色”
+        all_delta = _has_all_colors(remark2)
         if all_delta is not None:
             final_price = base_price + all_delta
             for _col_norm, (pn, _raw) in color_map.items():
@@ -2212,21 +2385,34 @@ def clean_shop14(df: pd.DataFrame) -> pd.DataFrame:
                 })
             continue
 
-        # 否则逐色差额
-        labels_and_deltas = _extract_color_deltas_shop14(remark2)
+        # 解析颜色“绝对价”和“差额”
+        abs_list = _extract_color_abs_prices(remark2)  # [('銀',206000), ('青',205500)]
+        labels_and_deltas = _extract_color_deltas(remark2)  # [('銀',-3000), ...]
+        color_abs: Dict[str, int] = {}
         color_deltas: Dict[str, int] = {}
+
+        if abs_list:
+            for col_norm, (pn, col_raw) in color_map.items():
+                for label_raw, abs_price in abs_list:
+                    if _label_matches_color(label_raw, col_raw, col_norm):
+                        color_abs[col_norm] = abs_price  # 绝对价优先
+
         if labels_and_deltas:
             for col_norm, (pn, col_raw) in color_map.items():
                 for label_raw, delta in labels_and_deltas:
-                    if _label_matches_color_shop14(label_raw, col_raw, col_norm):
-                        color_deltas[col_norm] = delta  # 多命中时以后者为准
+                    if _label_matches_color(label_raw, col_raw, col_norm):
+                        color_deltas[col_norm] = delta
 
+        # 生成：若有绝对价，用绝对价；否则用 基准价±差额；都没有则用基准价
         for col_norm, (pn, col_raw) in color_map.items():
-            delta = color_deltas.get(col_norm, 0)
+            if col_norm in color_abs:
+                price_val = color_abs[col_norm]
+            else:
+                price_val = base_price + color_deltas.get(col_norm, 0)
             rows.append({
                 "part_number": pn,
                 "shop_name": "買取楽園",
-                "price_new": int(base_price + delta),
+                "price_new": int(price_val),
                 "recorded_at": rec_at,
             })
 
@@ -2883,7 +3069,7 @@ def _pick_unopened_section(text: str) -> str:
 
 # ---- 颜色差额解析 ----
 # 支持：'シルバー-3000' / 'Blue-3000' / 'Black(黒)-1000' / 'スターライト -1000' / 'ホワイト-なし'
-COLOR_DELTA_RE = re.compile(
+COLOR_DELTA_RE_shop17 = re.compile(
     r"""(?P<label>[^：:\-\s/、／\n]+(?:\([^)]*\))?)\s*
         (?P<sep>[：:\-])?\s*
         (?P<sign>[+\-−－])?\s*
@@ -2901,7 +3087,7 @@ COLOR_NONE_RE_shop17 = re.compile(
     re.UNICODE | re.VERBOSE,
 )
 
-SPLIT_TOKENS_RE = re.compile(r"[／/、，,]|(?:\s*;\s*)|\n")
+SPLIT_TOKENS_RE_shop17 = re.compile(r"[／/、，,]|(?:\s*;\s*)|\n")
 
 def _normalize_label_shop17(lbl: str) -> str:
     return re.sub(r"[\s\u3000\xa0]+", "", lbl or "")
@@ -2927,7 +3113,7 @@ def _extract_color_deltas_shop17(text: str) -> List[Tuple[str, int]]:
     if re.fullmatch(r"\s*(?:なし|減額なし)\s*", s):
         return out
 
-    parts = [p.strip() for p in SPLIT_TOKENS_RE.split(s) if p and p.strip()]
+    parts = [p.strip() for p in SPLIT_TOKENS_RE_shop17.split(s) if p and p.strip()]
     if not parts:
         parts = [s.strip()]
 
@@ -2941,7 +3127,7 @@ def _extract_color_deltas_shop17(text: str) -> List[Tuple[str, int]]:
             continue
 
         # 'ラベル ± 金額'
-        for m in COLOR_DELTA_RE.finditer(part):
+        for m in COLOR_DELTA_RE_shop17.finditer(part):
             label = _normalize_label_shop17(m.group("label"))
             if not label:
                 continue
@@ -3019,7 +3205,7 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
             shop_name = SHOP_NAME_OVERRIDE
         else:
             start_url = str(row.get("web-scraper-start-url") or "")
-            netloc = urlparse(start_url).netloc or "shop20"
+            netloc = urlparse(start_url).netloc or "shop17"
             shop_name = netloc
 
         rec_at = parse_dt_aware(row.get("time-scraped"))
@@ -3030,7 +3216,7 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
             delta = color_deltas.get(col_norm, 0)
             rows.append({
                 "part_number": pn,
-                "shop_name": shop_name,
+                "shop_name": "ゲストモバイル",
                 "price_new": int(base_price + delta),
                 "recorded_at": rec_at,
             })
@@ -3040,6 +3226,7 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
         out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
         out["part_number"] = out["part_number"].astype(str)
         out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
+
     return out
 #
 #
