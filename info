@@ -193,5 +193,23 @@ docker compose logs -f nginx
 
 
 
+shop1---->ok
+shop2---->ok
+shop3---->ok
+shop4---->ok
+shop5---->ok
+shop6---->ok
+shop7---->取得数据有问题，颜色待修改
+shop8---->ok
+shop9---->ok
+shop10--->ok
+shop11--->403，原因未明
+shop12--->ok
+shop13--->ok
+shop14--->ok
+shop15--->减价信息在价格栏
+shop16--->ok
+shop18--->ok
+shop20--->ok
 
 

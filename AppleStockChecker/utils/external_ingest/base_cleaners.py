@@ -2427,35 +2427,22 @@ def clean_shop14(df: pd.DataFrame) -> pd.DataFrame:
 
 
 
-# 基础价：抓取 price 中首个 “N円”
-FIRST_YEN_RE = re.compile(r"(\d[\d,]*)\s*円")
-
-# 捕获 label 与差额，支持：'ブルー -2500' / 'ブルー：-2,000円' / '銀+1000' / '橙/銀+1000'
-# 关键点：分隔符 sep 可缺省；若 sign 缺省而 sep='-' 则按负数处理
-COLOR_DELTA_PRICE_RE = re.compile(
-    r"""(?P<label>[^\d：:\-\s/、／円]+)\s*
-        (?P<sep>[：:\-])?\s*
-        (?P<sign>[+\-−－])?\s*
-        (?P<amount>\d[\d,]*)\s*(円)?
+FIRST_YEN_RE_shop15 = re.compile(r"(\d[\d,]*)\s*円")  # 抓取 price 中第一个 “N円”（作为基准价）
+# 颜色差额：'ブルー-9,000円' / 'シルバー　-7,500円' / 'ブルー -4,000'
+COLOR_DELTA_IN_PRICE_RE_shop15 = re.compile(
+    r"""(?P<label>[^\d：:\-\s/、／円¥]+)\s*   # 颜色标签
+        (?P<sep>[：:\-])? \s*                # 分隔符（可无）
+        (?P<sign>[+\-−－])? \s*              # 正负号（可无）
+        (?P<amount>\d[\d,]*) \s* (?:円)?     # 金额（可跟円）
     """,
     re.UNICODE | re.VERBOSE,
 )
 SPLIT_TOKENS_RE_shop15 = re.compile(r"[／/、，,]|(?:\s*;\s*)")
 
+
 # 颜色家族同义词（含英文键与日文键，便于“青/銀/橙”等反向命中）
 FAMILY_SYNONYMS_shop15= {
     # blue
-    "blue": ["ブルー", "青"],
-    "ブルー": ["ブルー", "青"],
-    "青": ["ブルー", "青"],
-    # black
-    "black": ["ブラック", "黒"],
-    "ブラック": ["ブラック", "黒"],
-    "黒": ["ブラック", "黒"],
-    # white
-    "white": ["ホワイト", "白"],
-    "ホワイト": ["ホワイト", "白"],
-    "白": ["ホワイト", "白"],
     # green
     "green": ["グリーン", "緑"],
     "グリーン": ["グリーン", "緑"],
@@ -2480,21 +2467,35 @@ FAMILY_SYNONYMS_shop15= {
     "オレンジ": ["オレンジ", "橙"],
     "橙": ["オレンジ", "橙"],
     # silver
-    "silver": ["シルバー", "銀"],
-    "シルバー": ["シルバー", "銀"],
-    "銀": ["シルバー", "銀"],
-    # gold
-    "gold": ["ゴールド", "金"],
-    "ゴールド": ["ゴールド", "金"],
     "金": ["ゴールド", "金"],
     # gray
-    "gray": ["グレー", "グレイ", "灰"],
-    "グレー": ["グレー", "グレイ", "灰"],
     "グレイ": ["グレー", "グレイ", "灰"],
     "灰": ["グレー", "グレイ", "灰"],
     # natural
     "natural": ["ナチュラル"],
     "ナチュラル": ["ナチュラル"],
+    # blue
+    "blue": ["ブルー", "青", "ディープブルー", "スカイブルー", "ミストブルー", "マリン"],
+    "ブルー": ["ブルー", "青", "ディープブルー", "スカイブルー", "ミストブルー", "マリン"],
+    "青": ["ブルー", "青", "ディープブルー", "スカイブルー", "ミストブルー", "マリン"],
+    "ディープブルー": ["ディープブルー", "ブルー", "青"],
+    # silver
+    "silver": ["シルバー", "銀"],
+    "シルバー": ["シルバー", "銀"],
+    "銀": ["シルバー", "銀"],
+    # 其他常见
+    "black": ["ブラック", "黒"],
+    "ブラック": ["ブラック", "黒"],
+    "黒": ["ブラック", "黒"],
+    "white": ["ホワイト", "白", "スターライト"],
+    "ホワイト": ["ホワイト", "白", "スターライト"],
+    "白": ["ホワイト", "白", "スターライト"],
+    "スターライト": ["ホワイト", "白", "スターライト"],
+    "gold": ["ゴールド", "金", "ライトゴールド"],
+    "ゴールド": ["ゴールド", "金", "ライトゴールド"],
+    "ライトゴールド": ["ゴールド", "金", "ライトゴールド"],
+    "gray": ["グレー", "グレイ", "灰"],
+    "グレー": ["グレー", "グレイ", "灰"],
 }
 
 def _extract_base_price(text: str) -> Optional[int]:
@@ -2502,89 +2503,51 @@ def _extract_base_price(text: str) -> Optional[int]:
         return None
     m = FIRST_YEN_RE.search(str(text))
     if not m:
-        return to_int_yen(text)  # 兜底
+        return to_int_yen(text)
     return to_int_yen(m.group(1))
 
 def _extract_color_deltas_from_price(text: str) -> List[Tuple[str, int]]:
     """
-    从 price 文本提取 [(label_raw, delta_int)]。
-    示例：
-      '180,500円 ブルー　-2500'  -> [('ブルー', -2500)]
-      '219,500円　ブルー-1000' -> [('ブルー', -1000)]
-      '246,000円 橙/銀+1000'   -> [('橙', +1000), ('銀', +1000)]
+    从 price 文本中抽取若干 (label_raw, delta_int)。
+    先去掉第一个“基准价 N円”，在剩余文字里用 finditer 捕获所有“颜色±金额”。
+    负号判定：显式 sign 优先；若 sign 缺省且 sep='-'，按负数处理。
     """
     out: List[Tuple[str, int]] = []
     if not text:
         return out
-    # 去掉首个“基础价 N円”，余下部分用于差额解析（避免误匹配金额）
     s = str(text)
-    s_tail = s
-    m0 = FIRST_YEN_RE.search(s)
-    if m0:
-        s_tail = s[m0.end():]
+    m0 = FIRST_YEN_RE_shop15.search(s)
+    tail = s[m0.end():] if m0 else s
 
-    # 先用分隔符拆段，再逐段匹配
-    parts = [p.strip() for p in SPLIT_TOKENS_RE_shop15.split(s_tail) if p and p.strip()]
-    if not parts:
-        parts = [s_tail.strip()]
-    for part in parts:
-        for m in COLOR_DELTA_PRICE_RE.finditer(part):
-            label = (m.group("label") or "").strip()
-            if not label:
-                continue
-            sep = m.group("sep")
-            sign = m.group("sign")
-            amt = to_int_yen(m.group("amount"))
-            if amt is None:
-                continue
-            if sign:
-                negative = sign in ("-", "−", "－")
-            else:
-                negative = sep in ("-", "−", "－") if sep else False
-            delta = -int(amt) if negative else int(amt)
-            out.append((label, delta))
+    # 为兼容 “　”（全角空格）等情况，不强制切片，直接全串 finditer
+    for m in COLOR_DELTA_IN_PRICE_RE_shop15.finditer(tail):
+        label = (m.group("label") or "").strip()
+        if not label:
+            continue
+        sep = m.group("sep")
+        sign = m.group("sign")
+        amt = to_int_yen(m.group("amount"))
+        if amt is None:
+            continue
+        if sign:
+            negative = sign in ("-", "−", "－")
+        else:
+            negative = sep in ("-", "−", "－") if sep else False
+        delta = -int(amt) if negative else int(amt)
+        out.append((label, delta))
     return out
 
-def _label_matches_color_shop15(label_raw: str, color_raw: str, color_norm: str) -> bool:
+def _build_color_map_shop15(info_df: pd.DataFrame) -> Dict[tuple, Dict[str, Tuple[str, str]]]:
     """
-    宽松匹配 label 是否命中颜色：
-      1) 归一化精确相等
-      2) label_raw 是 color_raw 的子串
-      3) 同义族：label（英文或日文，如 'blue'/'ブルー'/'青'/'銀'/'橙'）映射到族内日文关键词，
-         只要任意一个关键词出现在 color_raw 中即可命中
-    """
-    label_norm = _norm(label_raw)
-    if label_norm == color_norm:
-        return True
-    if label_raw and str(label_raw) in str(color_raw):
-        return True
-
-    keys = {label_raw.strip(), label_raw.strip().lower(), label_norm}
-    candidates = set()
-    for k in keys:
-        if k in FAMILY_SYNONYMS_shop15:
-            candidates.update(FAMILY_SYNONYMS_shop15[k])
-    if not candidates:
-        # 反查：把 label 当作族内词，在 FAMILY_SYNONYMS 的 values 里找家族
-        for fam, tokens in FAMILY_SYNONYMS_shop15.items():
-            if any(t == label_raw or t == label_norm or t in str(label_raw) for t in tokens):
-                candidates.update(tokens)
-                break
-
-    return any(tok in str(color_raw) for tok in candidates)
-
-def _build_color_map_shop15(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict[str, Tuple[str, str]]]:
-    """
-    构建 (model_norm, cap_gb) -> { color_norm: (part_number, color_raw) }
+    (model_norm, cap_gb) -> { color_norm: (part_number, color_raw) }
     """
     df = info_df.copy()
     df["model_name_norm"] = df["model_name"].map(_normalize_model_generic)
     df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
     df["color_norm"] = df["color"].map(lambda x: _norm(str(x)))
-    cmap: Dict[Tuple[str, int], Dict[str, Tuple[str, str]]] = {}
+    cmap: Dict[tuple, Dict[str, Tuple[str, str]]] = {}
     for _, r in df.iterrows():
-        m = r["model_name_norm"]
-        cap = r["capacity_gb"]
+        m = r["model_name_norm"]; cap = r["capacity_gb"]
         if not m or pd.isna(cap):
             continue
         key = (m, int(cap))
@@ -2596,15 +2559,14 @@ def _build_color_map_shop15(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict
 def clean_shop15(df: pd.DataFrame) -> pd.DataFrame:
     """
     输入 (shop15.csv):
-      - data2: 机型（如 'iPhone 17 Pro 256GB'）
-      - price: 基础价格 + 颜色差额（如 '180,500円 ブルー　-2500'）
+      - data2: 机型（如 'iPhone 17 Pro Max 256GB'）
+      - price: 基准价 + 颜色差额（如 '213,500円　ブルー-9,000円　シルバー-7,500円'）
       - time-scraped: 抓取时间
     输出:
       - part_number, shop_name(=買取当番), price_new, recorded_at
     规则：
-      - 仅输出出现在 _load_iphone17_info_df_for_shop2() 的（机型, 容量, 颜色）
-      - 若 price 中含若干“颜色±金额”，则命中颜色用 base+delta，未命中颜色用 base
-      - 若未出现任何颜色差额，则所有颜色均用 base
+      - 仅输出信息表存在的（机型, 容量, 颜色）
+      - 命中的颜色：price = base + delta；未命中的颜色：price = base
     """
     # 必要列检查
     for c in ["price", "data2", "time-scraped"]:
@@ -2626,11 +2588,9 @@ def clean_shop15(df: pd.DataFrame) -> pd.DataFrame:
         if not model_norm or pd.isna(cap_gb):
             continue
         cap_gb = int(cap_gb)
-
         key = (model_norm, cap_gb)
         color_map = cmap_all.get(key)
         if not color_map:
-            # 信息表内没有该（机型, 容量）→ 跳过
             continue
 
         price_text = row.get("price")
@@ -2639,18 +2599,18 @@ def clean_shop15(df: pd.DataFrame) -> pd.DataFrame:
             continue
         base_price = int(base_price)
 
-        # 解析 price 中的颜色差额
+        # 解析颜色差额
         labels_and_deltas = _extract_color_deltas_from_price(price_text)
         color_deltas: Dict[str, int] = {}
         if labels_and_deltas:
             for col_norm, (pn, col_raw) in color_map.items():
                 for label_raw, delta in labels_and_deltas:
-                    if _label_matches_color_shop15(label_raw, col_raw, col_norm):
+                    if _label_matches_color(label_raw, col_raw, col_norm):
                         color_deltas[col_norm] = delta  # 多命中时以后者为准
 
         rec_at = parse_dt_aware(row.get("time-scraped"))
 
-        # 生成行：未命中的颜色用基础价
+        # 生成行：未命中的颜色用基准价
         for col_norm, (pn, col_raw) in color_map.items():
             delta = color_deltas.get(col_norm, 0)
             rows.append({
@@ -2666,7 +2626,6 @@ def clean_shop15(df: pd.DataFrame) -> pd.DataFrame:
         out["part_number"] = out["part_number"].astype(str)
         out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
     return out
-
 
 # ---------- 颜色词族 / 解析 ----------
 # 价格中的首个“￥/円”作为基础价
