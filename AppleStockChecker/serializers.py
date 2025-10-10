@@ -3,6 +3,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from .models import Iphone, OfficialStore, InventoryRecord
 from .models import SecondHandShop, PurchasingShopPriceRecord
+from .models import PurchasingShopTimeAnalysis
 User = get_user_model()
 
 class UserSerializer(serializers.ModelSerializer):
@@ -154,3 +155,99 @@ class PurchasingShopPriceRecordSerializer(serializers.ModelSerializer):
             if val is not None and val <= 0:
                 raise serializers.ValidationError({fld: "必须为正整数或留空。"})
         return attrs
+
+
+class PurchasingShopTimeAnalysisSerializer(serializers.ModelSerializer):
+    # 写入用：外键 id
+    shop_id = serializers.PrimaryKeyRelatedField(
+        source="shop", queryset=SecondHandShop.objects.all(), write_only=True
+    )
+    iphone_id = serializers.PrimaryKeyRelatedField(
+        source="iphone", queryset=Iphone.objects.all(), write_only=True
+    )
+
+    # 只读：店铺快照（给前端直接显示）
+    shop = serializers.SerializerMethodField(read_only=True)
+    # 只读：iPhone 关键规格（给前端直接显示/筛选标签）
+    iphone = serializers.SerializerMethodField(read_only=True)
+
+    id = serializers.IntegerField(read_only=True)
+    created_at = serializers.DateTimeField(source="Warehouse_Receipt_Time", read_only=True)
+
+    class Meta:
+        model = PurchasingShopTimeAnalysis
+        fields = [
+            "id",
+            "Batch_ID",
+            "Job_ID",
+            "Original_Record_Time_Zone",
+            "Timestamp_Time_Zone",
+            "Record_Time",
+            "Timestamp_Time",
+            "Alignment_Time_Difference",
+            "Update_Count",
+            "New_Product_Price",
+            "Price_A",
+            "Price_B",
+            "created_at",
+            # 外键：写入 id、读取展开对象
+            "shop_id", "iphone_id",
+            "shop", "iphone",
+        ]
+        read_only_fields = ["Update_Count", "created_at", "shop", "iphone"]
+
+    # —— 展开读取用的快照字段 —— #
+    def get_shop(self, obj):
+        s = obj.shop
+        return {
+            "id": s.id,
+            "name": s.name,
+            "website": s.website,
+            "address": s.address,
+        }
+
+    def get_iphone(self, obj):
+        p = obj.iphone
+        return {
+            "id": p.id,
+            "part_number": p.part_number,   # 唯一编码
+            "jan": p.jan,
+            "model_name": p.model_name,
+            "capacity_gb": p.capacity_gb,
+            "color": p.color,
+            "release_date": p.release_date,
+            # 便于前端直接显示 “256GB/1TB”
+            "capacity_label": (f"{p.capacity_gb // 1024}TB"
+                               if p.capacity_gb % 1024 == 0 else f"{p.capacity_gb}GB"),
+            "label": f"{p.model_name} {p.color}",
+        }
+
+    # —— 可选一致性校验（与你之前思路一致） —— #
+    def validate(self, attrs):
+        rt = attrs.get("Record_Time")
+        ts = attrs.get("Timestamp_Time")
+        diff = attrs.get("Alignment_Time_Difference")
+        if rt and ts and diff is not None:
+            actual = int((rt - ts).total_seconds())
+            if abs(actual - diff) > 1:
+                raise serializers.ValidationError(
+                    {"Alignment_Time_Difference": f"应与 Record_Time - Timestamp_Time 的秒差匹配，实际为 {actual}。"}
+                )
+        return attrs
+
+
+class PSTACompactSerializer(serializers.ModelSerializer):
+    # 注意：只发前端立刻要用的关键字段，避免消息太大
+    shop = serializers.CharField(source="shop.name", read_only=True)
+    iphone = serializers.CharField(source="iphone.part_number", read_only=True)
+
+    class Meta:
+        model = PurchasingShopTimeAnalysis
+        fields = [
+            "id",
+            "Timestamp_Time",           # 同一批的共同时间戳
+            "shop", "iphone",           # 读友好
+            "shop_id", "iphone_id",     # 写/查友好
+            "New_Product_Price", "Price_A", "Price_B",
+            "Alignment_Time_Difference",
+        ]

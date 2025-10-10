@@ -193,6 +193,19 @@ docker compose logs -f nginx
 
 
 
+
+brew services start redis
+python manage.py runserver 127.0.0.1:8000
+celery -A YamagotiProjects worker -l info
+celery -A YamagotiProjects beat -l info
+
+celery -A YamagotiProjects flower --port=5555
+
+
+celery -A YamagotiProjects beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+
+
+
 shop1---->ok
 shop2---->ok
 shop3---->ok

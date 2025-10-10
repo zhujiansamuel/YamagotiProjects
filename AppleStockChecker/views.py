@@ -61,7 +61,13 @@ from rest_framework.permissions import AllowAny
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from AppleStockChecker.tasks.webscraper_tasks import task_ingest_json_shop1
-
+from rest_framework import viewsets, mixins
+from rest_framework.permissions import IsAuthenticatedOrReadOnly
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import OrderingFilter
+from .models import PurchasingShopTimeAnalysis
+from .serializers import PurchasingShopTimeAnalysisSerializer
+from .filters import PurchasingShopTimeAnalysisFilter
 
 class PlainTextParser(BaseParser):
     media_type = 'text/plain'
@@ -1619,5 +1625,31 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
         )
         return Response({"accepted": True, "task_id": task.id, "batch_id": str(batch_uuid)},
                         status=status.HTTP_202_ACCEPTED)
+
+
+
+class PurchasingShopTimeAnalysisViewSet(
+    mixins.CreateModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.ListModelMixin,
+    viewsets.GenericViewSet,
+):
+    queryset = (PurchasingShopTimeAnalysis.objects
+                .select_related("shop", "iphone")
+                .all())
+    serializer_class = PurchasingShopTimeAnalysisSerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    filterset_class = PurchasingShopTimeAnalysisFilter
+    ordering_fields = [
+        "Timestamp_Time",
+        "Warehouse_Receipt_Time",
+        "New_Product_Price",
+        "Price_A",
+        "Price_B",
+        "Update_Count",
+    ]
+    ordering = ["-Timestamp_Time"]
 
 
