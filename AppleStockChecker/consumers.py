@@ -12,6 +12,7 @@ def group_for_stream(shop_id: int, iphone_id: int) -> str:
 
 class TaskProgressConsumer(AsyncWebsocketConsumer):
     async def connect(self):
+        print("我在TaskProgressConsumer.connect里面了")
         self.sub_groups = set()
         user = self.scope.get("user")
         signed = self.scope.get("ws_signed", False)  # 如果你用了签名URL中间件
@@ -24,6 +25,7 @@ class TaskProgressConsumer(AsyncWebsocketConsumer):
         await self._join(group_for_all())
 
     async def disconnect(self, code):
+        print("我在TaskProgressConsumer.disconnect里面了")
         for g in getattr(self, "sub_groups", set()):
             try:
                 await self.channel_layer.group_discard(g, self.channel_name)
@@ -31,6 +33,7 @@ class TaskProgressConsumer(AsyncWebsocketConsumer):
                 pass
 
     async def receive(self, text_data=None, bytes_data=None):
+        print("我在TaskProgressConsumer.receive里面了")
         """
         客户端协议：
         {"action":"subscribe_all"}

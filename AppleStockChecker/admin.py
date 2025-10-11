@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import SecondHandShop, PurchasingShopPriceRecord, Iphone, OfficialStore, InventoryRecord
+from .models import SecondHandShop, PurchasingShopPriceRecord, Iphone, OfficialStore, InventoryRecord,PurchasingShopTimeAnalysis
 
 
 @admin.register(Iphone)
@@ -61,4 +61,27 @@ class PurchasingShopPriceRecordAdmin(admin.ModelAdmin):
     )
     date_hierarchy = "recorded_at"
     ordering = ("-recorded_at",)
+    autocomplete_fields = ("shop", "iphone")
+
+
+@admin.register(PurchasingShopTimeAnalysis)
+class PurchasingShopTimeAnalysisAdmin(admin.ModelAdmin):
+    list_display = (
+        "shop",
+        "iphone",
+        "New_Product_Price",
+        "Timestamp_Time",
+        "Record_Time",
+    )
+    list_filter = ("shop", "iphone","Timestamp_Time")
+    search_fields = (
+        "shop__name",
+        "shop__address",
+        "iphone__part_number",
+        "iphone__model_name",
+        "iphone__color",
+        "Timestamp_Time"
+    )
+    date_hierarchy = "Timestamp_Time"
+    ordering = ("-Timestamp_Time",)
     autocomplete_fields = ("shop", "iphone")

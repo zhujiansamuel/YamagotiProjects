@@ -21,7 +21,7 @@ from .views_frontend import PriceMatrixView, ResaleTrendColorsMergedView, Templa
 from .api_trends_TrendsAvgOnly import TrendsAvgOnlyApiView
 from .api_trends_model_colors import trends_model_colors
 from .api_trends_color_std import TrendsColorStdApiView
-from .api import dispatch_generate_analysis, dispatch_psta_batch_same_ts
+from .api import dispatch_psta_batch_same_ts
 
 router = DefaultRouter()
 router.register(r"iphones", IphoneViewSet, basename="iphone")
@@ -60,7 +60,6 @@ urlpatterns = [
                   path("api/trends/model-color/std/", TrendsColorStdApiView.as_view(), name="trends-color-std"),
                   path("api/trends/model-colors/avg-only/", TrendsAvgOnlyApiView.as_view(), name="trends-avg-only"),
                   path("analysis-dashboard/", AnalysisDashboardView.as_view(), name="analysis-dashboard/"),
-                  path("purchasing-time-analyses/dispatch/", dispatch_generate_analysis),
                   path("purchasing-time-analyses/dispatch_ts/", dispatch_psta_batch_same_ts),
 
               ] + urlpatterns

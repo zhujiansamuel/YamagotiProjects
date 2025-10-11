@@ -228,8 +228,8 @@ class PurchasingShopTimeAnalysis(models.Model):
 
     Original_Record_Time_Zone = models.CharField("原始记录时区",max_length=10)
     Timestamp_Time_Zone = models.CharField("时间戳时区",max_length=10,null=False, blank=False)
-    Record_Time = models.DateTimeField("时间戳时间", null=False,blank=False)
-    Timestamp_Time = models.DateTimeField("记录时间", null=False,blank=False, db_index=True)
+    Record_Time = models.DateTimeField("原始记录时间", null=False,blank=False)
+    Timestamp_Time = models.DateTimeField("时间戳时间", null=False,blank=False, db_index=True)
     Alignment_Time_Difference = models.IntegerField("对齐时间差（s）", null=False,blank=False)
     Update_Count = models.IntegerField("更新次数",default=0)
 
@@ -250,7 +250,7 @@ class PurchasingShopTimeAnalysis(models.Model):
     New_Product_Price = models.PositiveIntegerField("新品卖取价格(円)")
     Price_A = models.PositiveIntegerField("A品卖取价格(円)", null=True, blank=True)
     Price_B = models.PositiveIntegerField("B品卖取价格(円)", null=True, blank=True)
-    Warehouse_Receipt_Time = models.DateTimeField("记录时间", auto_now_add=True)
+    Warehouse_Receipt_Time = models.DateTimeField("落库时间", auto_now_add=True)
 
     class Meta:
         verbose_name = "二手店回收价格记录对齐表"

@@ -48,7 +48,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "rest_framework",
     "drf_spectacular",
-    'easyaudit',
+    # 'easyaudit',
     "django_celery_beat",     # 定时任务(可在Admin里改间隔/暂停)
     "django_celery_results",  # 可选：任务结果持久化到DB
 
@@ -158,10 +158,13 @@ WSGI_APPLICATION = 'YamagotiProjects.wsgi.application'
 
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
+  "default": {
+      "ENGINE": "django.db.backends.sqlite3",
+      "NAME": BASE_DIR / "db.sqlite3",
+      "OPTIONS": {
+          "timeout": 10,   # SQLite 层面的等待时间（秒），配合 busy_timeout 再保险
+      },
+  }
 }
 #
 # USE_SQLITE = os.getenv("USE_SQLITE", "0").lower() in {"1", "true", "t", "yes", "y"}
@@ -423,78 +426,83 @@ SIMPLEPRO_INFO = True
 SIMPLEPRO_FK_ASYNC_DATA = True
 
 # SIMPLEUI_HOME_PAGE = "/admin-home"
-# SIMPLEUI_HOME_ICON = 'fa fa-user'
+SIMPLEUI_HOME_ICON = 'fa fa-user'
 
-# SIMPLEUI_CONFIG = {
-#     'system_keep': True,
-#     'dynamic': False,
-#     'menu_display': ['iPhone関連データ', ],
-#     'menus':
-#         [
-#             {
-#                 'name': 'iPhone関連データ',
-#                 'icon': 'fa-solid fa-mobile-screen-button',
-#                 'models': [{'name': '中古店価格推移(',
-#                             'icon': 'fa-solid fa-chart-line',
-#                             'url': '/AppleStockChecker/analysis-dashboard/',
-#                             },
-#                            {'name': '価格推移(Model別)',
-#                             'icon': 'fa-solid fa-chart-line',
-#                             'url': '/AppleStockChecker/resale-trend-colors-merged/',
-#                             },
-#                            {'name': '中古店価格ボード',
-#                             'icon': 'fa-solid fa-table-columns',
-#                             'url': '/AppleStockChecker/price-matrix/',
-#                             },
-#                            {'name': 'iPhone公式在庫表',
-#                             'icon': 'fa-solid fa-warehouse',
-#                             'url': '/AppleStockChecker/price-matrix/',
-#                             },
-#
-#                            {'name': '中古店価格メタデータ',
-#                             'icon': 'fa-solid fa-database',
-#                             'models': [{'name': 'iPhoneモデル',
-#                                         'icon': 'fa-solid fa-mobile-button',
-#                                         'url': '/admin/AppleStockChecker/iphone/',
-#                                         },
-#                                        {'name': '中古店',
-#                                         'icon': 'fa-solid fa-shop',
-#                                         'url': '/admin/AppleStockChecker/secondhandshop/'
-#                                         },
-#                                        {'name': '中古店価格記録',
-#                                         'icon': 'fa-solid fa-money-check-dollar',
-#                                         'url': '/admin/AppleStockChecker/purchasingshoppricerecord/'
-#                                         },
-#                                        ]
-#                             },
-#                            {'name': 'iPhone公式在庫メタデータ',
-#                             'icon': 'fa-solid fa-file-contract',
-#                             'models': [{'name': 'Apple公式ストア',
-#                                         'icon': 'fa-solid fa-store',
-#                                         'url': '/admin/AppleStockChecker/officialstore/',
-#                                         },
-#                                        {'name': 'iphone官方在库記録',
-#                                         'icon': 'fa-solid fa-truck-ramp-box',
-#                                         'url': '/admin/AppleStockChecker/inventoryrecord/'
-#                                         },
-#                                        ]
-#                             },
-#                            # {'name': 'TryForSomething',
-#                            #  'icon': 'fa-solid fa-file-contract',
-#                            #  'models': [{'name': 'chatjs',
-#                            #              'icon': 'fa-solid fa-store',
-#                            #              'url': '/AppleStockChecker/template-chartjs/',
-#                            #              },
-#                            #             {'name': 'iphone官方在库記録',
-#                            #              'icon': 'fa-solid fa-truck-ramp-box',
-#                            #              'url': '/admin/AppleStockChecker/inventoryrecord/'
-#                            #              },
-#                            #             ]
-#                            #  },
-#                            ]
-#             },
-#
-#         ]}
+SIMPLEUI_CONFIG = {
+    'system_keep': True,
+    'dynamic': False,
+    'menu_display': ['iPhone関連データ', ],
+    'menus':
+        [
+            {
+                'name': 'iPhone関連データ',
+                'icon': 'fa-solid fa-mobile-screen-button',
+                'models': [{'name': '中古店価格推移(',
+                            'icon': 'fa-solid fa-chart-line',
+                            'url': '/AppleStockChecker/analysis-dashboard/',
+                            },
+                           {'name': '価格推移(Model別)',
+                            'icon': 'fa-solid fa-chart-line',
+                            'url': '/AppleStockChecker/resale-trend-colors-merged/',
+                            },
+                           {'name': '中古店価格ボード',
+                            'icon': 'fa-solid fa-table-columns',
+                            'url': '/AppleStockChecker/price-matrix/',
+                            },
+                           {'name': 'iPhone公式在庫表',
+                            'icon': 'fa-solid fa-warehouse',
+                            'url': '/AppleStockChecker/price-matrix/',
+                            },
+
+                           {'name': '中古店価格メタデータ',
+                            'icon': 'fa-solid fa-database',
+                            'models': [{'name': 'iPhoneモデル',
+                                        'icon': 'fa-solid fa-mobile-button',
+                                        'url': '/admin/AppleStockChecker/iphone/',
+                                        },
+                                       {'name': '中古店',
+                                        'icon': 'fa-solid fa-shop',
+                                        'url': '/admin/AppleStockChecker/secondhandshop/'
+                                        },
+                                       {'name': '中古店価格記録',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/purchasingshoppricerecord/'
+                                        },
+                                        {'name': '价格整形记录',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/purchasingshoptimeanalysis/'
+                                        },
+
+                                       ]
+                            },
+                           {'name': 'iPhone公式在庫メタデータ',
+                            'icon': 'fa-solid fa-file-contract',
+                            'models': [{'name': 'Apple公式ストア',
+                                        'icon': 'fa-solid fa-store',
+                                        'url': '/admin/AppleStockChecker/officialstore/',
+                                        },
+                                       {'name': 'iphone官方在库記録',
+                                        'icon': 'fa-solid fa-truck-ramp-box',
+                                        'url': '/admin/AppleStockChecker/inventoryrecord/'
+                                        },
+                                       ]
+                            },
+                           # {'name': 'TryForSomething',
+                           #  'icon': 'fa-solid fa-file-contract',
+                           #  'models': [{'name': 'chatjs',
+                           #              'icon': 'fa-solid fa-store',
+                           #              'url': '/AppleStockChecker/template-chartjs/',
+                           #              },
+                           #             {'name': 'iphone官方在库記録',
+                           #              'icon': 'fa-solid fa-truck-ramp-box',
+                           #              'url': '/admin/AppleStockChecker/inventoryrecord/'
+                           #              },
+                           #             ]
+                           #  },
+                           ]
+            },
+
+        ]}
 
 # --- 本地开发：允许 Session 认证 + JWT；生产保持只有 JWT ---
 if os.getenv("DJANGO_ENV", "dev") == "dev":
