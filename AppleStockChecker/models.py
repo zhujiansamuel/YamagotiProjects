@@ -221,17 +221,18 @@ class PurchasingShopTimeAnalysis(models.Model):
     Batch_ID = models.UUIDField(
         "批次ID",
         null=True, blank=True, db_index=True, editable=False,
-        help_text="一次导入/任务的批次标识（uuid4）"
+        help_text="一次导入/任务的批次标识（uuid4）",
+        db_column = "batch_id",
     )
-    Job_ID = models.CharField("Job_ID",max_length=255, editable=False)
+    Job_ID = models.CharField("Job_ID",max_length=255, editable=False,db_column = "job_id")
 
 
-    Original_Record_Time_Zone = models.CharField("原始记录时区",max_length=10)
-    Timestamp_Time_Zone = models.CharField("时间戳时区",max_length=10,null=False, blank=False)
-    Record_Time = models.DateTimeField("原始记录时间", null=False,blank=False)
-    Timestamp_Time = models.DateTimeField("时间戳时间", null=False,blank=False, db_index=True)
-    Alignment_Time_Difference = models.IntegerField("对齐时间差（s）", null=False,blank=False)
-    Update_Count = models.IntegerField("更新次数",default=0)
+    Original_Record_Time_Zone = models.CharField("原始记录时区",max_length=10,db_column = "original_record_time_zone")
+    Timestamp_Time_Zone = models.CharField("时间戳时区",max_length=10,null=False, blank=False,db_column = "timestamp_time_zone")
+    Record_Time = models.DateTimeField("原始记录时间", null=False,blank=False,db_column = "record_time")
+    Timestamp_Time = models.DateTimeField("时间戳时间", null=False,blank=False, db_index=True,db_column = "timestamp_time")
+    Alignment_Time_Difference = models.IntegerField("对齐时间差（s）", null=False,blank=False,db_column = "alignment_time_difference")
+    Update_Count = models.IntegerField("更新次数",default=0,db_column = "update_count")
 
     shop = models.ForeignKey(
         "SecondHandShop",
@@ -247,10 +248,10 @@ class PurchasingShopTimeAnalysis(models.Model):
         verbose_name="iPhone",
         db_index=True,
     )
-    New_Product_Price = models.PositiveIntegerField("新品卖取价格(円)")
-    Price_A = models.PositiveIntegerField("A品卖取价格(円)", null=True, blank=True)
-    Price_B = models.PositiveIntegerField("B品卖取价格(円)", null=True, blank=True)
-    Warehouse_Receipt_Time = models.DateTimeField("落库时间", auto_now_add=True)
+    New_Product_Price = models.PositiveIntegerField("新品卖取价格(円)",db_column = "new_product_price")
+    Price_A = models.PositiveIntegerField("A品卖取价格(円)", null=True, blank=True,db_column = "price_a")
+    Price_B = models.PositiveIntegerField("B品卖取价格(円)", null=True, blank=True,db_column = "price_b")
+    Warehouse_Receipt_Time = models.DateTimeField("落库时间", auto_now_add=True,db_column = "warehouse_receipt_time")
 
     class Meta:
         verbose_name = "二手店回收价格记录对齐表"

@@ -29,7 +29,10 @@ DEBUG = True
 ALLOWED_HOSTS = [
     "127.0.0.1",
     "localhost",
-    ".ngrok-free.app", ]
+    ".ngrok-free.app",
+    ".ngrok-free.dev",
+    "verbless-sadistically-jayceon.ngrok-free.dev",
+]
 
 # Application definition
 
@@ -51,11 +54,13 @@ INSTALLED_APPS = [
     # 'easyaudit',
     "django_celery_beat",     # 定时任务(可在Admin里改间隔/暂停)
     "django_celery_results",  # 可选：任务结果持久化到DB
+    "django_filters",
 
 ]
 
 MIDDLEWARE = [
     'django.middleware.locale.LocaleMiddleware',       # 可选
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -87,6 +92,7 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 20,
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
+        "rest_framework.renderers.BrowsableAPIRenderer",
     ],
 }
 
@@ -123,14 +129,16 @@ CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    # 部署后把前端域名加进来
     "http://127.0.0.1:8000",
+    "https://verbless-sadistically-jayceon.ngrok-free.dev"
 
 ]
 # 若你在本地调试 CSRF：
 CSRF_TRUSTED_ORIGINS = ["http://localhost:3000",
                         "http://127.0.0.1:3000",
-                        "http://127.0.0.1:8000",]
+                        "http://127.0.0.1:8000",
+                        "https://verbless-sadistically-jayceon.ngrok-free.dev"
+                        ]
 
 TEMPLATES = [
     {
@@ -140,6 +148,7 @@ TEMPLATES = [
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
+                "django.template.context_processors.debug",
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
@@ -147,6 +156,10 @@ TEMPLATES = [
         },
     },
 ]
+
+WHITENOISE_MAX_AGE = 60 * 60 * 24 * 7
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+
 
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 MEDIA_URL = '/media/'
@@ -158,39 +171,18 @@ WSGI_APPLICATION = 'YamagotiProjects.wsgi.application'
 
 
 DATABASES = {
-  "default": {
-      "ENGINE": "django.db.backends.sqlite3",
-      "NAME": BASE_DIR / "db.sqlite3",
-      "OPTIONS": {
-          "timeout": 10,   # SQLite 层面的等待时间（秒），配合 busy_timeout 再保险
-      },
-  }
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": "yappdb",
+        "USER": "samuelzhujian",
+        "PASSWORD": "Xdb73008762",
+        "HOST": "127.0.0.1",
+        "PORT": "5432",
+        "CONN_MAX_AGE": 60,        # 连接复用
+        "OPTIONS": {"sslmode": "prefer"},  # 按需
+    }
 }
-#
-# USE_SQLITE = os.getenv("USE_SQLITE", "0").lower() in {"1", "true", "t", "yes", "y"}
-# SQLITE_PATH = os.getenv("SQLITE_PATH", str(BASE_DIR / "db.sqlite3"))
-#
-# if USE_SQLITE:
-#     DATABASES = {
-#         "default": {
-#             "ENGINE": "django.db.backends.sqlite3",
-#             "NAME": SQLITE_PATH,   # 例如 /app/data/db.sqlite3
-#         }
-#     }
-# else:
-#     DATABASES = {
-#         "default": {
-#             "ENGINE": "django.db.backends.postgresql",
-#             "NAME": os.getenv("POSTGRES_DB"),
-#             "USER": os.getenv("POSTGRES_USER"),
-#             "PASSWORD": os.getenv("POSTGRES_PASSWORD"),
-#             "HOST": os.getenv("POSTGRES_HOST", "127.0.0.1"),
-#             "PORT": int(os.getenv("POSTGRES_PORT", "5432")),
-#         }
-#     }
-#
-# # 小建议：开启原子请求（SQLite 写入更稳）
-# DATABASES["default"]["ATOMIC_REQUESTS"] = True
+
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
@@ -226,7 +218,15 @@ USE_TZ = True
 
 
 STATIC_URL = "/static/"
-STATIC_ROOT = os.path.join(BASE_DIR, 'static')
+STATIC_ROOT = BASE_DIR / "staticfiles"        # collectstatic 产物目录（生产/统一对外）
+STATICFILES_DIRS = [
+    BASE_DIR / "static",                      # 你自己的前端静态目录（可选）
+]
+STATICFILES_FINDERS = [
+    "django.contrib.staticfiles.finders.FileSystemFinder",
+    "django.contrib.staticfiles.finders.AppDirectoriesFinder",  # 从各 app 的 /static/ 里找（第三方主题用这个）
+]
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
@@ -473,6 +473,7 @@ SIMPLEUI_CONFIG = {
                                         'url': '/admin/AppleStockChecker/purchasingshoptimeanalysis/'
                                         },
 
+
                                        ]
                             },
                            {'name': 'iPhone公式在庫メタデータ',
@@ -487,18 +488,14 @@ SIMPLEUI_CONFIG = {
                                         },
                                        ]
                             },
-                           # {'name': 'TryForSomething',
-                           #  'icon': 'fa-solid fa-file-contract',
-                           #  'models': [{'name': 'chatjs',
-                           #              'icon': 'fa-solid fa-store',
-                           #              'url': '/AppleStockChecker/template-chartjs/',
-                           #              },
-                           #             {'name': 'iphone官方在库記録',
-                           #              'icon': 'fa-solid fa-truck-ramp-box',
-                           #              'url': '/admin/AppleStockChecker/inventoryrecord/'
-                           #              },
-                           #             ]
-                           #  },
+                           {'name': '临时页面',
+                            'icon': 'fa-solid fa-file-contract',
+                            'models': [{'name': '实时图表',
+                                        'icon': 'fa-solid fa-store',
+                                        'url': '/AppleStockChecker/template-chartjs/',
+                                        },
+                                       ]
+                            },
                            ]
             },
 

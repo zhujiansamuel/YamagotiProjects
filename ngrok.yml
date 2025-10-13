@@ -1,9 +1,23 @@
-version: "3"
+version: "2"
 authtoken: 3329Bw43Zb7oCp7Ae0xgJqdtibS_5fwYDYENw4N1Hm8RE1mn1
+region: ap
+
 tunnels:
-  apple:
+  django:
     proto: http
-    addr: 127.0.0.1:80
-    domain: yamaguti.ngrok.io
-    schemes: [https]
-    inspect: false
+    addr: 8000
+    # 可选的安全/路由设置：
+    schemes:
+      - https
+    basic_auth:
+      - user:pass
+    # 将外部 Host 转给后端，很多 Django/DRF 场景有用：
+    host_header: rewrite
+
+#  postgres:
+#    proto: tcp
+#    addr: 5432
+#
+#  webhook_dev:
+#    proto: http
+#    addr: 3000

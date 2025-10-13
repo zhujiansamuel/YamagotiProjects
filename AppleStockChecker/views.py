@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import uuid
-
+from uuid import uuid4
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from .models import Iphone, OfficialStore, InventoryRecord
 from .serializers import OfficialStoreSerializer, InventoryRecordSerializer, IphoneSerializer
 from .serializers import UserSerializer
@@ -10,6 +10,7 @@ from rest_framework import viewsets, permissions, filters
 from drf_spectacular.utils import (
     extend_schema, extend_schema_view, OpenApiParameter, OpenApiTypes
 )
+from datetime import datetime, date
 from .serializers import SecondHandShopSerializer, PurchasingShopPriceRecordSerializer
 from math import ceil
 import csv, io, re
@@ -32,8 +33,8 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 from celery.result import AsyncResult
 from AppleStockChecker.utils.external_ingest.webscraper import fetch_webscraper_export_sync, to_dataframe_from_request
 from AppleStockChecker.services.external_ingest_service import ingest_external_dataframe
-from AppleStockChecker.utils.external_ingest.registry import get_cleaner
-from AppleStockChecker.tasks.webscraper_tasks import task_process_webscraper_job
+
+from AppleStockChecker.tasks.webscraper_tasks import task_process_webscraper_job,task_process_xlsx
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from django.conf import settings
 from datetime import timedelta
@@ -66,8 +67,32 @@ from rest_framework.permissions import IsAuthenticatedOrReadOnly
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import OrderingFilter
 from .models import PurchasingShopTimeAnalysis
-from .serializers import PurchasingShopTimeAnalysisSerializer
+from .serializers import PurchasingShopTimeAnalysisSerializer, PSTACompactSerializer
 from .filters import PurchasingShopTimeAnalysisFilter
+
+import io
+import re
+import uuid
+from typing import Optional, Dict, Any
+
+import pandas as pd
+from django.utils import timezone
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
+from rest_framework.decorators import action, authentication_classes, permission_classes
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework import status, viewsets
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from celery import shared_task
+
+from AppleStockChecker.utils.external_ingest.registry import get_cleaner, run_cleaner
+from AppleStockChecker.models import SecondHandShop, Iphone, PurchasingShopPriceRecord
+
+# 复用你先前实现过的入库主流程（此处假设已存在；若文件不同模块，请调整导入）
+from AppleStockChecker.services.external_ingest_service import ingest_external_dataframe
+
 
 class PlainTextParser(BaseParser):
     media_type = 'text/plain'
@@ -165,6 +190,43 @@ def _resolve_source(request) -> str | None:
     mp = getattr(settings, "WEB_SCRAPER_SOURCE_MAP", {})
     return mp.get(sitemap_name) or mp.get(custom_id)
 
+
+def _as_bool(v, default=False):
+    if v is None:
+        return default
+    return str(v).strip().lower() in {"1", "true", "t", "yes", "y"}
+
+def _is_nan_like(v):
+    if v is None:
+        return True
+    s = str(v).strip().lower()
+    return s in {"", "na", "nan", "null", "none", "undefined"}
+
+def _parse_recorded_at(val):
+    if not val:
+        return timezone.now()
+    dt = parse_datetime(val)
+    if dt:
+        if timezone.is_naive(dt):
+            dt = timezone.make_aware(dt, timezone.get_current_timezone())
+        return dt
+    d = parse_date(val)
+    if isinstance(d, date):
+        dt = datetime(d.year, d.month, d.day)
+        return timezone.make_aware(dt, timezone.get_current_timezone())
+    return timezone.now()
+
+def _extract_source_name(filename: str) -> Optional[str]:
+    """
+    从文件名提取清洗器名：
+      shop8.xlsx -> shop8
+      shop_foo.xlsm -> shop_foo
+    """
+    if not filename:
+        return None
+    base = filename.rsplit("/", 1)[-1]  # 去掉路径
+    m = re.match(r"^([A-Za-z0-9_\-]+)\.(xlsx|xlsm|xls|ods)$", base, flags=re.IGNORECASE)
+    return m.group(1) if m else None
 
 class HealthView(APIView):
     permission_classes = [AllowAny]
@@ -801,7 +863,6 @@ class SecondHandShopViewSet(viewsets.ModelViewSet):
     partial_update=extend_schema(tags=["Resale / Price"], summary="更新回收价格记录（部分）"),
     destroy=extend_schema(tags=["Resale / Price"], summary="删除回收价格记录"),
 )
-
 class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
     queryset = PurchasingShopPriceRecord.objects.select_related("shop", "iphone").all()
     serializer_class = PurchasingShopPriceRecordSerializer
@@ -908,39 +969,108 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
         """将 DictReader 的列名统一为小写去空格"""
         return {(k or "").strip().lower(): v for k, v in d.items()}
 
-    @extend_schema(
-        tags=["Resale / Price"],
-        summary="导入二手店回收价格（CSV）",
-        description=(
-                "上传 CSV 批量写入二手店回收价格记录。\n\n"
-                "必需列：`pn`(或 `part_number`)、`shop_name`、`price_new`。\n"
-                "可选列：`shop_address`、`shop_website`、`price_grade_a`、`price_grade_b`、`recorded_at`。\n"
-                "参数：`create_shop`=1 允许自动创建新店；`dedupe`=1 同店+PN+记录时间相同则更新而非新建；`dry_run`=1 仅校验不写库。"
-        ),
-        parameters=[
-            OpenApiParameter("create_shop", OpenApiTypes.BOOL, description="若店铺不存在则创建（默认 true）",
-                             required=False),
-            OpenApiParameter("dedupe", OpenApiTypes.BOOL, description="同店+PN+recorded_at 去重并更新（默认 true）",
-                             required=False),
-            OpenApiParameter("dry_run", OpenApiTypes.BOOL, description="仅校验不落库（默认 false）", required=False),
-        ],
-        request={
-            "multipart/form-data": {
-                "type": "object",
-                "properties": {
-                    "file": {"type": "string", "format": "binary", "description": "CSV 文件"},
-                    "create_shop": {"type": "boolean"},
-                    "dedupe": {"type": "boolean"},
-                    "dry_run": {"type": "boolean"},
-                },
-                "required": ["file"],
-            }
-        },
-        responses={
-            200: OpenApiTypes.OBJECT,
-            400: OpenApiTypes.OBJECT,
-        },
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="import-tradein-xlsx",
+        parser_classes=[MultiPartParser, FormParser],
     )
+    @authentication_classes([JWTAuthentication])  # ✅ 仅 JWT
+    @permission_classes([IsAuthenticated])  # ✅ 需要 Bearer Token
+    def import_tradein_xlsx(self, request):
+        """
+        POST /AppleStockChecker/purchasing-price-records/import-tradein-xlsx/?dry_run=1&dedupe=1&upsert=0
+        Header: Authorization: Bearer <access>
+        Form: files=<shopX.xlsx>[, <shopY.xlsm>...]
+        行为：每个文件各起一个 Celery 任务。
+        """
+        dry_run = _as_bool(request.query_params.get("dry_run"), False)
+        dedupe = _as_bool(request.query_params.get("dedupe"), True)
+        upsert = _as_bool(request.query_params.get("upsert"), False)
+
+        # batch_id: Header → query → 自动生成
+        bid = request.headers.get("X-Batch-Id") or request.query_params.get("batch_id")
+        try:
+            batch_uuid = uuid.UUID(str(bid)) if bid else uuid.uuid4()
+        except Exception:
+            batch_uuid = uuid.uuid4()
+
+        files = request.FILES.getlist("files") or ([request.FILES["file"]] if request.FILES.get("file") else [])
+        if not files:
+            return Response({"detail": "请上传至少一个 Excel（files 或 file）"}, status=status.HTTP_400_BAD_REQUEST)
+
+        tasks = []
+        for f in files:
+            fname = getattr(f, "name", "")
+            source_name = _extract_source_name(fname)
+            if not source_name:
+                return Response({"detail": f"无法从文件名提取清洗器名：{fname}"}, status=status.HTTP_400_BAD_REQUEST)
+            # 校验清洗器是否存在
+            try:
+                get_cleaner(source_name)
+            except Exception:
+                return Response({"detail": f"未知清洗器: {source_name}"}, status=status.HTTP_400_BAD_REQUEST)
+
+            content = f.read()
+            # 入队：把文件原始字节与来源名放入任务
+            t = task_process_xlsx.delay(
+                file_bytes=content,
+                filename=fname,
+                source_name=source_name,
+                dry_run=dry_run,
+                dedupe=dedupe,
+                upsert=upsert,
+                batch_id=str(batch_uuid),
+            )
+            tasks.append({"file": fname, "task_id": t.id, "source": source_name})
+
+        return Response(
+            {
+                "accepted": True,
+                "dry_run": dry_run,
+                "dedupe": dedupe,
+                "upsert": upsert,
+                "batch_id": str(batch_uuid),
+                "tasks": tasks,
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+    @extend_schema(
+            tags=["Resale / Price"],
+            summary="导入二手店回收价格（CSV）",
+            description=(
+                    "上传 CSV 批量写入二手店回收价格记录。\n\n"
+                    "必需列：`pn`(或 `part_number`)、`shop_name`、`price_new`。\n"
+                    "可选列：`shop_address`、`shop_website`、`price_grade_a`、`price_grade_b`、`recorded_at`。\n"
+                    "参数：`create_shop`=1 允许自动创建新店；`dedupe`=1 同店+PN+记录时间相同则更新而非新建；`dry_run`=1 仅校验不写库。"
+            ),
+            parameters=[
+                OpenApiParameter("create_shop", OpenApiTypes.BOOL, description="若店铺不存在则创建（默认 true）",
+                                 required=False),
+                OpenApiParameter("dedupe", OpenApiTypes.BOOL, description="同店+PN+recorded_at 去重并更新（默认 true）",
+                                 required=False),
+                OpenApiParameter("dry_run", OpenApiTypes.BOOL, description="仅校验不落库（默认 false）", required=False),
+            ],
+            request={
+                "multipart/form-data": {
+                    "type": "object",
+                    "properties": {
+                        "file": {"type": "string", "format": "binary", "description": "CSV 文件"},
+                        "create_shop": {"type": "boolean"},
+                        "dedupe": {"type": "boolean"},
+                        "dry_run": {"type": "boolean"},
+                    },
+                    "required": ["file"],
+                }
+            },
+            responses={
+                200: OpenApiTypes.OBJECT,
+                400: OpenApiTypes.OBJECT,
+            },
+        )
     @action(
         detail=False,
         methods=["POST"],
@@ -1114,7 +1244,13 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
         }
         return Response(resp, status=status.HTTP_200_OK)
 
-    @extend_schema(
+
+
+    # @csrf_exempt
+    # @authentication_classes([JWTAuthentication])             # ← 用 JWT，不触发 CSRF
+    # @permission_classes([permissions.IsAdminUser])
+
+    @extend_schema(  # ← 你的原注解可保留
         tags=["Resale / Price"],
         summary="导入二手店回收价（清洗逻辑已抽到 utils）——每次上传新增记录",
         parameters=[
@@ -1123,86 +1259,99 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
             OpenApiParameter("dry_run", OpenApiTypes.BOOL, description="只清洗/聚合不落库（默认 false）", required=False),
             OpenApiParameter("recorded_at", OpenApiTypes.DATETIME, description="统一记录时间（ISO8601/日期），默认现在",
                              required=False),
+            OpenApiParameter("dedupe", OpenApiTypes.BOOL,
+                             description="同一 (shop, iphone, recorded_at) 去重（默认 true）", required=False),
+            OpenApiParameter("upsert", OpenApiTypes.BOOL, description="去重命中时是否覆盖（默认 false）", required=False),
         ],
         request={
             "multipart/form-data": {
                 "type": "object",
-                "properties": {"files": {"type": "array", "items": {"type": "string", "format": "binary"}},
-                               "file": {"type": "string", "format": "binary"}},
-                "required": ["files"],
+                "properties": {
+                    "files": {"type": "array", "items": {"type": "string", "format": "binary"}},
+                    "file": {"type": "string", "format": "binary"}
+                },
+            },
+            "application/json": {
+                "type": "object",
+                "properties": {
+                    "blobs": {  # 可选：支持 JSON 直接传 {name, content(base64 or text)}
+                        "type": "array",
+                        "items": {"type": "object",
+                                  "properties": {"name": {"type": "string"}, "content": {"type": "string"}}}
+                    }
+                }
             }
-        },
+        }
     )
+    @method_decorator(csrf_exempt)
     @action(
         detail=False, methods=["post"], url_path="import-tradein",
-        parser_classes=[MultiPartParser, FormParser],
-        permission_classes=[permissions.IsAdminUser],
+        parser_classes=[MultiPartParser, FormParser, JSONParser],
     )
+    @authentication_classes([JWTAuthentication])  # ✅ 仅 JWT 认证；若需要匿名上传可改为 AllowAny
+    @permission_classes([IsAuthenticated])
     def import_tradein(self, request):
-        # ---- 参数 ----
-        def as_bool(v, default=False):
-            if v is None: return default
-            return str(v).strip().lower() in {"1", "true", "t", "yes", "y"}
-
-        updated = 0
+        # ---- 读取 query/header 选项 ----
         bid = request.query_params.get("batch_id") or request.headers.get("X-Batch-Id")
         try:
-            batch_uuid = uuid.UUID(str(bid)) if bid else uuid.uuid4()
+            batch_uuid = uuid.UUID(str(bid)) if bid else uuid4()
         except Exception:
-            batch_uuid = uuid.uuid4()
-        dedupe = as_bool(request.query_params.get("dedupe"), True)
-        upsert = as_bool(request.query_params.get("upsert"), False)
+            batch_uuid = uuid4()
 
-        create_shop = as_bool(request.query_params.get("create_shop"), True)
-        dry_run = as_bool(request.query_params.get("dry_run"), False)
+        dedupe = _as_bool(request.query_params.get("dedupe"), True)
+        upsert = _as_bool(request.query_params.get("upsert"), False)
+        create_shop = _as_bool(request.query_params.get("create_shop"), True)
+        dry_run = _as_bool(request.query_params.get("dry_run"), False)
+        recorded_at = _parse_recorded_at(request.query_params.get("recorded_at"))
 
-        ra_param = request.query_params.get("recorded_at")
-        if ra_param:
-            ra = parse_datetime(ra_param) or parse_date(ra_param)
-            if isinstance(ra, datetime) and timezone.is_naive(ra):
-                recorded_at = timezone.make_aware(ra, timezone.get_current_timezone())
-            elif isinstance(ra, datetime):
-                recorded_at = ra
-            elif hasattr(ra, "year"):
-                recorded_at = timezone.make_aware(datetime(ra.year, ra.month, ra.day), timezone.get_current_timezone())
-            else:
-                recorded_at = timezone.now()
-        else:
-            recorded_at = timezone.now()
-
-        # ---- 读文件为 (bytes, name) 列表，交由 utils 清洗/聚合 ----
+        # ---- 读取文件 / JSON blobs ----
         files = request.FILES.getlist("files") or ([request.FILES["file"]] if request.FILES.get("file") else [])
-        if not files:
-            return Response({"detail": "请上传至少一个 CSV（字段 files 或 file）"}, status=status.HTTP_400_BAD_REQUEST)
-
         blobs = []
-        for f in files:
-            data = f.read()
-            blobs.append((data, f.name))
-            try:
-                if hasattr(f, "seek"): f.seek(0)
-            except Exception:
-                pass
 
+        if files:
+            for f in files:
+                data = f.read()
+                blobs.append((data, getattr(f, "name", "upload.csv")))
+                try:
+                    if hasattr(f, "seek"):
+                        f.seek(0)
+                except Exception:
+                    pass
+        else:
+            # JSON body 支持：{"blobs":[{"name":"a.csv","content":"...原文或base64..."}]}
+            body = request.data or {}
+            jb = body.get("blobs") or []
+            for b in jb:
+                name = b.get("name") or "payload.csv"
+                content = b.get("content") or ""
+                # 这里假设 content 是纯文本 CSV；若是 base64，可在此处解码
+                blobs.append((content.encode("utf-8"), name))
+
+        if not blobs:
+            return Response({"detail": "请上传至少一个 CSV（files/file 或 JSON.blobs）"},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # ---- 清洗/聚合 ----
         result = clean_and_aggregate_tradein(blobs)
-        rows_total = result["rows_total"]
-        errors = result["errors"]
-        records = result["records"]
-        preview = result["preview"]
+        rows_total = result.get("rows_total", 0)
+        errors = result.get("errors", [])
+        records = result.get("records", [])
+        preview = result.get("preview", [])
 
         if rows_total == 0 and not records:
             return Response({"detail": "清洗失败或无有效数据", "errors": errors}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ---- 写库：匹配 iPhone 并始终新增记录（不覆盖历史） ----
+        # ---- 写库（始终新增；仅当 dedupe/upsert 指定时覆盖） ----
         inserted = 0
+        updated = 0
         skipped_no_match = 0
 
         for rec in records:
-            shop_name = rec["shop_name"]
-            price_new = rec["price_new"]
-            price_a = rec["price_grade_a"]
-            price_b = rec["price_grade_b"]
-            meta = rec["meta"]
+            shop_name = (rec.get("shop_name") or "").strip()
+            price_new = rec.get("price_new")
+            price_a = rec.get("price_grade_a")
+            price_b = rec.get("price_grade_b")
+            meta = rec.get("meta") or {}
 
             pn = (meta.get("pn") or "").strip()
             jan_digits = (meta.get("jan") or "").strip()
@@ -1213,13 +1362,15 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
             color_any = bool(meta.get("color_any"))
 
             # iPhone 匹配：PN → JAN → 型号+容量(+颜色/全色)
-            iphones: list[Iphone] = []
+            iphones = []
             if pn:
                 ip = Iphone.objects.filter(part_number=pn).first()
-                if ip: iphones = [ip]
+                if ip:
+                    iphones = [ip]
             if not iphones and len(jan_digits) == 13:
                 ip = Iphone.objects.filter(jan=jan_digits).first()
-                if ip: iphones = [ip]
+                if ip:
+                    iphones = [ip]
             if not iphones and model_name and capacity_gb:
                 base_qs = Iphone.objects.filter(model_name__iexact=model_name, capacity_gb=capacity_gb)
                 if color_any:
@@ -1237,74 +1388,95 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
                 skipped_no_match += 1
                 continue
 
-            # 店铺（name+address 唯一；此处地址未知置空）
+            # 店铺：name+address 唯一（地址未知用空字符串）
             shop = SecondHandShop.objects.filter(name=shop_name, address="").first()
             if not shop and create_shop:
                 shop = SecondHandShop.objects.create(name=shop_name, address="", website="")
             if not shop:
+                skipped_no_match += 1
                 continue
 
-            # 始终新增：对匹配到的每个 iPhone 新建一条记录
             if dry_run:
                 inserted += len(iphones)
                 continue
 
             for iphone in iphones:
-                if dry_run:
-                    inserted += 1
-                    continue
                 with transaction.atomic():
                     existed = None
                     if dedupe:
                         existed = PurchasingShopPriceRecord.objects.filter(
                             shop=shop, iphone=iphone, recorded_at=recorded_at
                         ).first()
+
                     if existed:
                         if upsert:
                             changed = False
-                            if (price_new is not None) and existed.price_new != int(price_new):
-                                existed.price_new = int(price_new);
+
+                            # 归一化数值
+                            def _int_or_none(v):
+                                if _is_nan_like(v):
+                                    return None
+                                try:
+                                    return int(v)
+                                except Exception:
+                                    return None
+
+                            nv = _int_or_none(price_new)
+                            av = _int_or_none(price_a)
+                            bv = _int_or_none(price_b)
+
+                            if nv is not None and existed.price_new != nv:
+                                existed.price_new = nv;
                                 changed = True
-                            if (price_a is not None) and (existed.price_grade_a or None) != (
-                                    None if pd.isna(price_a) else int(price_a)):
-                                existed.price_grade_a = None if pd.isna(price_a) else int(price_a);
+                            if (existed.price_grade_a or None) != av:
+                                existed.price_grade_a = av;
                                 changed = True
-                            if (price_b is not None) and (existed.price_grade_b or None) != (
-                                    None if pd.isna(price_b) else int(price_b)):
-                                existed.price_grade_b = None if pd.isna(price_b) else int(price_b);
+                            if (existed.price_grade_b or None) != bv:
+                                existed.price_grade_b = bv;
                                 changed = True
+
                             if changed:
                                 existed.batch_id = batch_uuid
                                 existed.save(update_fields=["price_new", "price_grade_a", "price_grade_b", "batch_id"])
                                 updated += 1
                             else:
-                                skipped_no_match += 1  # 或另设 dedup_skipped
+                                skipped_no_match += 1
                         else:
                             skipped_no_match += 1
                         continue
 
-                    rec_obj = PurchasingShopPriceRecord.objects.create(
+                    # 始终新增
+                    PurchasingShopPriceRecord.objects.create(
                         shop=shop, iphone=iphone,
-                        price_new=(price_new or 0),
-                        price_grade_a=price_a, price_grade_b=price_b,
+                        price_new=0 if _is_nan_like(price_new) else int(price_new),
+                        price_grade_a=None if _is_nan_like(price_a) else int(price_a),
+                        price_grade_b=None if _is_nan_like(price_b) else int(price_b),
                         batch_id=batch_uuid,
+                        recorded_at=recorded_at,
                     )
-                    PurchasingShopPriceRecord.objects.filter(pk=rec_obj.pk).update(recorded_at=recorded_at)
                     inserted += 1
 
         return Response({
             "rows_total": rows_total,
             "aggregated": len(records),
             "inserted": inserted,
+            "updated": updated,
             "skipped_no_match": skipped_no_match,
-            "preview": preview,
+            "preview": preview[:10],  # 前端表格预览只需前 10
             "errors": errors[:50],
             "options": {
                 "create_shop": create_shop,
                 "dry_run": dry_run,
                 "recorded_at": recorded_at.isoformat(),
+                "dedupe": dedupe,
+                "upsert": upsert,
             },
         }, status=status.HTTP_200_OK)
+
+
+
+
+
 
     @extend_schema(
         tags=["Resale / Price"],
@@ -1352,6 +1524,10 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
             "dry_run": dry_run,
             **result
         })
+
+
+
+
 
     #
     # @extend_schema(
@@ -1525,6 +1701,14 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
                          "source": source_name, "dry_run": dry_run, "dedupe": dedupe, "upsert": upsert,
                          "batch_id": str(batch_uuid)}, status=202)
 
+
+
+
+
+
+
+
+
     # —— 极短 URL：/ingest-webscraper/<token>/ —— #
     @extend_schema(tags=["Resale / Price"], summary="Webhook（Path Token 版）")
     @action(detail=False, methods=["post"], url_path=r"ingest-webscraper/(?P<ptoken>[-A-Za-z0-9_]+)",
@@ -1534,6 +1718,11 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
         if not _check_token(request, path_token=ptoken):
             return Response({"detail": "Webhook token 不匹配"}, status=status.HTTP_403_FORBIDDEN)
         return self.ingest_webscraper(request)
+
+
+
+
+
 
     # —— 任务查询 —— #
     @extend_schema(tags=["Resale / Price"], summary="查询 Celery 任务结果",
@@ -1550,6 +1739,15 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
         elif res.state == "FAILURE":
             data["error"] = str(res.result)
         return Response(data, status=status.HTTP_200_OK)
+
+
+
+
+
+
+
+
+
 
 
     @extend_schema(
@@ -1628,6 +1826,11 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
 
 
 
+
+
+
+
+
 class PurchasingShopTimeAnalysisViewSet(
     mixins.CreateModelMixin,
     mixins.RetrieveModelMixin,
@@ -1653,3 +1856,27 @@ class PurchasingShopTimeAnalysisViewSet(
     ordering = ["-Timestamp_Time"]
 
 
+
+class PurchasingShopTimeAnalysisPSTACompactViewSet(
+    mixins.CreateModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.ListModelMixin,
+    viewsets.GenericViewSet,
+):
+    queryset = (PurchasingShopTimeAnalysis.objects
+                .select_related("shop", "iphone")
+                .all())
+    serializer_class = PSTACompactSerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    filterset_class = PurchasingShopTimeAnalysisFilter
+    ordering_fields = [
+        "Timestamp_Time",
+        "Warehouse_Receipt_Time",
+        "New_Product_Price",
+        "Price_A",
+        "Price_B",
+        "Update_Count",
+    ]
+    ordering = ["-Timestamp_Time"]

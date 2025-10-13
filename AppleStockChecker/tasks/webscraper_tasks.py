@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-import io
+import io, re
 import pandas as pd
 from celery import shared_task
 
@@ -8,11 +8,129 @@ from celery import shared_task
 from django.db import transaction
 from django.utils import timezone
 import pandas as pd
-
+from typing import Optional, Dict, Any
 from AppleStockChecker.utils.external_ingest.registry import run_cleaner  # 已有注册器
 from AppleStockChecker.models import Iphone, SecondHandShop, PurchasingShopPriceRecord
 from AppleStockChecker.utils.external_ingest.webscraper import fetch_webscraper_export_sync
 from AppleStockChecker.services.external_ingest_service import ingest_external_dataframe
+
+
+_ENGINE_HINT = {
+    "xlsx": ("openpyxl", "pip install openpyxl"),
+    "xlsm": ("openpyxl", "pip install openpyxl"),
+    "xls":  ("xlrd",     "pip install 'xlrd<2.0'"),
+    "ods":  ("odf",      "pip install odfpy"),
+    "xlsb": ("pyxlsb",   "pip install pyxlsb"),
+    "csv":  (None,       None),
+}
+
+def _suffix(filename: str) -> str:
+    m = re.search(r"\.([A-Za-z0-9]+)$", (filename or "").strip())
+    return (m.group(1).lower() if m else "")
+
+def _read_tabular(filename: str, raw: bytes) -> pd.DataFrame:
+    """
+    根据后缀与可用引擎读取为 DataFrame；缺依赖时给出明确提示。
+    """
+    suf = _suffix(filename)
+    buf = io.BytesIO(raw or b"")
+
+    if suf == "csv":
+        # 允许 UTF-8 / UTF-8-SIG / Shift-JIS 常见编码
+        for enc in ("utf-8-sig", "utf-8", "cp932"):
+            try:
+                buf.seek(0)
+                return pd.read_csv(buf, encoding=enc)
+            except Exception:
+                continue
+        buf.seek(0)
+        return pd.read_csv(buf)  # 最后一次由 pandas 猜
+
+    if suf in ("xlsx", "xlsm", "xls", "ods", "xlsb"):
+        engine, hint = _ENGINE_HINT[suf]
+        # 优先尝试推荐引擎
+        if engine:
+            try:
+                buf.seek(0)
+                return pd.read_excel(buf, engine=engine)
+            except ImportError:
+                raise RuntimeError(f"缺少依赖：{engine}。请先安装：{hint}")
+            except Exception as e:
+                # 再给一次“自动引擎”机会（pandas 自探测）
+                try:
+                    buf.seek(0)
+                    return pd.read_excel(buf)
+                except Exception:
+                    raise RuntimeError(f"读取 {suf} 失败：{e}")
+        else:
+            # 理论不会走到这里（csv 上面已处理）
+            buf.seek(0)
+            return pd.read_excel(buf)
+
+    # 兜底：尝试当 CSV
+    try:
+        buf.seek(0)
+        return pd.read_csv(buf, encoding="utf-8-sig")
+    except Exception:
+        raise RuntimeError(f"无法识别的文件类型：{filename or '(未命名)'}")
+
+
+@shared_task(
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=30,            # 30s, 60s, 120s...
+    retry_kwargs={"max_retries": 5},
+    name="AppleStockChecker.tasks.task_process_xlsx",
+)
+def task_process_xlsx(
+    self,
+    *,
+    file_bytes: bytes,
+    filename: str,
+    source_name: str,
+    dry_run: bool = False,
+    dedupe: bool = True,
+    upsert: bool = False,
+    batch_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    try:
+        df = _read_tabular(filename, file_bytes)
+    except Exception as e:
+        # 不抛出，直接把错误返回给调用方（避免无限重试）
+        return {
+            "file": filename,
+            "source": source_name,
+            "error": f"读取表格失败: {e}",
+            "hint": _ENGINE_HINT.get(_suffix(filename), (None, None))[1],
+            "dry_run": dry_run,
+            "dedupe": dedupe,
+            "upsert": upsert,
+            "batch_id": batch_id,
+        }
+
+    result = ingest_external_dataframe(
+        source_name=source_name,
+        df=df,
+        dry_run=dry_run,
+        pn_only=True,
+        create_shop=True,
+        dedupe=dedupe,
+        upsert=upsert,
+        batch_id=batch_id,
+    )
+    result.update({
+        "file": filename,
+        "source": source_name,
+        "dry_run": dry_run,
+        "dedupe": dedupe,
+        "upsert": upsert,
+        "batch_id": batch_id,
+    })
+    return result
+
+
+
+
 
 @shared_task(
     bind=True,

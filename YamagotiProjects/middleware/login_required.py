@@ -24,6 +24,13 @@ EXEMPT_PATTERNS = [
     r"^/api/.*$",
     # WebSocket 必须放行，否则握手会被重定向
     r"^/ws/.*$",
+    r"^/AppleStockChecker/purchasing-price-records/import-tradein/?$",
+    r"^/AppleStockChecker/purchasing-price-records/import-tradein-xlsx/?$",
+    r"^/AppleStockChecker/purchasing-time-analyses-psta-compact/?$",
+    r"^/AppleStockChecker/purchasing-price-records/?$",
+
+
+
 ]
 
 class LoginRequiredMiddleware:

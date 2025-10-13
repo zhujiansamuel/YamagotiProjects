@@ -205,6 +205,14 @@ celery -A YamagotiProjects flower --port=5555
 celery -A YamagotiProjects beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
 
 
+celery -A YamagotiProjects worker -l info -P threads --concurrency=8
+
+celery -A YamagotiProjects worker -l info -P eventlet --concurrency=15
+daphne -b 0.0.0.0 -p 8000 YamagotiProjects.asgi:application
+
+
+noglob websocat -t "ws://localhost:8000/ws/stream/psta/?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwMDgzMTU5LCJpYXQiOjE3NjAwODEzNTksImp0aSI6IjUwZTcyZjQxNDJjMzRhNWNhM2ViNjdkMWEzNjcwOTZjIiwidXNlcl9pZCI6IjEifQ.wpy10gAcQFyKJLZQAD7Z6uYbn3bG-Zdc7agEL8cvvqY"
+
 
 shop1---->ok
 shop2---->ok
@@ -225,4 +233,110 @@ shop16--->ok
 shop18--->ok
 shop20--->ok
 
+
+
+
+CREATE USER samuelzhujian WITH PASSWORD 'Xdb73008762' LOGIN;
+CREATE DATABASE yappdb OWNER samuelzhujian ENCODING 'UTF8';
+GRANT ALL PRIVILEGES ON DATABASE yappdb TO samuelzhujian;
+\q
+
+export SQLITE_PATH="/Users/syu/PycharmProjects/YamagotiProjects/db.sqlite3"
+export PG_URL="postgresql://samuelzhujian:Xdb73008762@localhost:5432/yappdb"
+
+
+export DATABASE_URL="postgresql://samuelzhujian:Xdb73008762@127.0.0.1:5432/yappdb"
+
+
+psql "postgresql://samuelzhujian:Xdb73008762@127.0.0.1:5432/yappdb" -c "\dt"
+
+psql "postgresql://samuelzhujian:Xdb73008762@127.0.0.1:5432/yappdb"
+
+
+celery -A YamagotiProjects worker -l info -P threads --concurrency=8
+
+
+brew services start postgresql@16
+
+
+ALTER TABLE applestockchecker_inventoryrecord RENAME TO "Applestockchecker_inventoryrecord";
+ALTER TABLE applestockchecker_iphone RENAME TO "Applestockchecker_iphone";
+ALTER TABLE applestockchecker_officialstore RENAME TO "Applestockchecker_officialstore";
+ALTER TABLE applestockchecker_purchasingshoppricerecord RENAME TO "Applestockchecker_purchasingshoppricerecord";
+ALTER TABLE applestockchecker_purchasingshoptimeanalysis RENAME TO "Applestockchecker_purchasingshoptimeanalysis";
+ALTER TABLE applestockchecker_secondhandshop RENAME TO "Applestockchecker_secondhandshop";
+
+
+
+
+
+
+
+
+celery -A YamagotiProjects beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+
+noglob websocat -t "ws://127.0.0.1:8000/ws/stream/psta/?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwMDgzMTU5LCJpYXQiOjE3NjAwODEzNTksImp0aSI6IjUwZTcyZjQxNDJjMzRhNWNhM2ViNjdkMWEzNjcwOTZjIiwidXNlcl9pZCI6IjEifQ.wpy10gAcQFyKJLZQAD7Z6uYbn3bG-Zdc7agEL8cvvqY"
+
+
+
+
+
+noglob websocat -t "ws://localhost:8000/ws/stream/psta/?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwMTc0NTA5LCJpYXQiOjE3NjAxNzI3MDksImp0aSI6IjNkMzNjYzMyYWEzNDRjYzg5OTk2NWYyOGE4YWNjZGUxIiwidXNlcl9pZCI6IjEifQ.tAJkE8XjKkgIRDyHupJWAVboabbQl1TJ9VpsaG35ssc"
+
+
+uvicorn YamagotiProjects.asgi:application --reload
+
+
+uvicorn YamagotiProjects.asgi:application --reload --port 8000
+
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwMDgzMTU5LCJpYXQiOjE3NjAwODEzNTksImp0aSI6IjUwZTcyZjQxNDJjMzRhNWNhM2ViNjdkMWEzNjcwOTZjIiwidXNlcl9pZCI6IjEifQ.wpy10gAcQFyKJLZQAD7Z6uYbn3bG-Zdc7agEL8cvvqY
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwMDg3MjAwLCJpYXQiOjE3NjAwODU0MDAsImp0aSI6IjhjNzM0MDVlNzIyMzQzMmZiOTQwN2MyZWMwZDU4ZWE4IiwidXNlcl9pZCI6IjEifQ.ppF75-k_9BWevpEQInAvXuKOpxZzt7mThrLzrmU2Djw
+
+
+pkill -f 'celery worker' ; celery -A YamagotiProjects worker -l info --concurrency=15
+
+
+
+
+http POST :8000/AppleStockChecker/dispatch-psta-batch-same-ts \
+  items:='[
+    {"shop_id":1,"iphone_id":2,"Original_Record_Time_Zone":"+09:00","Timestamp_Time_Zone":"+09:00",
+     "Record_Time":"2025-10-10T17:30:00+09:00","Alignment_Time_Difference":0,"New_Product_Price":211000}
+  ]'
+
+curl -X POST http://127.0.0.1:8000/AppleStockChecker/purchasing-time-analyses/dispatch_ts/\
+  -H 'Content-Type: application/json' \
+  -d '{"timestamp_iso":"2025-10-10T17:30:00+09:00"}'
+
+
+curl -X POST http://127.0.0.1:8000/AppleStockChecker/dispatch-psta-batch-same-ts \
+     -H "Content-Type: application/json" \
+     -d '{
+       "items":[
+         {"shop_id":1,"iphone_id":2,"Original_Record_Time_Zone":"+09:00","Timestamp_Time_Zone":"+09:00",
+          "Record_Time":"2025-10-10T17:30:00+09:00","Alignment_Time_Difference":0,"New_Product_Price":211000},
+         {"shop_id":2,"iphone_id":3,"Original_Record_Time_Zone":"+09:00","Timestamp_Time_Zone":"+09:00",
+          "Record_Time":"2025-10-10T17:30:00+09:00","Alignment_Time_Difference":0,"New_Product_Price":198000}
+       ]
+     }'
+
+
+
+curl -X POST "http://127.0.0.1:8000/AppleStockChecker/purchasing-time-analyses/dispatch_ts/" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwMDg5OTY0LCJpYXQiOjE3NjAwODgxNjQsImp0aSI6IjhiMWM1YmNjODJkMzQ1ZTY4MjI0YzBkOTliMjQ1M2ZkIiwidXNlcl9pZCI6IjEifQ.0wuipdD3kugCuI1Lbqyk6I_Y9lYT1dog6UctXIGu3f0" \
+  -d '{
+    "items": [
+      {"shop_id":1,"iphone_id":2,"Original_Record_Time_Zone":"+09:00","Timestamp_Time_Zone":"+09:00",
+       "Record_Time":"2025-10-10T18:30:00+09:00","Alignment_Time_Difference":0,"New_Product_Price":211000}
+    ]
+  }'
+
+
+curl -X POST "http://127.0.0.1:8000/AppleStockChecker/purchasing-time-analyses/dispatch_ts/"
+
+
+curl -X POST http://127.0.0.1:8000/AppleStockChecker/purchasing-time-analyses/dispatch_ts/\
+  -H 'Content-Type: application/json' \
+  -d '{"timestamp_iso":"2025-10-10T17:30:00+09:00"}'
 

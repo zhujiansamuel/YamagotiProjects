@@ -248,6 +248,6 @@ class PSTACompactSerializer(serializers.ModelSerializer):
             "Timestamp_Time",           # 同一批的共同时间戳
             "shop", "iphone",           # 读友好
             "shop_id", "iphone_id",     # 写/查友好
-            "New_Product_Price", "Price_A", "Price_B",
+            "New_Product_Price",
             "Alignment_Time_Difference",
         ]

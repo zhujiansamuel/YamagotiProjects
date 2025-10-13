@@ -1,38 +1,582 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="zh">
 <head>
-    <meta charset="UTF-8">
-    <title>Title</title>
+    <meta charset="utf-8"/>
+    <title>Purchasing Price — 跨店铺曲线（ECharts, 精简版）</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+    <style>
+        :root {
+            --w: 1080px;
+        }
+
+        body {
+            font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC", "Hiragino Sans", "Noto Sans CJK JP", Roboto, Arial;
+            margin: 16px;
+        }
+
+        .wrap {
+            max-width: var(--w);
+            margin: 0 auto;
+        }
+
+        fieldset {
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 12px;
+            margin-bottom: 12px;
+        }
+
+        legend {
+            padding: 0 6px;
+            color: #111827;
+            font-weight: 600;
+        }
+
+        .row3 {
+            display: grid;
+            grid-template-columns: 1.2fr .9fr .9fr;
+            gap: 10px;
+        }
+
+        .row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        label {
+            font-size: 12px;
+            color: #374151;
+            display: block;
+            margin-bottom: 6px;
+        }
+
+        input[type="text"], input[type="datetime-local"] {
+            width: 100%;
+            padding: 8px 10px;
+            border-radius: 10px;
+            border: 1px solid #d1d5db;
+            outline: none;
+        }
+
+        input:focus {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, .15);
+        }
+
+        #shops {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 6px 10px;
+            max-height: 180px;
+            overflow: auto;
+        }
+
+        #shops label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .btns {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        button {
+            border: 0;
+            padding: 9px 12px;
+            border-radius: 10px;
+            cursor: pointer;
+            background: #111827;
+            color: #fff;
+        }
+
+        button.secondary {
+            background: #374151;
+        }
+
+        button.ghost {
+            background: #f3f4f6;
+            color: #111827;
+        }
+
+        #chart {
+            width: 100%;
+            height: 540px;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+        }
+
+        .muted {
+            color: #6b7280;
+            font-size: 12px;
+        }
+
+        .error {
+            color: #b91c1c;
+            font-size: 13px;
+            margin-left: 8px;
+        }
+
+        .stat {
+            font-size: 12px;
+            white-space: pre-wrap;
+            background: #fafafa;
+            border: 1px solid #eee;
+            border-radius: 8px;
+            padding: 8px;
+        }
+    </style>
 </head>
 <body>
-<div>
-  <canvas id="myChart"></canvas>
+<div class="wrap">
+    <h2 style="margin:6px 0 12px">同一 iPhone 跨店铺价格曲线（ECharts）</h2>
+
+    <fieldset>
+        <legend>数据源</legend>
+        <div>
+            <label>Base URL</label>
+            <input id="base" type="text"
+                   value="https://verbless-sadistically-jayceon.ngrok-free.dev/AppleStockChecker/purchasing-time-analyses-psta-compact/">
+            <div class="muted" style="margin-top:4px">
+                GET <code>?start=…&end=…&shop=<b>id</b></code>（店铺用 id 传参）。前端按 <code>iphone</code>=<code>part_number</code>
+                过滤。
+            </div>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>选择条件</legend>
+        <div class="row3">
+            <div>
+                <label>iPhone（按 <code>part_number</code> 前端过滤，必填）</label>
+                <input id="iphone" list="iphone-list" type="text" placeholder="例如：MG864J/A（可从下拉选择）"/>
+                <datalist id="iphone-list"></datalist>
+                <div class="muted" id="iphone-hint" style="margin-top:4px">正在加载可选 iPhone…</div>
+            </div>
+            <div>
+                <label>开始（JST）</label>
+                <input id="start" type="datetime-local" step="60">
+            </div>
+            <div>
+                <label>结束（JST）</label>
+                <input id="end" type="datetime-local" step="60">
+            </div>
+        </div>
+
+        <div style="margin-top:10px">
+            <label>店铺（用 id 传参；图例显示店名）</label>
+            <div id="shops"></div>
+            <div class="btns" style="margin-top:8px">
+                <button class="ghost" id="select-all" type="button">全选</button>
+                <button class="ghost" id="clear-all" type="button">清空</button>
+                <span class="muted">来自 <code>/AppleStockChecker/secondhand-shops/</code></span>
+            </div>
+        </div>
+    </fieldset>
+
+    <div class="btns" style="margin:10px 0 8px">
+        <button id="load" type="button">加载并绘图</button>
+        <button id="reset" class="secondary" type="button">重置视图</button>
+        <span id="status" class="muted"></span><span id="err" class="error"></span>
+    </div>
+
+    <div id="chart"></div>
+
+    <details style="margin-top:10px">
+        <summary class="muted">调试信息（每店铺条数/过滤点数/首末时间）</summary>
+        <div id="stats" class="stat"></div>
+    </details>
+
+    <p class="muted" style="margin-top:8px">
+        * 常见原因：1) 时间段内该店铺无该机型；2) <code>part_number</code> 拼写不一致；3) 时间需要零补齐（如
+        2025-10-<b>01</b>）。<br>
+        * 时间点已转换为“毫秒整数”，确保时间轴识别。
+    </p>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
 <script>
-  const ctx = document.getElementById('myChart');
+    /* ===================== 1) 固定颜色方案 ===================== */
+    const LINE_PALETTE = [
+        "#DD1133", /* 買取商店 */
+        "#478CD8", /* 海峡通信 */
+        "#B41524", /* 買取１丁目 */
+        "#DD1133", /* モバイルミックス */
+        "#278C46", /* 森森買取 */
+        "#2DA9E8", /* 買取ルデヤ */
+        "#E71534", /* 買取Wiki */
+        "#F27474", /* 買取ホムラ */
+        "#3952A6", /* ドラゴンモバイル- */
+        "#E60012", /* モバステ- */
+        "#20AECC", /* アキモバ- */
+        "#0EC7D9", /* トゥインクル */
+        "#FFF100", /* 家電市場-shop13 */
+        "#DA7C66", /* 買取楽園-shop14 */
+        "#1C4473", /* 買取当番-shop15 */
+        "#0049A8", /* 携帯空間-shop16 */
+        "#34C6F6", /* ゲストモバイル-shop17 */
+        "#033F68", /* 買取オク-shop18 */
+        /* #84cc16, 基础-19（保留空位） */
+        "#C30D23", /* 毎日買取-shop20 */
+        /* #84cc16, 基础-21 */
+        /* #84cc16, 基础-22 */
+        /* #84cc16, 基础-23 */
+        /* #84cc16, 基础-24 */
+        /* #84cc16, 基础-25 */
+    ];
 
-  new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: ['Red', 'Blue', 'Yellow', 'Green', 'Purple', 'Orange'],
-      datasets: [{
-        label: '# of Votes',
-        data: [12, 19, 3, 5, 2, 3],
-        borderWidth: 1
-      }]
-    },
-    options: {
-      scales: {
-        y: {
-          beginAtZero: true
+    // 名称→固定色（模糊匹配），其余回退到调色板序号
+    const SHOP_COLOR_RULES = [
+        {match: /アキモバ/, color: "#20AECC"},
+        {match: /トゥインクル/, color: "#0EC7D9"},
+        {match: /モバイルミックス/, color: "#DD1133"},
+        {match: /森森買取/, color: "#278C46"},
+        {match: /ルデヤ/, color: "#2DA9E8"},
+        {match: /ホムラ/, color: "#F27474"},
+        {match: /ドラゴンモバイル/, color: "#3952A6"},
+        {match: /モバステ/, color: "#E60012"},
+        {match: /家電市場/, color: "#FFF100"},
+        {match: /買取楽園/, color: "#DA7C66"},
+        {match: /買取当番/, color: "#1C4473"},
+        {match: /携帯空間/, color: "#0049A8"},
+        {match: /ゲストモバイル/, color: "#34C6F6"},
+        {match: /買取オク/, color: "#033F68"},
+        {match: /毎日買取/, color: "#C30D23"},
+        {match: /海峡通信/, color: "#478CD8"},
+        {match: /買取１丁目/, color: "#B41524"},
+        {match: /買取商店/, color: "#DD1133"},
+        {match: /買取Wiki/, color: "#E71534"},
+    ];
+
+    function fixedColorFor(seriesName, indexFallback) {
+        for (const rule of SHOP_COLOR_RULES) {
+            if (rule.match.test(seriesName)) return rule.color;
         }
-      }
+        return LINE_PALETTE[indexFallback % LINE_PALETTE.length];
     }
-  });
-</script>
 
+    const $ = id => document.getElementById(id);
+    const fmtJPY = n => new Intl.NumberFormat('ja-JP', {
+        style: 'currency',
+        currency: 'JPY',
+        maximumFractionDigits: 0
+    }).format(n);
+    const fmtJST = ts => new Date(ts).toLocaleString('ja-JP', {hour12: false});
+    const WDAY = ['日', '月', '火', '水', '木', '金', '土'];
+
+    function toIsoLocal(dtStr) {
+        return dtStr ? dtStr + ":00+09:00" : "";
+    }
+
+    function ms(s) {
+        const t = new Date(s).valueOf();
+        return Number.isFinite(t) ? t : NaN;
+    }
+
+    function toMillis(s) {
+        const t = new Date(s).valueOf();
+        return Number.isFinite(t) ? t : NaN;
+    }
+
+    function buildURL(base, startIsoJST, endIsoJST, shopId, partNumber) {
+        const u = new URL(base);
+        u.searchParams.set("start", startIsoJST);
+        u.searchParams.set("end", endIsoJST);
+        u.searchParams.set("shop", String(shopId));
+        u.searchParams.set("iphone__part_number", String(partNumber));
+        return u.toString();
+    }
+
+    /* ============ 3) X 轴标签：竖排（月/日/（周）） ============ */
+    function verticalTickFormatter(value /* ms */) {
+        const d = new Date(value);
+        const m = d.getMonth() + 1;         // 1..12
+        const day = d.getDate();          // 1..31
+        const w = WDAY[d.getDay()];       // '日'..'土'
+        // 竖排（多行）
+        return `${m}\n月\n${day}日\n（${w}）`;
+    }
+
+    /* ============ 4) 每天 9:00–20:00 markArea 背景 ============ */
+    function buildBusinessHoursMarkArea(startMs, endMs) {
+        // 以 JST 为准，构造每天 09:00 → 20:00 的区间
+        const oneDay = 24 * 3600 * 1000;
+        const data = [];
+        // 对齐到当天 0:00（JST）
+        let d = new Date(startMs);
+        d.setHours(0, 0, 0, 0);
+        for (let t = d.valueOf(); t <= endMs + oneDay; t += oneDay) {
+            const s = new Date(t);
+            const s9 = new Date(s);
+            s9.setHours(9, 0, 0, 0);
+            const e20 = new Date(s);
+            e20.setHours(20, 0, 0, 0);
+            const s9ms = s9.valueOf(), e20ms = e20.valueOf();
+            // 只添加与区间相交的片段
+            const left = Math.max(s9ms, startMs);
+            const right = Math.min(e20ms, endMs);
+            if (left < right) {
+                data.push([{xAxis: left}, {xAxis: right}]);
+            }
+        }
+        return {
+            silent: true,
+            itemStyle: {color: '#faebd7', opacity: 0.35},
+            data
+        };
+    }
+
+
+    // --- ECharts ---
+    const chart = echarts.init($('chart'));
+    const baseOption = {
+        animation: false,
+        tooltip: {
+            show: true,
+            trigger: 'axis'
+        },
+        legend: {top: 8, left: 10, itemGap: 14},
+        grid: {left: 16, right: 48, top: 40, bottom: 12},
+        xAxis: {
+            type: 'time',
+            axisLabel: {
+                formatter: verticalTickFormatter,
+                lineHeight: 16,
+                margin: 18
+            },
+            axisTick: {alignWithLabel: true}
+        },
+        yAxis: {
+            type: 'value',
+            position: 'right',              // ✅ 纵轴放到右边
+            name: 'JPY',
+            scale: true
+        },
+        dataZoom: [
+            // 拖动/滚轮缩放作用于两张图
+            {type: 'inside', xAxisIndex: [0]},
+            {type: 'slider', xAxisIndex: [0], bottom: -2, height: 12, handleSize: 0}
+        ],
+        series: []
+    };
+    chart.setOption(baseOption);
+    $('reset').addEventListener('click', () => chart.setOption(baseOption, true));
+    window.addEventListener('resize', () => chart.resize());
+
+    const ENDPOINT_SHOPS = "https://verbless-sadistically-jayceon.ngrok-free.dev/AppleStockChecker/secondhand-shops/";
+    const ENDPOINT_IPHONES = "https://verbless-sadistically-jayceon.ngrok-free.dev/AppleStockChecker/iphones/";
+
+    async function loadShops() {
+        const box = $('shops');
+        box.innerHTML = '';
+        try {
+            const resp = await fetch(ENDPOINT_SHOPS);
+            const items = await resp.json();
+            for (const s of items) {
+                const id = `shop_${s.id}`;
+                const label = document.createElement('label');
+                label.title = s.name;
+                label.innerHTML = `<input type="checkbox" value="${s.id}" data-name="${s.name}" id="${id}"><span>${s.name}</span>`;
+                box.appendChild(label);
+            }
+        } catch (e) {
+            $('err').textContent = '加载店铺失败（CORS或网络）';
+        }
+    }
+
+    async function loadIphones() {
+        const dl = $('iphone-list');
+        dl.innerHTML = '';
+        try {
+            const resp = await fetch(ENDPOINT_IPHONES);
+            const items = await resp.json();
+            for (const i of items) {
+                const text = `${i.part_number} ｜ ${i.model_name} ${i.capacity_label} ｜ ${i.color}`;
+                const opt = document.createElement('option');
+                opt.value = i.part_number;
+                opt.label = text;
+                dl.appendChild(opt);
+            }
+            $('iphone-hint').textContent = '从下拉选择或直接输入 part_number';
+        } catch (e) {
+            $('iphone-hint').textContent = '加载 iPhone 失败（CORS或网络）';
+        }
+    }
+
+    $('select-all').addEventListener('click', () => {
+        document.querySelectorAll('#shops input[type=checkbox]').forEach(cb => cb.checked = true);
+    });
+    $('clear-all').addEventListener('click', () => {
+        document.querySelectorAll('#shops input[type=checkbox]').forEach(cb => cb.checked = false);
+    });
+
+    async function fetchOneShopSeries(base, startIsoJST, endIsoJST, shopId, shopName, partNumber) {
+        const url = buildURL(base, startIsoJST, endIsoJST, shopId, partNumber);
+        const resp = await fetch(url, {headers: {"Accept": "application/json"}});
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+
+        // 后端已按 part_number 过滤；仅做个兜底检查（极端情况）
+        let rows = Array.isArray(data) ? data : [];
+        const returned = rows.length;
+        if (rows.length && rows[0]?.iphone && rows[0].iphone !== partNumber) {
+            rows = rows.filter(r => r.iphone === partNumber);
+        }
+        const filtered = rows.length;
+
+        const seriesData = rows
+            .map(r => [
+                new Date(r.Timestamp_Time).valueOf(),  // 毫秒
+                Number(r.New_Product_Price)// 用于 tooltip 的 Δ分钟，可为空
+            ])
+            .filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]))
+            .sort((a, b) => a[0] - b[0]);
+
+        const firstT = seriesData[0]?.[0];
+        const lastT = seriesData[seriesData.length - 1]?.[0];
+
+        return {name: shopName, data: seriesData, stat: {shopId, shopName, returned, filtered, firstT, lastT, url}};
+    }
+
+    function putStats(stats) {
+        const div = $('stats');
+        const lines = stats.map(s => {
+            const t0 = s.firstT ? new Date(s.firstT).toLocaleString() : '-';
+            const t1 = s.lastT ? new Date(s.lastT).toLocaleString() : '-';
+            return `#${s.shopId} ${s.shopName}\n  返回条数: ${s.returned}\n  过滤后点数: ${s.filtered}\n  首/末时间: ${t0}  →  ${t1}\n  URL: ${s.url}\n`;
+        });
+        div.textContent = lines.join('\n');
+    }
+
+    async function loadAndPlot() {
+        $('status').textContent = '加载中…';
+        $('err').textContent = '';
+        $('stats').textContent = '';
+
+        const base = $('base').value.trim();
+        const part = $('iphone').value.trim();
+        const startIso = toIsoLocal($('start').value);
+        const endIso = toIsoLocal($('end').value);
+
+        if (!base || !startIso || !endIso) {
+            $('err').textContent = '请填写 Base 与时间范围';
+            $('status').textContent = '';
+            return;
+        }
+        if (!part) {
+            $('err').textContent = '请填写 part_number';
+            $('status').textContent = '';
+            return;
+        }
+
+        const shopCbs = [...document.querySelectorAll('#shops input[type=checkbox]:checked')];
+        if (shopCbs.length === 0) {
+            $('err').textContent = '至少选择一个店铺';
+            $('status').textContent = '';
+            return;
+        }
+
+        try {
+            const tasks = shopCbs.map(cb => {
+                const id = cb.value;
+                const name = cb.getAttribute('data-name') || id;
+                return fetchOneShopSeries(base, startIso, endIso, id, name, part)
+                    .then(r => ({ok: true, r}))
+                    .catch(e => ({ok: false, name, e}));
+            });
+
+            const results = await Promise.all(tasks);
+            const series = [];
+            const failed = [];
+            const stats = [];
+
+            for (const it of results) {
+                if (it.ok) {
+                    stats.push(it.r.stat);
+                    series.push({
+                        name: it.r.name,
+                        type: 'line',
+                        showSymbol: false,
+                        smooth: 0.15,
+                        emphasis: {focus: 'series'},
+                        data: it.r.data
+                    });
+                } else {
+                    failed.push(it.name);
+                }
+            }
+
+            putStats(stats);
+
+            const anyPoints = series.some(s => s.data.length > 0);
+            const subTitle = `iPhone: ${part} ｜ ${new Date(startIso).toLocaleString()} → ${new Date(endIso).toLocaleString()}`;
+
+            if (!anyPoints) {
+                chart.clear();
+                chart.setOption({
+                    title: {text: '无数据', subtext: subTitle, left: 'center', top: 'middle'}
+                });
+                $('status').textContent = `无数据。请检查 part_number 与时间范围是否覆盖所选店铺记录。`;
+                return;
+            }
+
+            chart.setOption({
+                tooltip: {
+                    trigger: 'axis',
+                    axisPointer: {
+                        type: 'cross'
+                    }
+                },
+                toolbox: {
+                    show: true,
+                    feature: {
+                        saveAsImage: {}
+                    }
+                },
+                legend: {data: series.map(s => s.name)},
+                xAxis: {
+                    type: 'time',
+                    axisLabel: {
+                        formatter: verticalTickFormatter,
+                        lineHeight: 16,
+                        margin: 18
+                    },
+                    axisTick: {alignWithLabel: true}
+                },
+                yAxis: {
+                    type: 'value',
+                    position: 'right',              // ✅ 纵轴放到右边
+                    name: 'JPY',
+                    scale: true
+                },
+                series
+            }, true);
+
+            $('status').textContent = `完成：${series.length} 个店铺${failed.length ? `；失败：${failed.join(', ')}` : ''}`;
+        } catch (e) {
+            $('err').textContent = '加载失败：' + e.message;
+            $('status').textContent = '';
+            console.error(e);
+        }
+    }
+
+    $('load').addEventListener('click', loadAndPlot);
+
+    (function initDefaults() {
+        $('start').value = "2025-10-11T09:00";
+        $('end').value = "2025-10-11T20:00";
+        loadShops();
+        loadIphones();
+        $('iphone').placeholder = "例如：MG864J/A";
+    })();
+</script>
 </body>
 </html>

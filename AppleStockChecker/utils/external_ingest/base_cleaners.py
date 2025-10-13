@@ -2105,6 +2105,8 @@ def clean_shop13(df: pd.DataFrame) -> pd.DataFrame:
         out["part_number"] = out["part_number"].astype(str)
     return out
 
+
+
 # ---- 颜色差额解析（支持 “青-3000”“ブルー：-2,000円”“橙/銀+1000” 等）----
 # 捕获分隔符 sep，以便在 sign 缺省时用 '-' 作为负号
 COLOR_DELTA_RE_shop14 = re.compile(
@@ -2180,7 +2182,24 @@ FAMILY_SYNONYMS_shop14 = {
     "natural": ["ナチュラル"],
     "ナチュラル": ["ナチュラル"],
 }
-
+# 颜色绝对价（无 +/- 号）：'銀206000' / '青 205,500' / 'シルバー：206000円' / '青¥205500'
+COLOR_ABS_PRICE_RE = re.compile(
+    r"""(?P<label>[^：:\-\s/、／¥円]+)\s*      # 颜色标签（不能以 +/- 开头）
+        (?:[:：]?\s*)                         # 可选分隔
+        (?:¥|￥)?\s*                          # 可选货币符号
+        (?P<amount>\d[\d,]*)\s*               # 金额
+        (?:円)?\s*$                           # 可选 '円'
+    """,
+    re.UNICODE | re.VERBOSE,
+)
+COLOR_DELTA_RE_shop14 = re.compile(
+    r"""(?P<label>[^：:\-\s/、／]+)\s*
+        (?P<sep>[：:\-])?\s*          # ← 这里改为可选 ?!
+        (?P<sign>[+\-−－])?\s*
+        (?P<amount>\d[\d,]*)\s*(円)?
+    """,
+    re.UNICODE | re.VERBOSE,
+)
 # “全色”统一价解析
 def _has_all_colors_shop14(text: str) -> Optional[int]:
     if not text:
@@ -2285,38 +2304,52 @@ def _build_color_map_shop14(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict
         cmap[key][_norm(str(r["color"]))] = (str(r["part_number"]), str(r["color"]))
     return cmap
 
-# 颜色绝对价（无 +/- 号）：'銀206000' / '青 205,500' / 'シルバー：206000円' / '青¥205500'
-COLOR_ABS_PRICE_RE = re.compile(
-    r"""(?P<label>[^：:\-\s/、／¥円]+)\s*      # 颜色标签（不能以 +/- 开头）
-        (?:[:：]?\s*)                         # 可选分隔
-        (?:¥|￥)?\s*                          # 可选货币符号
-        (?P<amount>\d[\d,]*)\s*               # 金额
-        (?:円)?\s*$                           # 可选 '円'
-    """,
-    re.UNICODE | re.VERBOSE,
-)
-
 def _extract_color_abs_prices(text: str) -> List[Tuple[str, int]]:
     """
-    从文本里提取若干 (label_raw, abs_price) 绝对价。
-    仅当片段中 **不含** '+' 或 '-' 时才视作绝对价，避免与差额冲突。
-    例：'銀206000,青205500' -> [('銀',206000), ('青',205500)]
+    抽取若干 (label_raw, abs_price) 绝对价。
+    规则：
+      - 仅当片段中 **不含** '+' / '-' 才视作绝对价，避免与差额混淆；
+      - 支持“多标签共用金额”，如 '青/銀327000'：先缓存 '青'，遇到 '銀327000' 时一并赋值。
+    例：
+      '銀206000,青205500'     -> [('銀',206000), ('青',205500)]
+      '青/銀327000'           -> [('青',327000), ('銀',327000)]
+      'シルバー：206000円'     -> [('シルバー',206000)]
     """
     out: List[Tuple[str, int]] = []
     if not text:
         return out
+
+    pending_labels: List[str] = []
+
+    def _norm_label(lbl: str) -> str:
+        return re.sub(r"[\s\u3000\xa0]+", "", lbl or "")
+
     for part in [p.strip() for p in SPLIT_TOKENS_RE.split(str(text)) if p and p.strip()]:
-        # 有显式 + / - 的片段交给差额解析
+        # 有显式 + / - 的片段交给“差额”解析，不在此处理
         if '+' in part or '-' in part or '－' in part or '−' in part:
             continue
+
         m = COLOR_ABS_PRICE_RE.search(part)
-        if not m:
+        if m:
+            label = _norm_label(m.group("label"))
+            amt = to_int_yen(m.group("amount"))
+            if label and amt is not None:
+                # 当前标签的绝对价
+                out.append((label, int(amt)))
+                # 把之前缓存的“无金额标签”一并赋值
+                for pl in pending_labels:
+                    pln = _norm_label(pl)
+                    if pln:
+                        out.append((pln, int(amt)))
+                pending_labels = []  # 清空缓存
             continue
-        label = m.group("label").strip()
-        amt = to_int_yen(m.group("amount"))
-        if amt is None:
-            continue
-        out.append((label, int(amt)))
+
+        # 走到这里：这个片段没有金额，可能是“青”或“青/銀”的一段
+        for tok in re.split(r"[／/]", part):
+            tok = _norm_label(tok)
+            if tok:
+                pending_labels.append(tok)
+
     return out
 
 
