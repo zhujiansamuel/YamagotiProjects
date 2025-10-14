@@ -23,7 +23,8 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
     SpectacularRedocView,
 )
-
+from django.http import HttpResponse
+def health(_): return HttpResponse("ok")
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('sp/', include('simplepro.urls')),
@@ -32,5 +33,6 @@ urlpatterns = [
     path("AppleStockChecker/redoc/", SpectacularRedocView.as_view(url_name="schema"), name="redoc"),
     path("AppleStockChecker/", include("AppleStockChecker.urls")),
 path("accounts/", include("django.contrib.auth.urls")),
+path("healthz/", health),
 
 ]
