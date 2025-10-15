@@ -1,233 +1,1296 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="ja">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>二手店价格矩阵（登录后可见）</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    *{scrollbar-width:thin}::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:8px}
-    .sticky-col { position: sticky; left: 0; background: #fff; }
-    .cell-loading::after{ content: "…"; animation: dots 1s steps(5,end) infinite; }
-    @keyframes dots { 0%,20%{content:""} 40%{content:"."} 60%{content:".."} 80%,100%{content:"..."} }
-  </style>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>#iPhone17 買取相場 – 統合テンプレート（店舗列付き）</title>
+    <style>
+        :root {
+            --bg: #f6f7fb;
+            --card: #ffffff;
+            --grid-border: #d9deea;
+            --header-bg: #ff9900;
+            --text: #1f2430;
+            --muted: #6b7380;
+            --positive: #0f9d58;
+            --negative: #d93025;
+            --gap: -43px;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font: 14px/1.4 -apple-system, BlinkMacSystemFont, 'Hiragino Kaku Gothic ProN', Meiryo, sans-serif;
+        }
+
+        .card {
+            background: var(--card);
+            border: 1px solid var(--grid-border);
+            border-radius: 8px;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, .05);
+            margin: 20px auto;
+            width: 95%;
+            padding: 10px;
+            overflow-x: auto;
+        }
+
+        .model-section {
+            margin-bottom: var(--gap);
+        }
+
+        .model-header {
+            background: var(--header-bg);
+            padding: 10px 12px;
+            font-weight: bold;
+            border-bottom: 1px solid var(--grid-border);
+        }
+
+        table {
+            width: 5000px;
+            border-collapse: collapse;
+            table-layout: fixed;
+        }
+
+        th, td {
+            border: 1px solid var(--grid-border);
+            padding: 6px 8px;
+            text-align: right;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        th {
+            background: var(--header-bg);
+            text-align: center;
+        }
+
+
+        /* 同列幅を統一 */
+        .col-model {
+            width: 140px;
+            text-align: left;
+        }
+
+        .col-capacity {
+            width: 100px;
+            text-align: left;
+        }
+
+        .col-color {
+            width: 120px;
+            text-align: left;
+        }
+
+        .col-num {
+            width: 120px;
+        }
+
+        .shop-col {
+            width: 120px;
+        }
+
+
+        .diff.pos {
+            color: var(--positive);
+            font-weight: bold;
+        }
+
+        .diff.neg {
+            color: var(--negative);
+            font-weight: bold;
+        }
+
+
+        .shop-head {
+            color: #fff;
+            background: #351c75;
+            font-weight: 600;
+        }
+
+        /* 店舗ヘッダーの色（白文字）*/
+        .shop-head {
+            color: #fff;
+            line-height: 1.1;
+            font-weight: 600;
+        }
+
+        .shop-買取商店 {
+            background: #351c75
+        }
+
+        .shop-海峡通信 {
+            background: #351c75
+        }
+
+        .shop-買取１丁目 {
+            background: #351c75
+        }
+
+        .shop-モバイルミックス {
+            background: #351c75
+        }
+
+        .shop-森森買取 {
+            background: #351c75
+        }
+
+        .shop-買取ルデヤ {
+            background: #351c75
+        }
+
+        .shop-買取Wiki {
+            background: #351c75
+        }
+
+        .shop-買取ホムラ {
+            background: #351c75
+        }
+
+        .shop-トゥインクル {
+            background: #351c75
+        }
+
+        .shop-家電市場 {
+            background: #351c75;
+        }
+
+        .shop-買取楽園 {
+            background: #351c75
+        }
+
+        .shop-買取当番 {
+            background: #351c75
+        }
+
+        .shop-携帯空間 {
+            background: #351c75
+        }
+
+        .shop-ゲストモバイル {
+            background: #351c75
+        }
+
+        .shop-買取オク {
+            background: #351c75
+        }
+
+        .shop-毎日買取 {
+            background: #351c75
+        }
+
+        .shop-MobileZone {
+            background: #351c75
+        }
+
+        /* 旧名や表記ゆれ対策（末尾ハイフン表記にも色を適用）*/
+        .shop-ドラゴンモバイル- {
+            background: #351c75
+        }
+
+        .shop-モバステ- {
+            background: #351c75
+        }
+
+        .shop-アキモバ- {
+            background: #351c75
+        }
+
+        /* thead 高さ0指定 */
+        table thead.thead-zero,
+        table thead.thead-zero tr,
+        table thead.thead-zero th,
+        table thead[style*="height:0"],
+        table thead[style*="height:0"] tr,
+        table thead[style*="height:0"] th {
+            height: 0 !important;
+            padding: 0 !important;
+            border: 0 !important;
+            line-height: 0 !important;
+            font-size: 0 !important;
+            overflow: hidden !important;
+            visibility: collapse !important;
+        }
+
+        table thead.thead-zero th::before,
+        table thead[style*="height:0"] th::before {
+            content: "";
+            display: block;
+            width: 100%;
+            height: 0;
+        }
+
+
+    </style>
 </head>
-<body class="bg-zinc-50 text-zinc-900 min-h-screen">
-  <div class="max-w-[120rem] mx-auto p-4 space-y-4">
-    <header class="flex items-center gap-3">
-      <h1 class="text-xl font-semibold">二手店价格矩阵（15 分钟时间戳截断）</h1>
-      <div class="ml-auto text-sm text-zinc-600">
-        已登录后可查看；未登录将跳转到 <code>/accounts/login/</code>。
-      </div>
-    </header>
+<body>
+<div class="card">
+    <!-- ================= iPhone 17 Pro Max ================= -->
+    <div class="model-section">
+        <!--       <div class="model-header">iPhone 17 Pro Max</div> -->
+        <table>
+            <thead>
+            <tr>
+                <th class="col-model">機種</th>
+                <th class="col-capacity">容量</th>
+                <th class="col-num">定価</th>
+                <th class="col-num">最高</th>
+                <th class="col-num">差額</th>
+                <th class="col-num">買取率</th>
+                <th class="col-num">前日比</th>
+                <th class="col-num">平均値</th>
+                <th class="col-color">カラー</th>
+                <!-- Stores -->
+                <th class="shop-col shop-head shop-買取商店">買取商店</th>
+                <th class="shop-col shop-head shop-海峡通信">海峡通信</th>
+                <th class="shop-col shop-head shop-買取１丁目">買取１丁目</th>
+                <th class="shop-col shop-head shop-モバイルミックス">モバイルミックス</th>
+                <th class="shop-col shop-head shop-森森買取">森森買取</th>
+                <th class="shop-col shop-head shop-買取ルデヤ">買取ルデヤ</th>
+                <th class="shop-col shop-head shop-買取Wiki">買取Wiki</th>
+                <th class="shop-col shop-head shop-買取ホムラ">買取ホムラ</th>
+                <th class="shop-col shop-head shop-ドラゴンモバイル-">ドラゴンモバイル-</th>
+                <th class="shop-col shop-head shop-モバステ-">モバステ-</th>
+                <th class="shop-col shop-head shop-アキモバ-">アキモバ-</th>
+                <th class="shop-col shop-head shop-トゥインクル">トゥインクル</th>
+                <th class="shop-col shop-head shop-家電市場">家電市場</th>
+                <th class="shop-col shop-head shop-買取楽園">買取楽園</th>
+                <th class="shop-col shop-head shop-買取当番">買取当番</th>
+                <th class="shop-col shop-head shop-携帯空間">携帯空間</th>
+                <th class="shop-col shop-head shop-ゲストモバイル">ゲストモバイル</th>
+                <th class="shop-col shop-head shop-買取オク">買取オク</th>
+                <th class="shop-col shop-head shop-毎日買取">毎日買取</th>
+                <th class="shop-col shop-head shop-MobileZone">Mobile Zone</th>
+            </tr>
+            </thead>
+            <tbody>
+            <!-- 256GB -->
+            <tr>
+                <td rowspan="20" style="text-align:left;">iPhone 17 Pro Max</td>
+                <td rowspan="5" style="text-align:left;">256GB</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+            </tr>
 
-    <!-- 控件：API Base、时间戳、刷新（不再需要 Token） -->
-    <section class="rounded-2xl border border-zinc-200 bg-white p-3 space-y-3">
-      <div class="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
-        <div class="md:col-span-2">
-          <label class="block text-sm mb-1">API Base（/AppleStockChecker 或 /api）</label>
-          <input id="apiBase" type="text" placeholder="/AppleStockChecker" class="w-full px-3 py-2 rounded-lg border border-zinc-200 outline-none"/>
-        </div>
-        <div class="md:col-span-2">
-          <label class="block text-sm mb-1">时间戳（15 分步进）</label>
-          <input id="ts" type="datetime-local" step="900" class="w-full px-3 py-2 rounded-lg border border-zinc-200 outline-none"/>
-        </div>
-        <div class="md:col-span-1 flex items-end gap-2">
-          <button id="btnPrev" class="px-3 py-2 rounded-lg border border-zinc-200">← -15 分</button>
-          <button id="btnNext" class="px-3 py-2 rounded-lg border border-zinc-200">+15 分 →</button>
-          <button id="btnRefresh" class="px-3 py-2 rounded-lg bg-black text-white">刷新</button>
-        </div>
-      </div>
-      <div class="flex items-center gap-4 text-sm">
-        <div>列顺序：買取一丁目（shop3）→ 森森買取（shop5）→ 買取ルデヤ（shop6）→ 買取ホムラ（shop7）→ 買取wiki（shop8）→ アキモバ（shop9）→ ドラゴンモバイル（shop10）</div>
-        <div id="status" class="ml-auto text-zinc-500"></div>
-      </div>
-    </section>
 
-    <!-- 表格 -->
-    <section class="rounded-2xl border border-zinc-200 bg-white p-0 overflow-auto">
-      <table id="matrix" class="min-w-full text-xs">
-        <thead class="bg-zinc-100 sticky top-0 z-10">
-        <tr id="thead-row">
-          <th class="p-2 text-left sticky-col z-20">机型 / 容量 / 颜色 (PN)</th>
-        </tr>
-        </thead>
-        <tbody id="tbody"></tbody>
-      </table>
-    </section>
-  </div>
+            <tr>
+                <td style="text-align:left;">ALL平均</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
 
-<script>
-const $ = s => document.querySelector(s);
-const fmt = (n) => (n==null || Number.isNaN(n)) ? "-" : Number(n).toLocaleString();
-const esc = (s) => (s??"").toString().replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-const SHOPS = [
-  { code: "shop3",  display: "買取一丁目",     name: "買取一丁目" },
-  { code: "shop5",  display: "森森買取",       name: "森森買取" },
-  { code: "shop6",  display: "買取ルデヤ",     name: "買取ルデヤ" },
-  { code: "shop7",  display: "買取ホムラ",     name: "買取ホムラ" },
-  { code: "shop8",  display: "買取wiki",       name: "買取wiki" },
-  { code: "shop9",  display: "アキモバ",       name: "アキモバ" },
-  { code: "shop10", display: "ドラゴンモバイル", name: "ドラゴンモバイル" }
-];
+            <tr>
+                <td style="background:#f68a44;text-align:left;">Orange</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
+            <tr>
 
-let API_BASE = "/AppleStockChecker";
-let ROWS = [];
-let SHOP_ID_MAP = {};
 
-// —— 辅助：若 401/未登录，跳转登录页 —— //
-function handleAuth(resp) {
-  if (resp.status === 401 || resp.status === 403) {
-    const next = encodeURIComponent(location.pathname + location.search);
-    location.href = `/accounts/login/?next=${next}`;
-    return false;
-  }
-  // 部分站点会 302 到登录页；fetch 不跟随跨域重定向的 body，此处简单处理：
-  if (resp.redirected && resp.url.includes("/accounts/login")) {
-    const next = encodeURIComponent(location.pathname + location.search);
-    location.href = `/accounts/login/?next=${next}`;
-    return false;
-  }
-  return true;
-}
+                <td style="background:#4b5780;text-align:left;">Blue</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
+            <tr>
 
-// 同域请求必须带上 Cookie
-const FETCH_INIT = { credentials: "same-origin" };
 
-// 15 分钟对齐
-function snap15(date) { const d=new Date(date); d.setSeconds(0,0); const m=d.getMinutes(); d.setMinutes(m-(m%15)); return d; }
-function toLocalInputValue(d) { const z=new Date(d.getTime()-d.getTimezoneOffset()*60000); return z.toISOString().slice(0,16); }
+                <td style="background:#e6e6e6;text-align:left;">Silver</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
 
-function normalizeApiBase(v){
-  let s=(v||"").trim(); if(!s) return "/AppleStockChecker";
-  if (s.startsWith("//")) s = location.protocol + s;
-  return s.replace(/\/+$/,"");
-}
+            <!-- 512GB -->
+            <tr>
+                <td rowspan="5" style="text-align:left;">512GB</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
 
-// 载入店铺
-async function loadShops() {
-  SHOP_ID_MAP = {};
-  let url = `${API_BASE}/secondhand-shops/?ordering=name`;
-  while (url) {
-    const r = await fetch(url, FETCH_INIT);
-    if (!handleAuth(r)) return Promise.reject("未登录");
-    if (!r.ok) throw new Error("加载门店失败");
-    const j = await r.json();
-    (j.results||j).forEach(s => SHOP_ID_MAP[s.name]=s.id);
-    url = j.next ? new URL(j.next, location.origin).toString() : null;
-  }
-}
 
-// 载入 iPhone 17 & Air
-async function loadIphones() {
-  ROWS = [];
-  async function fetchAll(q) {
-    let url = `${API_BASE}/iphones/?search=${encodeURIComponent(q)}&ordering=model_name`;
-    const all = [];
-    while (url) {
-      const r = await fetch(url, FETCH_INIT);
-      if (!handleAuth(r)) return Promise.reject("未登录");
-      if (!r.ok) throw new Error("加载 iPhone 列表失败");
-      const j = await r.json();
-      all.push(...(j.results||j));
-      url = j.next ? new URL(j.next, location.origin).toString() : null;
-    }
-    return all;
-  }
-  const list17 = await fetchAll("iPhone 17");
-  const listAir = await fetchAll("iPhone Air");
-  const all = [...list17, ...listAir].filter(x=>{
-    const m=(x.model_name||"").trim(); return m.startsWith("iPhone 17") || m==="iPhone Air";
-  });
-  ROWS = all.map(x=>{
-    const cap = (x.capacity_gb % 1024 === 0) ? `${x.capacity_gb/1024}TB` : `${x.capacity_gb}GB`;
-    return { pn:x.part_number, label:`${x.model_name} ${cap} ${x.color} (${x.part_number})`,
-      model_name:x.model_name, capacity_gb:x.capacity_gb, color:x.color };
-  });
-  const orderOfModel = m => m==="iPhone Air"?1:0;
-  ROWS.sort((a,b)=>{
-    if(orderOfModel(a.model_name)!==orderOfModel(b.model_name)) return orderOfModel(a.model_name)-orderOfModel(b.model_name);
-    if(a.model_name!==b.model_name) return a.model_name.localeCompare(b.model_name);
-    if(a.capacity_gb!==b.capacity_gb) return a.capacity_gb-b.capacity_gb;
-    return a.color.localeCompare(b.color);
-  });
-}
+            <tr class="avg-row">
+                <td colspan="1" style="text-align:left;">ALL平均</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
 
-// 渲染骨架
-function renderSkeleton() {
-  $("#thead-row").innerHTML = `<th class="p-2 text-left sticky-col z-20">机型 / 容量 / 颜色 (PN)</th>` +
-    SHOPS.map(s=>`<th class="p-2 text-center w-36">${esc(s.display)}</th>`).join("");
-  const tb=$("#tbody"); tb.innerHTML="";
-  ROWS.forEach((r, idx)=>{
-    const tr=document.createElement("tr");
-    tr.innerHTML = `<td class="p-2 sticky-col z-10 bg-white border-b">${esc(r.label)}</td>` +
-      SHOPS.map((s,j)=>`<td class="p-2 text-center align-middle border-b" data-cell="${idx}-${j}"><span class="cell-loading"></span></td>`).join("");
-    tb.appendChild(tr);
-  });
-}
+            <tr>
+                <td style="background:#f68a44;text-align:left;">Orange</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
 
-// 单元格
-async function fetchCell(pn, shopId, tsISO) {
-  if (!shopId) return null;
-  const url = `${API_BASE}/purchasing-price-records/?iphone_part_number=${encodeURIComponent(pn)}&shop=${shopId}&recorded_before=${encodeURIComponent(tsISO)}&ordering=-recorded_at`;
-  const r = await fetch(url, FETCH_INIT);
-  if (!handleAuth(r)) return Promise.reject("未登录");
-  if (!r.ok) return null;
-  const j = await r.json(); const rows=j.results||j;
-  return rows && rows.length ? rows[0] : null;
-}
+            <tr>
+                <td style="background:#4b5780;text-align:left;">Blue</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
 
-async function loadMatrix(ts) {
-  const tsISO=new Date(ts.getTime()-ts.getTimezoneOffset()*60000).toISOString();
-  const tb=$("#tbody");
-  const tasks=[];
-  for(let r=0;r<ROWS.length;r++) for(let c=0;c<SHOPS.length;c++) tasks.push({r,c});
-  const concurrency=10; let done=0; const status=$("#status"); const queue=tasks.slice();
-  function tick(){status.textContent=`载入 ${done}/${tasks.length}`;}
-  const runners=Array.from({length:Math.min(concurrency,queue.length)}, async ()=>{
-    while(queue.length){
-      const {r,c}=queue.shift(); const cell=tb.querySelector(`[data-cell="${r}-${c}"]`);
-      const s=SHOPS[c]; const shopId=SHOP_ID_MAP[s.name]||null; const pn=ROWS[r].pn;
-      try{
-        const rec=await fetchCell(pn, shopId, tsISO);
-        if(rec){ cell.innerHTML=`<span title="${esc(rec.recorded_at||"")}">¥${fmt(rec.price_new)}</span>`; }
-        else { cell.innerHTML=`<span class="text-zinc-400">-</span>`; }
-      }catch(e){ if(e!=="未登录") cell.innerHTML=`<span class="text-red-600">ERR</span>`; }
-      done++; tick();
-    }
-  });
-  const t0=performance.now(); tick(); await Promise.all(runners);
-  status.textContent = `完成 ${done}/${tasks.length}，耗时 ${Math.round(performance.now()-t0)} ms`;
-}
+            <tr>
+                <td style="background:#e6e6e6;text-align:left;">Silver</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
 
-// 绑定
-function initControls(){
-  const savedBase=localStorage.getItem("price_matrix:api")||"/AppleStockChecker";
-  API_BASE=normalizeApiBase(savedBase); $("#apiBase").value=API_BASE;
-  const now=snap15(new Date()); $("#ts").value=toLocalInputValue(now);
-  $("#apiBase").addEventListener("change", (e)=>{ API_BASE=normalizeApiBase(e.target.value); $("#apiBase").value=API_BASE; localStorage.setItem("price_matrix:api", API_BASE); });
-  $("#btnPrev").addEventListener("click", ()=>{ const el=$("#ts"); const d=new Date(el.value); el.value=toLocalInputValue(new Date(d.getTime()-15*60*1000)); });
-  $("#btnNext").addEventListener("click", ()=>{ const el=$("#ts"); const d=new Date(el.value); el.value=toLocalInputValue(new Date(d.getTime()+15*60*1000)); });
-  $("#btnRefresh").addEventListener("click", async ()=>{
-    try{
-      $("#status").textContent="准备数据…";
-      await loadShops();
-      $("#status").textContent="加载机型…";
-      await loadIphones();
-      renderSkeleton();
-      const ts=new Date($("#ts").value);
-      await loadMatrix(ts);
-    }catch(e){
-      if(e==="未登录") return;
-      $("#status").textContent="失败："+(e.message||e);
-    }
-  });
-}
 
-(async function main(){
-  initControls();
-  $("#btnRefresh").click();
-})();
-</script>
+            <!-- 1TB -->
+            <tr>
+                <td rowspan="5" style="text-align:left;">1TB</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+            </tr>
+
+            <tr class="avg-row">
+                <td colspan="1" style="text-align:left;">ALL平均</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
+<tr>
+            <td style="background:#f68a44;text-align:left;">Orange</td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            </tr>
+            <tr>
+
+                <td style="background:#4b5780;text-align:left;">Blue</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
+            <tr>
+
+                <td style="background:#e6e6e6;text-align:left;">Silver</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
+            <!-- 2TB -->
+            <tr>
+                <td rowspan="5" style="text-align:left;">2TB</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+            </tr>
+            <tr class="avg-row">
+                <td colspan="1" style="text-align:left;">ALL平均</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
+<tr>
+            <td style="background:#f68a44;text-align:left;">Orange</td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            </tr>
+            <tr>
+
+                <td style="background:#4b5780;text-align:left;">Blue</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
+            <tr>
+
+                <td style="background:#e6e6e6;text-align:left;">Silver</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
+
+
+            </tbody>
+        </table>
+    </div>
+
+    <div class="model-gap"></div>
+
+    <!-- ================= iPhone 17 Pro ================= -->
+    <div class="model-section">
+        <!--       <div class="model-header">iPhone 17 Pro</div> -->
+        <table>
+            <thead class="thead-zero">
+            <tr>
+                <th class="col-model">機種</th>
+                <th class="col-capacity">容量</th>
+                <th class="col-num">定価</th>
+                <th class="col-num">最高</th>
+                　
+                <th class="col-num">差額</th>
+                <th class="col-num">買取率</th>
+                <th class="col-num">平均値</th>
+                <th class="col-num">前日比</th>
+                <th class="col-color">カラー</th>
+                <!-- Stores -->
+                <th class="shop-col shop-head shop-買取商店">買取商店</th>
+                <th class="shop-col shop-head shop-海峡通信">海峡通信</th>
+                <th class="shop-col shop-head shop-買取１丁目">買取１丁目</th>
+                <th class="shop-col shop-head shop-モバイルミックス">モバイルミックス</th>
+                <th class="shop-col shop-head shop-森森買取">森森買取</th>
+                <th class="shop-col shop-head shop-買取ルデヤ">買取ルデヤ</th>
+                <th class="shop-col shop-head shop-買取Wiki">買取Wiki</th>
+                <th class="shop-col shop-head shop-買取ホムラ">買取ホムラ</th>
+                <th class="shop-col shop-head shop-ドラゴンモバイル-">ドラゴンモバイル-</th>
+                <th class="shop-col shop-head shop-モバステ-">モバステ-</th>
+                <th class="shop-col shop-head shop-アキモバ-">アキモバ-</th>
+                <th class="shop-col shop-head shop-トゥインクル">トゥインクル</th>
+                <th class="shop-col shop-head shop-家電市場">家電市場</th>
+                <th class="shop-col shop-head shop-買取楽園">買取楽園</th>
+                <th class="shop-col shop-head shop-買取当番">買取当番</th>
+                <th class="shop-col shop-head shop-携帯空間">携帯空間</th>
+                <th class="shop-col shop-head shop-ゲストモバイル">ゲストモバイル</th>
+                <th class="shop-col shop-head shop-買取オク">買取オク</th>
+                <th class="shop-col shop-head shop-毎日買取">毎日買取</th>
+                <th class="shop-col shop-head shop-MobileZone">Mobile Zone</th>
+            </tr>
+            </thead>
+            <tbody>
+            <!-- 256GB -->
+            <tr>
+                <td rowspan="15" style="text-align:left;">iPhone 17 Pro</td>
+                <td rowspan="5" style="text-align:left;">256GB</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+            </tr>
+
+
+            <tr class="avg-row">
+                <td colspan="1" style="text-align:left;">ALL平均</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
+
+<tr>
+            <td style="background:#f68a44;text-align:left;">Orange</td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            </tr>
+            <tr>
+
+
+                <td style="background:#4b5780;text-align:left;">Blue</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
+            <tr>
+
+
+                <td style="background:#e6e6e6;text-align:left;">Silver</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
+
+            <!-- 512GB -->
+            <tr>
+                <td rowspan="5" style="text-align:left;">512GB</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+            </tr>
+
+            <tr class="avg-row">
+                <td colspan="1" style="text-align:left;">ALL平均</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
+            <tr>
+                <td style="background:#f68a44;text-align:left;">Orange</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
+
+
+            <tr>
+                <td style="background:#4b5780;text-align:left;">Blue</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
+            <tr>
+
+
+                <td style="background:#e6e6e6;text-align:left;">Silver</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
+            <!-- 1TB -->
+            <tr>
+                <td rowspan="5" style="text-align:left;">1TB</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+                <td rowspan="5">194,800</td>
+            </tr>
+            <tr class="avg-row">
+                <td colspan="1" style="text-align:left;">ALL平均</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
+
+            <tr>
+                <td style="background:#f68a44;text-align:left;">Orange</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
+
+            <tr>
+                <td style="background:#4b5780;text-align:left;">Blue</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
+
+            <tr>
+                <td style="background:#e6e6e6;text-align:left;">Silver</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
+
+
+            </tbody>
+        </table>
+    </div>
+
+    <div class="model-gap"></div>
+
+    <!-- ================= iPhone 17 ================= -->
+    <div class="model-section">
+        <!--       <div class="model-header">iPhone 17</div> -->
+        <table>
+            <thead class="thead-zero">
+            <tr>
+                <th class="col-model">機種</th>
+                <th class="col-capacity">容量</th>
+                <th class="col-num">定価</th>
+                <th class="col-num">最高</th>
+                　
+                <th class="col-num">差額</th>
+                <th class="col-num">買取率</th>
+                <th class="col-num">平均値</th>
+                <th class="col-num">前日比</th>
+                <th class="col-color">カラー</th>
+                <!-- Stores -->
+                <th class="shop-col shop-head shop-買取商店">買取商店</th>
+                <th class="shop-col shop-head shop-海峡通信">海峡通信</th>
+                <th class="shop-col shop-head shop-買取１丁目">買取１丁目</th>
+                <th class="shop-col shop-head shop-モバイルミックス">モバイルミックス</th>
+                <th class="shop-col shop-head shop-森森買取">森森買取</th>
+                <th class="shop-col shop-head shop-買取ルデヤ">買取ルデヤ</th>
+                <th class="shop-col shop-head shop-買取Wiki">買取Wiki</th>
+                <th class="shop-col shop-head shop-買取ホムラ">買取ホムラ</th>
+                <th class="shop-col shop-head shop-ドラゴンモバイル-">ドラゴンモバイル-</th>
+                <th class="shop-col shop-head shop-モバステ-">モバステ-</th>
+                <th class="shop-col shop-head shop-アキモバ-">アキモバ-</th>
+                <th class="shop-col shop-head shop-トゥインクル">トゥインクル</th>
+                <th class="shop-col shop-head shop-家電市場">家電市場</th>
+                <th class="shop-col shop-head shop-買取楽園">買取楽園</th>
+                <th class="shop-col shop-head shop-買取当番">買取当番</th>
+                <th class="shop-col shop-head shop-携帯空間">携帯空間</th>
+                <th class="shop-col shop-head shop-ゲストモバイル">ゲストモバイル</th>
+                <th class="shop-col shop-head shop-買取オク">買取オク</th>
+                <th class="shop-col shop-head shop-毎日買取">毎日買取</th>
+                <th class="shop-col shop-head shop-MobileZone">Mobile Zone</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr>
+                <td rowspan="2" style="text-align:left;">iPhone 17</td>
+                <td style="text-align:left;">256GB</td>
+                <td>194,800</td>
+                <td>194,800</td>
+                <td>194,800</td>
+                <td>194,800</td>
+                <td>194,800</td>
+                <td>194,800</td>
+                <td style="text-align:left;">(平均値)</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
+
+            <tr>
+                <td style="text-align:left;">512GB</td>
+                <td>194,800</td>
+                <td>194,800</td>
+                <td>194,800</td>
+                <td>194,800</td>
+                <td>194,800</td>
+                <td>194,800</td>
+                <td style="text-align:left;">(平均値)</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="model-gap"></div>
+
+    <!-- ================= iPhone Air ================= -->
+    <div class="model-section">
+        <!--       <div class="model-header">iPhone Air</div> -->
+        <table>
+            <thead style='height:0'>
+            <tr>
+                <th class="col-model">機種</th>
+                <th class="col-capacity">容量</th>
+                <th class="col-num">定価</th>
+                <th class="col-num">最高</th>
+                　
+                <th class="col-num">差額</th>
+                <th class="col-num">買取率</th>
+                <th class="col-num">平均値</th>
+                <th class="col-num">前日比</th>
+                <th class="col-color">カラー</th>
+                <!-- Stores -->
+                <th class="shop-col shop-head shop-買取商店">買取商店</th>
+                <th class="shop-col shop-head shop-海峡通信">海峡通信</th>
+                <th class="shop-col shop-head shop-買取１丁目">買取１丁目</th>
+                <th class="shop-col shop-head shop-モバイルミックス">モバイルミックス</th>
+                <th class="shop-col shop-head shop-森森買取">森森買取</th>
+                <th class="shop-col shop-head shop-買取ルデヤ">買取ルデヤ</th>
+                <th class="shop-col shop-head shop-買取Wiki">買取Wiki</th>
+                <th class="shop-col shop-head shop-買取ホムラ">買取ホムラ</th>
+                <th class="shop-col shop-head shop-ドラゴンモバイル-">ドラゴンモバイル-</th>
+                <th class="shop-col shop-head shop-モバステ-">モバステ-</th>
+                <th class="shop-col shop-head shop-アキモバ-">アキモバ-</th>
+                <th class="shop-col shop-head shop-トゥインクル">トゥインクル</th>
+                <th class="shop-col shop-head shop-家電市場">家電市場</th>
+                <th class="shop-col shop-head shop-買取楽園">買取楽園</th>
+                <th class="shop-col shop-head shop-買取当番">買取当番</th>
+                <th class="shop-col shop-head shop-携帯空間">携帯空間</th>
+                <th class="shop-col shop-head shop-ゲストモバイル">ゲストモバイル</th>
+                <th class="shop-col shop-head shop-買取オク">買取オク</th>
+                <th class="shop-col shop-head shop-毎日買取">毎日買取</th>
+                <th class="shop-col shop-head shop-MobileZone">Mobile Zone</th>
+            </tr>
+            </thead>
+
+            <tbody>
+            <tr>
+                <td rowspan="2" style="text-align:left;">iPhone Air</td>
+                <td style="text-align:left;">256GB</td>
+                <td>194,800</td>
+                <td>194,800</td>
+                <td>194,800</td>
+                <td>194,800</td>
+                <td>194,800</td>
+                <td>194,800</td>
+                <td style="text-align:left;">(平均値)</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
+
+            <tr>
+                <td style="text-align:left;">512GB</td>
+                <td>194,800</td>
+                <td>194,800</td>
+                <td>194,800</td>
+                <td>194,800</td>
+                <td>194,800</td>
+                <td>194,800</td>
+                <td style="text-align:left;">(平均値)</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
+
+
+            </tbody>
+        </table>
+    </div>
+</div>
 </body>
 </html>

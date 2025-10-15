@@ -28,8 +28,7 @@ EXEMPT_PATTERNS = [
     r"^/AppleStockChecker/purchasing-price-records/import-tradein-xlsx/?$",
     r"^/AppleStockChecker/purchasing-time-analyses-psta-compact/?$",
     r"^/AppleStockChecker/purchasing-price-records/?$",
-
-
+    r"^/AppleStockChecker/purchasing-price-records/ingest-webscraper/?$",
 
 ]
 

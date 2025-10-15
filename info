@@ -202,7 +202,9 @@ celery -A YamagotiProjects beat -l info
 celery -A YamagotiProjects flower --port=5555
 
 
-celery -A YamagotiProjects beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+celery -A YamagotiProjects beat -l info --scheduler 
+
+django_celery_beat.schedulers:DatabaseScheduler
 
 
 celery -A YamagotiProjects worker -l info -P threads --concurrency=8
@@ -236,6 +238,46 @@ shop20--->ok
 
 
 
+ docker compose build
+docker compose run --rm -v "$PWD":/app web python manage.py makemigrations AppleStockChecker
+docker compose run --rm -v "$PWD":/app web python manage.py makemigrations AppleStockChecker
+
+docker compose run --rm -v "$PWD":/app -w /app web bash -lc '
+  unset DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD && \
+  python manage.py dumpdata \
+    --natural-foreign --natural-primary \
+    -e contenttypes -e admin.logentry -e sessions -e auth.permission \
+    --indent 2 > /app/sqlite_data.json
+'
+
+docker compose run --rm web bash -lc '
+  unset DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD;
+  python manage.py dumpdata \
+    --natural-foreign --natural-primary \
+    -e contenttypes -e admin.logentry -e sessions -e auth.permission \
+    --indent 2 > /app/sqlite_data.json
+'
+
+docker compose run --rm web bash -lc '
+  python manage.py dumpdata \
+    --database=sqlite_old \
+    --natural-foreign --natural-primary \
+    -e contenttypes -e admin.logentry -e sessions -e auth.permission \
+    --indent 2 > sqlite_data.json'
+
+
+
+
+docker compose run --rm web bash -lc '
+  python manage.py loaddata /app/sqlite_data.json
+'
+
+
+# 在项目根目录执行（有 docker-compose.yml 的地方）
+docker compose run --rm -v web python manage.py makemigrations AppleStockChecker
+
+
+
 CREATE USER samuelzhujian WITH PASSWORD 'Xdb73008762' LOGIN;
 CREATE DATABASE yappdb OWNER samuelzhujian ENCODING 'UTF8';
 GRANT ALL PRIVILEGES ON DATABASE yappdb TO samuelzhujian;
@@ -245,7 +287,13 @@ export SQLITE_PATH="/Users/syu/PycharmProjects/YamagotiProjects/db.sqlite3"
 export PG_URL="postgresql://samuelzhujian:Xdb73008762@localhost:5432/yappdb"
 
 
+docker compose exec -T db bash -lc 'psql -U "$POSTGRES_USER" -d yappdb -c "\dt"'
+
 export DATABASE_URL="postgresql://samuelzhujian:Xdb73008762@127.0.0.1:5432/yappdb"
+
+docker compose exec -T db bash psql "postgresql://samuelzhu:Xdb73008762@127.0.0.1:5432/yappdb" -c "\dt"
+
+docker compose exec -T db bash -lc 'psql "postgresql://samuelzhu:Xdb73008762@127.0.0.1:5432/yappdb" -c "\dt" '
 
 
 psql "postgresql://samuelzhujian:Xdb73008762@127.0.0.1:5432/yappdb" -c "\dt"
@@ -281,7 +329,7 @@ noglob websocat -t "ws://127.0.0.1:8000/ws/stream/psta/?token=eyJhbGciOiJIUzI1Ni
 
 
 
-noglob websocat -t "ws://localhost:8000/ws/stream/psta/?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwMTc0NTA5LCJpYXQiOjE3NjAxNzI3MDksImp0aSI6IjNkMzNjYzMyYWEzNDRjYzg5OTk2NWYyOGE4YWNjZGUxIiwidXNlcl9pZCI6IjEifQ.tAJkE8XjKkgIRDyHupJWAVboabbQl1TJ9VpsaG35ssc"
+noglob websocat -t "ws://localhost:8000/ws/stream/psta/?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwMzMwMDg0LCJpYXQiOjE3NjAzMjgyODQsImp0aSI6IjgxYjZlM2UxZTk2OTQ4MTFhZDYzMWY1N2I3YTg3MDQ1IiwidXNlcl9pZCI6IjEifQ.fK4Ajk29I_VLT9virnzMvnc5Quol4eg7exh3qX4RY64"
 
 
 uvicorn YamagotiProjects.asgi:application --reload
@@ -340,3 +388,45 @@ curl -X POST http://127.0.0.1:8000/AppleStockChecker/purchasing-time-analyses/di
   -H 'Content-Type: application/json' \
   -d '{"timestamp_iso":"2025-10-10T17:30:00+09:00"}'
 
+
+
+
+curl -i -X POST \
+  "http://127.0.0.1:8000/AppleStockChecker/purchasing-price-records/import-tradein-xlsx/?dry_run=0" \
+  -H "Authorization: Bearer ${ACCESS}" \
+  -F "files=@/Users/syu/Downloads/shop2.xlsx"
+
+
+
+
+
+https://verbless-sadistically-jayceon.ngrok-free.dev/AppleStockChecker/purchasing-time-analyses-psta-compact/?start=2025-10-11T00:00:00%2B09:00&end=2025-10-13T00:00:00%2B09:00
+
+
+
+curl -i "https://verbless-sadistically-jayceon.ngrok-free.dev/AppleStockChecker/purchasing-time-analyses-psta-compact/?start=2025-10-11T00:00:00%2B09:00&end=2025-10-13T00:00:00%2B09:00"\
+  -H "Accept: application/json" \
+  -H "ngrok-skip-browser-warning: 1"
+
+
+
+
+curl -i "https://verbless-sadistically-jayceon.ngrok-free.dev/AppleStockChecker/purchasing-price-records/?shop=17&iphone_part_number=MFY94J%2FA" \
+  -H 'Accept: application/json' \
+  -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwMzQxOTkyLCJpYXQiOjE3NjAzNDAxOTIsImp0aSI6ImI0N2VmNDcxNmVmNjQ2NGRiMjdhODk5ZTQ5OTBkYzVjIiwidXNlcl9pZCI6IjEifQ.Kr_ty2MjxoPfdnqbIsa-DNXHq-BT60w6M-ELNYXiLVo' \
+  -H 'ngrok-skip-browser-warning: 1'
+
+
+
+start=2025-10-11T00:00:00%2B09:00&end=2025-10-13T00:00:00%2B09:00
+
+
+https://verbless-sadistically-jayceon.ngrok-free.dev/AppleStockChecker/purchasing-time-analyses-psta-compact/?start=2025-10-10T09:00:00%2B09:00&end=2025-10-11T20:00:00%2B09:00&shop=11&iphone__jan=4549995648300
+
+
+
+docker compose run --rm \
+  -e DJANGO_SUPERUSER_USERNAME=samuelzhu \
+  -e DJANGO_SUPERUSER_EMAIL=samuel201111@gmail.com \
+  -e DJANGO_SUPERUSER_PASSWORD='Xdb73008762' \
+  web python manage.py createsuperuser --noinput
