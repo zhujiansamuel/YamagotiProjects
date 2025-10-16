@@ -67,7 +67,7 @@ MIDDLEWARE = [
 
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
-    "YamagotiProjects.middleware.login_required.LoginRequiredMiddleware",
+    # "YamagotiProjects.middleware.login_required.LoginRequiredMiddleware",
     'django.middleware.common.CommonMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
