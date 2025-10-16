@@ -19,43 +19,21 @@ from django.db import transaction, IntegrityError
 from datetime import datetime
 from django.db import transaction
 from django.utils.dateparse import parse_datetime, parse_date
-from rest_framework.parsers import MultiPartParser, FormParser
 from .utils.tradein_pipeline import clean_and_aggregate_tradein
 from .utils.color_norm import synonyms_for_query
-from .models import Iphone, SecondHandShop, PurchasingShopPriceRecord
 from .services.external_ingest_service import ingest_external_sources
-from rest_framework import permissions, status
 from django.db.models import Q
-import io, pandas as pd
-from rest_framework.decorators import action
-from rest_framework import status
-from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 from celery.result import AsyncResult
 from AppleStockChecker.utils.external_ingest.webscraper import fetch_webscraper_export_sync, to_dataframe_from_request
-from AppleStockChecker.services.external_ingest_service import ingest_external_dataframe
-
 from AppleStockChecker.tasks.webscraper_tasks import task_process_webscraper_job,task_process_xlsx
-from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from django.conf import settings
 from datetime import timedelta
-from django.utils import timezone
 from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
-from .models import Iphone, PurchasingShopPriceRecord
 
 from rest_framework.parsers import JSONParser, FormParser, MultiPartParser, FileUploadParser
 from rest_framework.parsers import BaseParser
-
-from rest_framework.decorators import parser_classes
-from rest_framework.decorators import action, parser_classes
-from rest_framework.parsers import JSONParser
 from rest_framework import permissions, status
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
-
-import io
-import pandas as pd
-import uuid
 from rest_framework.decorators import action, parser_classes, authentication_classes, permission_classes
 from rest_framework.parsers import JSONParser
 from rest_framework.permissions import AllowAny
@@ -69,13 +47,11 @@ from rest_framework.filters import OrderingFilter
 from .models import PurchasingShopTimeAnalysis
 from .serializers import PurchasingShopTimeAnalysisSerializer, PSTACompactSerializer
 from .filters import PurchasingShopTimeAnalysisFilter
-
 import io
 import re
 import uuid
 from typing import Optional, Dict, Any
 
-import pandas as pd
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
@@ -85,8 +61,6 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status, viewsets
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from celery import shared_task
-
 from AppleStockChecker.utils.external_ingest.registry import get_cleaner, run_cleaner
 from AppleStockChecker.models import SecondHandShop, Iphone, PurchasingShopPriceRecord
 
@@ -381,7 +355,8 @@ class IphoneViewSet(viewsets.ModelViewSet):
     @action(
         detail=False, methods=["post"], url_path="import-csv",
         parser_classes=[MultiPartParser, FormParser],
-        permission_classes=[permissions.IsAdminUser],
+        authentication_classes=[JWTAuthentication],
+        permission_classes=[IsAuthenticated],
     )
     def import_csv(self, request):
         from .models import Iphone  # 避免循环导入
