@@ -13,7 +13,9 @@ from AppleStockChecker.utils.external_ingest.registry import run_cleaner  # å·²æ
 from AppleStockChecker.models import Iphone, SecondHandShop, PurchasingShopPriceRecord
 from AppleStockChecker.utils.external_ingest.webscraper import fetch_webscraper_export_sync
 from AppleStockChecker.services.external_ingest_service import ingest_external_dataframe
-
+from django.db import close_old_connections
+from celery.exceptions import SoftTimeLimitExceeded
+from django.db.utils import OperationalError
 
 _ENGINE_HINT = {
     "xlsx": ("openpyxl", "pip install openpyxl"),
@@ -77,9 +79,11 @@ def _read_tabular(filename: str, raw: bytes) -> pd.DataFrame:
 
 @shared_task(
     bind=True,
-    autoretry_for=(Exception,),
-    retry_backoff=30,            # 30s, 60s, 120s...
+    autoretry_for=(OperationalError,),
+    retry_backoff=5,
+    retry_jitter=True,
     retry_kwargs={"max_retries": 5},
+    soft_time_limit=9000, time_limit=9000,
     name="AppleStockChecker.tasks.task_process_xlsx",
 )
 def task_process_xlsx(
