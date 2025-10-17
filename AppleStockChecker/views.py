@@ -190,16 +190,16 @@ def _parse_recorded_at(val):
         return timezone.make_aware(dt, timezone.get_current_timezone())
     return timezone.now()
 
-def _extract_source_name(filename: str) -> Optional[str]:
+def _extract_source_name(filename: str) -> str | None:
     """
     从文件名提取清洗器名：
-      shop8.xlsx -> shop8
-      shop_foo.xlsm -> shop_foo
+      shop2.xlsx -> shop2
+      shop_foo.csv -> shop_foo
+    允许的后缀：xlsx/xlsm/xls/ods/xlsb/csv
     """
-    if not filename:
-        return None
-    base = filename.rsplit("/", 1)[-1]  # 去掉路径
-    m = re.match(r"^([A-Za-z0-9_\-]+)\.(xlsx|xlsm|xls|ods)$", base, flags=re.IGNORECASE)
+    import re, os
+    base = os.path.basename(filename or "")
+    m = re.match(r"^([A-Za-z0-9_\-]+)\.(xlsx|xlsm|xls|ods|xlsb|csv)$", base, flags=re.IGNORECASE)
     return m.group(1) if m else None
 
 class HealthView(APIView):
@@ -949,7 +949,7 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
         detail=False,
         methods=["post"],
         url_path="import-tradein-xlsx",
-        parser_classes=[MultiPartParser, FormParser],
+        parser_classes=[MultiPartParser, FormParser, FileUploadParser],
     )
     @authentication_classes([JWTAuthentication])  # ✅ 仅 JWT
     @permission_classes([IsAuthenticated])  # ✅ 需要 Bearer Token
@@ -960,35 +960,44 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
         Form: files=<shopX.xlsx>[, <shopY.xlsm>...]
         行为：每个文件各起一个 Celery 任务。
         """
+
+        def _as_bool(v, default=False):
+            return str(v).strip().lower() in {"1", "true", "t", "yes", "y"} if v is not None else default
+
         dry_run = _as_bool(request.query_params.get("dry_run"), False)
         dedupe = _as_bool(request.query_params.get("dedupe"), True)
         upsert = _as_bool(request.query_params.get("upsert"), False)
 
-        # batch_id: Header → query → 自动生成
+        # 批次
+        import uuid
         bid = request.headers.get("X-Batch-Id") or request.query_params.get("batch_id")
         try:
             batch_uuid = uuid.UUID(str(bid)) if bid else uuid.uuid4()
         except Exception:
             batch_uuid = uuid.uuid4()
 
+        # 兼容 files / file / 纯文件流
         files = request.FILES.getlist("files") or ([request.FILES["file"]] if request.FILES.get("file") else [])
         if not files:
-            return Response({"detail": "请上传至少一个 Excel（files 或 file）"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "请上传至少一个表格文件（Excel/CSV），字段名 files 或 file"},
+                            status=status.HTTP_400_BAD_REQUEST)
 
         tasks = []
         for f in files:
             fname = getattr(f, "name", "")
             source_name = _extract_source_name(fname)
             if not source_name:
-                return Response({"detail": f"无法从文件名提取清洗器名：{fname}"}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {"detail": f"无法从文件名提取清洗器名，或不支持的后缀：{fname}（仅支持 xlsx/xlsm/xls/ods/xlsb/csv）"},
+                    status=status.HTTP_400_BAD_REQUEST)
+
             # 校验清洗器是否存在
             try:
                 get_cleaner(source_name)
             except Exception:
                 return Response({"detail": f"未知清洗器: {source_name}"}, status=status.HTTP_400_BAD_REQUEST)
 
-            content = f.read()
-            # 入队：把文件原始字节与来源名放入任务
+            content = f.read()  # 交给任务自行解析（task_process_xlsx 已支持 csv）
             t = task_process_xlsx.delay(
                 file_bytes=content,
                 filename=fname,
