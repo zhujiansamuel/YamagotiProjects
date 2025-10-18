@@ -22,7 +22,7 @@ class IphoneSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Iphone
-        fields = ["part_number", "jan", "model_name", "capacity_gb", "capacity_label", "color", "release_date"]
+        fields = ["id","part_number", "jan", "model_name", "capacity_gb", "capacity_label", "color", "release_date"]
         read_only_fields = ["capacity_label"]
 
     def get_capacity_label(self, obj):
