@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
-    <title>#iPhone17 買取相場 – 統合テンプレート（店舗列付き）</title>
+    <title>iPhone17 買取相場 – 統合テンプレート（店舗列付き）</title>
     <style>
         :root {
             --bg: #f6f7fb;
@@ -14,33 +14,55 @@
             --muted: #6b7380;
             --positive: #0f9d58;
             --negative: #d93025;
-            --gap: -43px;
+            --gap: -1px;
+        }
+        body {
+            font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC", "Hiragino Sans", "Noto Sans CJK JP", Roboto, Arial;
+            margin: 16px;
         }
 
+        .wrap {
+            max-width: (100px,120px);
+            margin: 3px 3px;
+            margin-inline: auto;              /* 等价于左右 auto，现代语法 */
+  			box-sizing: border-box;           /* 防止内边距撑破宽度 */
+
+        }
+                fieldset {
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 12px;
+            margin-bottom: 12px;
+        }
+
+        legend {
+            padding: 0 6px;
+            color: #111827;
+            font-weight: 600;
+        }
+                label {
+            font-size: 12px;
+            color: #374151;
+            display: block;
+            margin-bottom: 6px;
+        }
         * {
             box-sizing: border-box;
         }
 
-        body {
-            margin: 0;
-            background: var(--bg);
-            color: var(--text);
-            font: 14px/1.4 -apple-system, BlinkMacSystemFont, 'Hiragino Kaku Gothic ProN', Meiryo, sans-serif;
-        }
 
         .card {
             background: var(--card);
             border: 1px solid var(--grid-border);
             border-radius: 8px;
             box-shadow: 0 1px 2px rgba(0, 0, 0, .05);
-            margin: 20px auto;
-            width: 95%;
-            padding: 10px;
+            margin: 30px auto;
+            padding: 20px;
             overflow-x: auto;
         }
 
         .model-section {
-            margin-bottom: var(--gap);
+            margin-bottom: -20px;
         }
 
         .model-header {
@@ -51,7 +73,7 @@
         }
 
         table {
-            width: 5000px;
+            width: 100px;
             border-collapse: collapse;
             table-layout: fixed;
         }
@@ -68,9 +90,62 @@
             background: var(--header-bg);
             text-align: center;
         }
+        .row3 {
+            display: grid;
+            grid-template-columns: 1.2fr .9fr .9fr;
+            gap: 10px;
+        }
 
+        .row4 {
+            display: grid;
+            grid-template-columns: .2fr .4fr .4fr .6fr;
+            gap: 10px;
+            max-width: 1500px;
+        }
+        label {
+            font-size: 12px;
+            color: #374151;
+            display: block;
+            margin-bottom: 6px;
+        }
 
-        /* 同列幅を統一 */
+        input[type="text"], input[type="datetime-local"] {
+            width: 80%;
+            padding: 8px 10px;
+            border-radius: 10px;
+            border: 1px solid #d1d5db;
+            outline: none;
+        }
+
+        input:focus {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, .15);
+        }
+        .btns {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        button {
+            border: 0;
+            padding: 9px 12px;
+            border-radius: 10px;
+            cursor: pointer;
+            background: #111827;
+            color: #fff;
+        }
+
+        button.secondary {
+            background: #374151;
+        }
+
+/*         button.ghost { */
+/*             background: #f3f4f6; */
+/*             color: #111827; */
+/*         } */
+
         .col-model {
             width: 140px;
             text-align: left;
@@ -228,7 +303,41 @@
     </style>
 </head>
 <body>
+
+<div class="wrap">
+<fieldset>
+        <legend>選択条件</legend>
+        <div class="row4">
+            <div>
+                <label>時間（JST）</label>
+            </div>
+            <div>
+                <input id="start" type="datetime-local" step="60">
+            </div>
+            <div>
+                <button class="ghost" id="select-all" type="button">選択時刻</button>
+                <button class="ghost" id="clear-all" type="button">最新</button>
+            </div>
+            <div>
+
+                <button class="ghost" id="clear-" type="button">画像保存</button>
+                <button class="ghost" id="clear-a" type="button">Xへ公開</button>
+            </div>
+        </div>
+    </fieldset>
+
+
+
+
+</div>
+
+
+
 <div class="card">
+<h2 style="margin:1px 24px">iPhone17 買取相場 – 統合テンプレート</h2>
+<h2 style="margin:-1px 24px">iPhone17 買取相場20251006</h2>
+<h2 style="margin:-1px 24px">最後更新日時：2025/10/6 13時00分</h2>
+
     <!-- ================= iPhone 17 Pro Max ================= -->
     <div class="model-section">
         <!--       <div class="model-header">iPhone 17 Pro Max</div> -->
@@ -253,9 +362,9 @@
                 <th class="shop-col shop-head shop-買取ルデヤ">買取ルデヤ</th>
                 <th class="shop-col shop-head shop-買取Wiki">買取Wiki</th>
                 <th class="shop-col shop-head shop-買取ホムラ">買取ホムラ</th>
-                <th class="shop-col shop-head shop-ドラゴンモバイル-">ドラゴンモバイル-</th>
-                <th class="shop-col shop-head shop-モバステ-">モバステ-</th>
-                <th class="shop-col shop-head shop-アキモバ-">アキモバ-</th>
+                <th class="shop-col shop-head shop-ドラゴンモバイル-">ドラゴンモバイル</th>
+                <th class="shop-col shop-head shop-モバステ-">モバステ</th>
+                <th class="shop-col shop-head shop-アキモバ-">アキモバ</th>
                 <th class="shop-col shop-head shop-トゥインクル">トゥインクル</th>
                 <th class="shop-col shop-head shop-家電市場">家電市場</th>
                 <th class="shop-col shop-head shop-買取楽園">買取楽園</th>
@@ -273,217 +382,217 @@
                 <td rowspan="20" style="text-align:left;">iPhone 17 Pro Max</td>
                 <td rowspan="5" style="text-align:left;">256GB</td>
                 <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
+                <td rowspan="5" data-range-shop-id="14 1 8 13 7 9 10 19 18 16 12 17 3 4 2 5 11 5 15 20" data-highest>194,800</td>
+                <td rowspan="5" data-diff>194,800</td>
+                <td rowspan="5" data-rate>194,800</td>
+                <td rowspan="5" data-change-from-crevious-day>194,800</td>
+                <td rowspan="5" data-range-shop-id="14 1 8 13 7 9 10 19 18 16 12 17 3 4 2 5 11 5 15 20" data-average>194,800</td>
             </tr>
 
 
             <tr>
                 <td style="text-align:left;">ALL平均</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-shop-id="14" data-iphen-average-id="21 22 20">14</td>
+                <td data-shop-id="1"  data-iphen-average-id="21 22 20">1</td>
+                <td data-shop-id="8"  data-iphen-average-id="21 22 20">8</td>
+				<td data-shop-id="13" data-iphen-average-id="21 22 20">13</td>
+				<td data-shop-id="7" data-iphen-average-id="21 22 20">7</td>
+				<td data-shop-id="9" data-iphen-average-id="21 22 20">9</td>
+				<td data-shop-id="10" data-iphen-average-id="21 22 20">10</td>
+				<td data-shop-id="19" data-iphen-average-id="21 22 20">19</td>
+				<td data-shop-id="18" data-iphen-average-id="21 22 20">18</td>
+				<td data-shop-id="16" data-iphen-average-id="21 22 20">16</td>
+				<td data-shop-id="12" data-iphen-average-id="21 22 20">12</td>
+				<td data-shop-id="17" data-iphen-average-id="21 22 20">17</td>
+				<td data-shop-id="3" data-iphen-average-id="21 22 20">3</td>
+				<td data-shop-id="4" data-iphen-average-id="21 22 20">4</td>
+				<td data-shop-id="2" data-iphen-average-id="21 22 20">2</td>
+				<td data-shop-id="5" data-iphen-average-id="21 22 20">5</td>
+				<td data-shop-id="11" data-iphen-average-id="21 22 20">11</td>
+				<td data-shop-id="6" data-iphen-average-id="21 22 20">6</td>
+				<td data-shop-id="15" data-iphen-average-id="21 22 20">15</td>
+				<td data-shop-id="20" data-iphen-average-id="21 22 20">20</td>
             </tr>
 
             <tr>
                 <td style="background:#f68a44;text-align:left;">Orange</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-shop-id="14" data-iphen-id="21">14-21</td>
+                <td data-shop-id="1"  data-iphen-id="21">1-21</td>
+                <td data-shop-id="8"  data-iphen-id="21">8-21</td>
+				<td data-shop-id="13" data-iphen-id="21">13-21</td>
+				<td data-shop-id="7" data-iphen-id="21">7-21</td>
+				<td data-shop-id="9" data-iphen-id="21">9-21</td>
+				<td data-shop-id="10" data-iphen-id="21">10-21</td>
+				<td data-shop-id="19" data-iphen-id="21">19-21</td>
+				<td data-shop-id="18" data-iphen-id="21">18-21</td>
+				<td data-shop-id="16" data-iphen-id="21">16-21</td>
+				<td data-shop-id="12" data-iphen-id="21">12-21</td>
+				<td data-shop-id="17" data-iphen-id="21">17-21</td>
+				<td data-shop-id="3" data-iphen-id="21">3-21</td>
+				<td data-shop-id="4" data-iphen-id="21">4-21</td>
+				<td data-shop-id="2" data-iphen-id="21">2-21</td>
+				<td data-shop-id="5" data-iphen-id="21">5-21</td>
+				<td data-shop-id="11" data-iphen-id="21">11-21</td>
+				<td data-shop-id="6" data-iphen-id="21">6-21</td>
+				<td data-shop-id="15" data-iphen-id="21">15-21</td>
+				<td data-shop-id="20" data-iphen-id="21">20-21</td>
             </tr>
             <tr>
 
 
                 <td style="background:#4b5780;text-align:left;">Blue</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-shop-id="14" data-iphen-id="22">14-22</td>
+                <td data-shop-id="1"  data-iphen-id="22">1-22</td>
+                <td data-shop-id="8"  data-iphen-id="22">8-22</td>
+				<td data-shop-id="13" data-iphen-id="22">13-22</td>
+				<td data-shop-id="7" data-iphen-id="22">7-22</td>
+				<td data-shop-id="9" data-iphen-id="22">9-22</td>
+				<td data-shop-id="10" data-iphen-id="22">10-22</td>
+				<td data-shop-id="19" data-iphen-id="22">19-22</td>
+				<td data-shop-id="18" data-iphen-id="22">18-22</td>
+				<td data-shop-id="16" data-iphen-id="22">16-22</td>
+				<td data-shop-id="12" data-iphen-id="22">12-22</td>
+				<td data-shop-id="17" data-iphen-id="22">17-22</td>
+				<td data-shop-id="3" data-iphen-id="22">3-22</td>
+				<td data-shop-id="4" data-iphen-id="22">4-22</td>
+				<td data-shop-id="2" data-iphen-id="22">2-22</td>
+				<td data-shop-id="5" data-iphen-id="22">5-22</td>
+				<td data-shop-id="11" data-iphen-id="22">11-22</td>
+				<td data-shop-id="6" data-iphen-id="22">6-22</td>
+				<td data-shop-id="15" data-iphen-id="22">15-22</td>
+				<td data-shop-id="20" data-iphen-id="22">20-22</td>
             </tr>
             <tr>
 
 
                 <td style="background:#e6e6e6;text-align:left;">Silver</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-shop-id="14" data-iphen-id="20">14-20</td>
+                <td data-shop-id="1"  data-iphen-id="20">1-20</td>
+                <td data-shop-id="8"  data-iphen-id="20">8-20</td>
+				<td data-shop-id="13" data-iphen-id="20">13-20</td>
+				<td data-shop-id="7" data-iphen-id="20">7-20</td>
+				<td data-shop-id="9" data-iphen-id="20">9-20</td>
+				<td data-shop-id="10" data-iphen-id="20">10-20</td>
+				<td data-shop-id="19" data-iphen-id="20">19-20</td>
+				<td data-shop-id="18" data-iphen-id="20">18-20</td>
+				<td data-shop-id="16" data-iphen-id="20">16-20</td>
+				<td data-shop-id="12" data-iphen-id="20">12-20</td>
+				<td data-shop-id="17" data-iphen-id="20">17-20</td>
+				<td data-shop-id="3" data-iphen-id="20">3-20</td>
+				<td data-shop-id="4" data-iphen-id="20">4-20</td>
+				<td data-shop-id="2" data-iphen-id="20">2-20</td>
+				<td data-shop-id="5" data-iphen-id="20">5-20</td>
+				<td data-shop-id="11" data-iphen-id="20">11-20</td>
+				<td data-shop-id="6" data-iphen-id="20">6-20</td>
+				<td data-shop-id="15" data-iphen-id="20">15-20</td>
+				<td data-shop-id="20" data-iphen-id="20">20-20</td>
             </tr>
 
             <!-- 512GB -->
             <tr>
                 <td rowspan="5" style="text-align:left;">512GB</td>
                 <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
+                <td rowspan="5" data-range-shop-id="14 1 8 13 7 9 10 19 18 16 12 17 3 4 2 5 11 5 15 20" data-highest>194,800</td>
+                <td rowspan="5" data-diff>194,800</td>
+                <td rowspan="5" data-rate>194,800</td>
+                <td rowspan="5" data-change-from-crevious-day>194,800</td>
+                <td rowspan="5" data-range-shop-id="14 1 8 13 7 9 10 19 18 16 12 17 3 4 2 5 11 5 15 20" data-average>194,800</td>
 
 
             <tr class="avg-row">
                 <td colspan="1" style="text-align:left;">ALL平均</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-shop-id="14" data-iphen-average-id="24 25 23">14</td>
+                <td data-shop-id="1"  data-iphen-average-id="24 25 23">1</td>
+                <td data-shop-id="8"  data-iphen-average-id="24 25 23">8</td>
+				<td data-shop-id="13" data-iphen-average-id="24 25 23">13</td>
+				<td data-shop-id="7" data-iphen-average-id="24 25 23">7</td>
+				<td data-shop-id="9" data-iphen-average-id="24 25 23">9</td>
+				<td data-shop-id="10" data-iphen-average-id="24 25 23">10</td>
+				<td data-shop-id="19" data-iphen-average-id="24 25 23">19</td>
+				<td data-shop-id="18" data-iphen-average-id="24 25 23">18</td>
+				<td data-shop-id="16" data-iphen-average-id="24 25 23">16</td>
+				<td data-shop-id="12" data-iphen-average-id="24 25 23">12</td>
+				<td data-shop-id="17" data-iphen-average-id="24 25 23">17</td>
+				<td data-shop-id="3" data-iphen-average-id="24 25 23">3</td>
+				<td data-shop-id="4" data-iphen-average-id="24 25 23">4</td>
+				<td data-shop-id="2" data-iphen-average-id="24 25 23">2</td>
+				<td data-shop-id="5" data-iphen-average-id="24 25 23">5</td>
+				<td data-shop-id="11" data-iphen-average-id="24 25 23">11</td>
+				<td data-shop-id="6" data-iphen-average-id="24 25 23">6</td>
+				<td data-shop-id="15" data-iphen-average-id="24 25 23">15</td>
+				<td data-shop-id="20" data-iphen-average-id="24 25 23">20</td>
             </tr>
 
             <tr>
                 <td style="background:#f68a44;text-align:left;">Orange</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-shop-id="14" data-iphen-id="24">14-24</td>
+                <td data-shop-id="1"  data-iphen-id="24">1-24</td>
+                <td data-shop-id="8"  data-iphen-id="24">8-24</td>
+				<td data-shop-id="13" data-iphen-id="24">13-24</td>
+				<td data-shop-id="7" data-iphen-id="24">7-24</td>
+				<td data-shop-id="9" data-iphen-id="24">9-24</td>
+				<td data-shop-id="10" data-iphen-id="24">10-24</td>
+				<td data-shop-id="19" data-iphen-id="24">19-24</td>
+				<td data-shop-id="18" data-iphen-id="24">18-24</td>
+				<td data-shop-id="16" data-iphen-id="24">16-24</td>
+				<td data-shop-id="12" data-iphen-id="24">12-24</td>
+				<td data-shop-id="17" data-iphen-id="24">17-24</td>
+				<td data-shop-id="3" data-iphen-id="24">3-24</td>
+				<td data-shop-id="4" data-iphen-id="24">4-24</td>
+				<td data-shop-id="2" data-iphen-id="24">2-24</td>
+				<td data-shop-id="5" data-iphen-id="24">5-24</td>
+				<td data-shop-id="11" data-iphen-id="24">11-24</td>
+				<td data-shop-id="6" data-iphen-id="24">6-24</td>
+				<td data-shop-id="15" data-iphen-id="24">15-24</td>
+				<td data-shop-id="20" data-iphen-id="24">20-24</td>
             </tr>
 
             <tr>
                 <td style="background:#4b5780;text-align:left;">Blue</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-shop-id="14" data-iphen-id="25">14-25</td>
+                <td data-shop-id="1"  data-iphen-id="25">1-25</td>
+                <td data-shop-id="8"  data-iphen-id="25">8-25</td>
+				<td data-shop-id="13" data-iphen-id="25">13-25</td>
+				<td data-shop-id="7" data-iphen-id="25">7-25</td>
+				<td data-shop-id="9" data-iphen-id="25">9-25</td>
+				<td data-shop-id="10" data-iphen-id="25">10-25</td>
+				<td data-shop-id="19" data-iphen-id="25">19-25</td>
+				<td data-shop-id="18" data-iphen-id="25">18-25</td>
+				<td data-shop-id="16" data-iphen-id="25">16-25</td>
+				<td data-shop-id="12" data-iphen-id="25">12-25</td>
+				<td data-shop-id="17" data-iphen-id="25">17-25</td>
+				<td data-shop-id="3" data-iphen-id="25">3-25</td>
+				<td data-shop-id="4" data-iphen-id="25">4-25</td>
+				<td data-shop-id="2" data-iphen-id="25">2-25</td>
+				<td data-shop-id="5" data-iphen-id="25">5-25</td>
+				<td data-shop-id="11" data-iphen-id="25">11-25</td>
+				<td data-shop-id="6" data-iphen-id="25">6-25</td>
+				<td data-shop-id="15" data-iphen-id="25">15-25</td>
+				<td data-shop-id="20" data-iphen-id="25">20-25</td>
             </tr>
 
             <tr>
                 <td style="background:#e6e6e6;text-align:left;">Silver</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-shop-id="14" data-iphen-id="23">14-23</td>
+                <td data-shop-id="1"  data-iphen-id="23">1-23</td>
+                <td data-shop-id="8"  data-iphen-id="23">8-23</td>
+				<td data-shop-id="13" data-iphen-id="23">13-23</td>
+				<td data-shop-id="7" data-iphen-id="23">7-23</td>
+				<td data-shop-id="9" data-iphen-id="23">9-23</td>
+				<td data-shop-id="10" data-iphen-id="23">10-23</td>
+				<td data-shop-id="19" data-iphen-id="23">19-23</td>
+				<td data-shop-id="18" data-iphen-id="23">18-23</td>
+				<td data-shop-id="16" data-iphen-id="23">16-23</td>
+				<td data-shop-id="12" data-iphen-id="23">12-23</td>
+				<td data-shop-id="17" data-iphen-id="23">17-23</td>
+				<td data-shop-id="3" data-iphen-id="23">3-23</td>
+				<td data-shop-id="4" data-iphen-id="23">4-23</td>
+				<td data-shop-id="2" data-iphen-id="23">2-23</td>
+				<td data-shop-id="5" data-iphen-id="23">5-23</td>
+				<td data-shop-id="11" data-iphen-id="23">11-23</td>
+				<td data-shop-id="6" data-iphen-id="23">6-23</td>
+				<td data-shop-id="15" data-iphen-id="23">15-23</td>
+				<td data-shop-id="20" data-iphen-id="23">20-23</td>
             </tr>
 
 
@@ -491,210 +600,210 @@
             <tr>
                 <td rowspan="5" style="text-align:left;">1TB</td>
                 <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
+                <td rowspan="5" data-range-shop-id="14 1 8 13 7 9 10 19 18 16 12 17 3 4 2 5 11 5 15 20" data-highest>194,800</td>
+                <td rowspan="5" data-diff>194,800</td>
+                <td rowspan="5" data-rate>194,800</td>
+                <td rowspan="5" data-change-from-crevious-day>194,800</td>
+                <td rowspan="5" data-range-shop-id="14 1 8 13 7 9 10 19 18 16 12 17 3 4 2 5 11 5 15 20" data-average>194,800</td>
             </tr>
 
             <tr class="avg-row">
                 <td colspan="1" style="text-align:left;">ALL平均</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-shop-id="14" iphen-average-id="27 28 26">14</td>
+                <td data-shop-id="1"  iphen-average-id="27 28 26">1</td>
+                <td data-shop-id="8"  iphen-average-id="27 28 26">8</td>
+				<td data-shop-id="13" iphen-average-id="27 28 26">13</td>
+				<td data-shop-id="7" iphen-average-id="27 28 26">7</td>
+				<td data-shop-id="9" iphen-average-id="27 28 26">9</td>
+				<td data-shop-id="10" iphen-average-id="27 28 26">10</td>
+				<td data-shop-id="19" iphen-average-id="27 28 26">19</td>
+				<td data-shop-id="18" iphen-average-id="27 28 26">18</td>
+				<td data-shop-id="16" iphen-average-id="27 28 26">16</td>
+				<td data-shop-id="12" iphen-average-id="27 28 26">12</td>
+				<td data-shop-id="17" iphen-average-id="27 28 26">17</td>
+				<td data-shop-id="3" iphen-average-id="27 28 26">3</td>
+				<td data-shop-id="4" iphen-average-id="27 28 26">4</td>
+				<td data-shop-id="2" iphen-average-id="27 28 26">2</td>
+				<td data-shop-id="5" iphen-average-id="27 28 26">5</td>
+				<td data-shop-id="11" iphen-average-id="27 28 26">11</td>
+				<td data-shop-id="6" iphen-average-id="27 28 26">6</td>
+				<td data-shop-id="15" iphen-average-id="27 28 26">15</td>
+				<td data-shop-id="20" iphen-average-id="27 28 26">20</td>
             </tr>
 <tr>
             <td style="background:#f68a44;text-align:left;">Orange</td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
+                <td data-shop-id="14" data-iphen-id="27">14-27</td>
+                <td data-shop-id="1"  data-iphen-id="27">1-27</td>
+                <td data-shop-id="8"  data-iphen-id="27">8-27</td>
+				<td data-shop-id="13" data-iphen-id="27">13-27</td>
+				<td data-shop-id="7" data-iphen-id="27">7-27</td>
+				<td data-shop-id="9" data-iphen-id="27">9-27</td>
+				<td data-shop-id="10" data-iphen-id="27">10-27</td>
+				<td data-shop-id="19" data-iphen-id="27">19-27</td>
+				<td data-shop-id="18" data-iphen-id="27">18-27</td>
+				<td data-shop-id="16" data-iphen-id="27">16-27</td>
+				<td data-shop-id="12" data-iphen-id="27">12-27</td>
+				<td data-shop-id="17" data-iphen-id="27">17-27</td>
+				<td data-shop-id="3" data-iphen-id="27">3-27</td>
+				<td data-shop-id="4" data-iphen-id="27">4-27</td>
+				<td data-shop-id="2" data-iphen-id="27">2-27</td>
+				<td data-shop-id="5" data-iphen-id="27">5-27</td>
+				<td data-shop-id="11" data-iphen-id="27">11-27</td>
+				<td data-shop-id="6" data-iphen-id="27">6-27</td>
+				<td data-shop-id="15" data-iphen-id="27">15-27</td>
+				<td data-shop-id="20" data-iphen-id="27">20-27</td>
             </tr>
             <tr>
 
                 <td style="background:#4b5780;text-align:left;">Blue</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-shop-id="14" data-iphen-id="28">14-28</td>
+                <td data-shop-id="1"  data-iphen-id="28">1-28</td>
+                <td data-shop-id="8"  data-iphen-id="28">8-28</td>
+				<td data-shop-id="13" data-iphen-id="28">13-28</td>
+				<td data-shop-id="7" data-iphen-id="28">7-28</td>
+				<td data-shop-id="9" data-iphen-id="28">9-28</td>
+				<td data-shop-id="10" data-iphen-id="28">10-28</td>
+				<td data-shop-id="19" data-iphen-id="28">19-28</td>
+				<td data-shop-id="18" data-iphen-id="28">18-28</td>
+				<td data-shop-id="16" data-iphen-id="28">16-28</td>
+				<td data-shop-id="12" data-iphen-id="28">12-28</td>
+				<td data-shop-id="17" data-iphen-id="28">17-28</td>
+				<td data-shop-id="3" data-iphen-id="28">3-28</td>
+				<td data-shop-id="4" data-iphen-id="28">4-28</td>
+				<td data-shop-id="2" data-iphen-id="28">2-28</td>
+				<td data-shop-id="5" data-iphen-id="28">5-28</td>
+				<td data-shop-id="11" data-iphen-id="28">11-28</td>
+				<td data-shop-id="6" data-iphen-id="28">6-28</td>
+				<td data-shop-id="15" data-iphen-id="28">15-28</td>
+				<td data-shop-id="20" data-iphen-id="28">20-28</td>
             </tr>
             <tr>
 
                 <td style="background:#e6e6e6;text-align:left;">Silver</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-shop-id="14" data-iphen-id="26">14-26</td>
+                <td data-shop-id="1"  data-iphen-id="26">1-26</td>
+                <td data-shop-id="8"  data-iphen-id="26">8-26</td>
+				<td data-shop-id="13" data-iphen-id="26">13-26</td>
+				<td data-shop-id="7" data-iphen-id="26">7-26</td>
+				<td data-shop-id="9" data-iphen-id="26">9-26</td>
+				<td data-shop-id="10" data-iphen-id="26">10-26</td>
+				<td data-shop-id="19" data-iphen-id="26">19-26</td>
+				<td data-shop-id="18" data-iphen-id="26">18-26</td>
+				<td data-shop-id="16" data-iphen-id="26">16-26</td>
+				<td data-shop-id="12" data-iphen-id="26">12-26</td>
+				<td data-shop-id="17" data-iphen-id="26">17-26</td>
+				<td data-shop-id="3" data-iphen-id="26">3-26</td>
+				<td data-shop-id="4" data-iphen-id="26">4-26</td>
+				<td data-shop-id="2" data-iphen-id="26">2-26</td>
+				<td data-shop-id="5" data-iphen-id="26">5-26</td>
+				<td data-shop-id="11" data-iphen-id="26">11-26</td>
+				<td data-shop-id="6" data-iphen-id="26">6-26</td>
+				<td data-shop-id="15" data-iphen-id="26">15-26</td>
+				<td data-shop-id="20" data-iphen-id="26">20-26</td>
             </tr>
             <!-- 2TB -->
             <tr>
                 <td rowspan="5" style="text-align:left;">2TB</td>
                 <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
+                <td rowspan="5" data-range-shop-id="14 1 8 13 7 9 10 19 18 16 12 17 3 4 2 5 11 5 15 20" data-highest>194,800</td>
+                <td rowspan="5" data-diff>194,800</td>
+                <td rowspan="5" data-rate>194,800</td>
+                <td rowspan="5" data-change-from-crevious-day>194,800</td>
+                <td rowspan="5" data-range-shop-id="14 1 8 13 7 9 10 19 18 16 12 17 3 4 2 5 11 5 15 20" data-average>194,800</td>
             </tr>
             <tr class="avg-row">
                 <td colspan="1" style="text-align:left;">ALL平均</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-shop-id="14" data-iphen-average-id="30 31 29">14</td>
+                <td data-shop-id="1"  data-iphen-average-id="30 31 29">1</td>
+                <td data-shop-id="8"  data-iphen-average-id="30 31 29">8</td>
+				<td data-shop-id="13" data-iphen-average-id="30 31 29">13</td>
+				<td data-shop-id="7" data-iphen-average-id="30 31 29">7</td>
+				<td data-shop-id="9" data-iphen-average-id="30 31 29">9</td>
+				<td data-shop-id="10" data-iphen-average-id="30 31 29">10</td>
+				<td data-shop-id="19" data-iphen-average-id="30 31 29">19</td>
+				<td data-shop-id="18" data-iphen-average-id="30 31 29">18</td>
+				<td data-shop-id="16" data-iphen-average-id="30 31 29">16</td>
+				<td data-shop-id="12" data-iphen-average-id="30 31 29">12</td>
+				<td data-shop-id="17" data-iphen-average-id="30 31 29">17</td>
+				<td data-shop-id="3" data-iphen-average-id="30 31 29">3</td>
+				<td data-shop-id="4" data-iphen-average-id="30 31 29">4</td>
+				<td data-shop-id="2" data-iphen-average-id="30 31 29">2</td>
+				<td data-shop-id="5" data-iphen-average-id="30 31 29">5</td>
+				<td data-shop-id="11" data-iphen-average-id="30 31 29">11</td>
+				<td data-shop-id="6" data-iphen-average-id="30 31 29">6</td>
+				<td data-shop-id="15" data-iphen-average-id="30 31 29">15</td>
+				<td data-shop-id="20" data-iphen-average-id="30 31 29">20</td>
             </tr>
 <tr>
             <td style="background:#f68a44;text-align:left;">Orange</td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
+                <td data-shop-id="14" data-iphen-id="30">14-30</td>
+                <td data-shop-id="1"  data-iphen-id="30">1-30</td>
+                <td data-shop-id="8"  data-iphen-id="30">8-30</td>
+				<td data-shop-id="13" data-iphen-id="30">13-30</td>
+				<td data-shop-id="7" data-iphen-id="30">7-30</td>
+				<td data-shop-id="9" data-iphen-id="30">9-30</td>
+				<td data-shop-id="10" data-iphen-id="30">10-30</td>
+				<td data-shop-id="19" data-iphen-id="30">19-30</td>
+				<td data-shop-id="18" data-iphen-id="30">18-30</td>
+				<td data-shop-id="16" data-iphen-id="30">16-30</td>
+				<td data-shop-id="12" data-iphen-id="30">12-30</td>
+				<td data-shop-id="17" data-iphen-id="30">17-30</td>
+				<td data-shop-id="3" data-iphen-id="30">3-30</td>
+				<td data-shop-id="4" data-iphen-id="30">4-30</td>
+				<td data-shop-id="2" data-iphen-id="30">2-30</td>
+				<td data-shop-id="5" data-iphen-id="30">5-30</td>
+				<td data-shop-id="11" data-iphen-id="30">11-30</td>
+				<td data-shop-id="6" data-iphen-id="30">6-30</td>
+				<td data-shop-id="15" data-iphen-id="30">15-30</td>
+				<td data-shop-id="20" data-iphen-id="30">20-30</td>
             </tr>
             <tr>
 
                 <td style="background:#4b5780;text-align:left;">Blue</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-shop-id="14" data-iphen-id="31">14-31</td>
+                <td data-shop-id="1"  data-iphen-id="31">1-31</td>
+                <td data-shop-id="8"  data-iphen-id="31">8-31</td>
+				<td data-shop-id="13" data-iphen-id="31">13-31</td>
+				<td data-shop-id="7" data-iphen-id="31">7-31</td>
+				<td data-shop-id="9" data-iphen-id="31">9-31</td>
+				<td data-shop-id="10" data-iphen-id="31">10-31</td>
+				<td data-shop-id="19" data-iphen-id="31">19-31</td>
+				<td data-shop-id="18" data-iphen-id="31">18-31</td>
+				<td data-shop-id="16" data-iphen-id="31">16-31</td>
+				<td data-shop-id="12" data-iphen-id="31">12-31</td>
+				<td data-shop-id="17" data-iphen-id="31">17-31</td>
+				<td data-shop-id="3" data-iphen-id="31">3-31</td>
+				<td data-shop-id="4" data-iphen-id="31">4-31</td>
+				<td data-shop-id="2" data-iphen-id="31">2-31</td>
+				<td data-shop-id="5" data-iphen-id="31">5-31</td>
+				<td data-shop-id="11" data-iphen-id="31">11-31</td>
+				<td data-shop-id="6" data-iphen-id="31">6-31</td>
+				<td data-shop-id="15" data-iphen-id="31">15-31</td>
+				<td data-shop-id="20" data-iphen-id="31">20-31</td>
             </tr>
             <tr>
 
                 <td style="background:#e6e6e6;text-align:left;">Silver</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-shop-id="14" data-iphen-id="29">14-29</td>
+                <td data-shop-id="1"  data-iphen-id="29">1-29</td>
+                <td data-shop-id="8"  data-iphen-id="29">8-29</td>
+				<td data-shop-id="13" data-iphen-id="29">13-29</td>
+				<td data-shop-id="7" data-iphen-id="29">7-29</td>
+				<td data-shop-id="9" data-iphen-id="29">9-29</td>
+				<td data-shop-id="10" data-iphen-id="29">10-29</td>
+				<td data-shop-id="19" data-iphen-id="29">19-29</td>
+				<td data-shop-id="18" data-iphen-id="29">18-29</td>
+				<td data-shop-id="16" data-iphen-id="29">16-29</td>
+				<td data-shop-id="12" data-iphen-id="29">12-29</td>
+				<td data-shop-id="17" data-iphen-id="29">17-29</td>
+				<td data-shop-id="3" data-iphen-id="29">3-29</td>
+				<td data-shop-id="4" data-iphen-id="29">4-29</td>
+				<td data-shop-id="2" data-iphen-id="29">2-29</td>
+				<td data-shop-id="5" data-iphen-id="29">5-29</td>
+				<td data-shop-id="11" data-iphen-id="29">11-29</td>
+				<td data-shop-id="6" data-iphen-id="29">6-29</td>
+				<td data-shop-id="15" data-iphen-id="29">15-29</td>
+				<td data-shop-id="20" data-iphen-id="29">20-29</td>
             </tr>
 
 
@@ -749,323 +858,323 @@
                 <td rowspan="15" style="text-align:left;">iPhone 17 Pro</td>
                 <td rowspan="5" style="text-align:left;">256GB</td>
                 <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
+                <td rowspan="5" data-range-shop-id="14 1 8 13 7 9 10 19 18 16 12 17 3 4 2 5 11 5 15 20" data-highest>194,800</td>
+                <td rowspan="5" data-diff>194,800</td>
+                <td rowspan="5" data-rate>194,800</td>
+                <td rowspan="5" data-change-from-crevious-day>194,800</td>
+                <td rowspan="5" data-range-shop-id="14 1 8 13 7 9 10 19 18 16 12 17 3 4 2 5 11 5 15 20" data-average>194,800</td>
             </tr>
 
 
             <tr class="avg-row">
                 <td colspan="1" style="text-align:left;">ALL平均</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-shop-id="14" data-iphen-average-id="12 13 11">14</td>
+                <td data-shop-id="1"  data-iphen-average-id="12 13 11">1</td>
+                <td data-shop-id="8"  data-iphen-average-id="12 13 11">8</td>
+				<td data-shop-id="13" data-iphen-average-id="12 13 11">13</td>
+				<td data-shop-id="7" data-iphen-average-id="12 13 11">7</td>
+				<td data-shop-id="9" data-iphen-average-id="12 13 11">9</td>
+				<td data-shop-id="10" data-iphen-average-id="12 13 11">10</td>
+				<td data-shop-id="19" data-iphen-average-id="12 13 11">19</td>
+				<td data-shop-id="18" data-iphen-average-id="12 13 11">18</td>
+				<td data-shop-id="16" data-iphen-average-id="12 13 11">16</td>
+				<td data-shop-id="12" data-iphen-average-id="12 13 11">12</td>
+				<td data-shop-id="17" data-iphen-average-id="12 13 11">17</td>
+				<td data-shop-id="3" data-iphen-average-id="12 13 11">3</td>
+				<td data-shop-id="4" data-iphen-average-id="12 13 11">4</td>
+				<td data-shop-id="2" data-iphen-average-id="12 13 11">2</td>
+				<td data-shop-id="5" data-iphen-average-id="12 13 11">5</td>
+				<td data-shop-id="11" data-iphen-average-id="12 13 11">11</td>
+				<td data-shop-id="6" data-iphen-average-id="12 13 11">6</td>
+				<td data-shop-id="15" data-iphen-average-id="12 13 11">15</td>
+				<td data-shop-id="20" data-iphen-average-id="12 13 11">20</td>
             </tr>
 
 <tr>
             <td style="background:#f68a44;text-align:left;">Orange</td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
+                <td data-shop-id="14" data-iphen-id="12">14-12</td>
+                <td data-shop-id="1"  data-iphen-id="12">1-12</td>
+                <td data-shop-id="8"  data-iphen-id="12">8-12</td>
+				<td data-shop-id="13" data-iphen-id="12">13-12</td>
+				<td data-shop-id="7" data-iphen-id="12">7-12</td>
+				<td data-shop-id="9" data-iphen-id="12">9-12</td>
+				<td data-shop-id="10" data-iphen-id="12">10-12</td>
+				<td data-shop-id="19" data-iphen-id="12">19-12</td>
+				<td data-shop-id="18" data-iphen-id="12">18-12</td>
+				<td data-shop-id="16" data-iphen-id="12">16-12</td>
+				<td data-shop-id="12" data-iphen-id="12">12-12</td>
+				<td data-shop-id="17" data-iphen-id="12">17-12</td>
+				<td data-shop-id="3" data-iphen-id="12">3-12</td>
+				<td data-shop-id="4" data-iphen-id="12">4-12</td>
+				<td data-shop-id="2" data-iphen-id="12">2-12</td>
+				<td data-shop-id="5" data-iphen-id="12">5-12</td>
+				<td data-shop-id="11" data-iphen-id="12">11-12</td>
+				<td data-shop-id="6" data-iphen-id="12">6-12</td>
+				<td data-shop-id="15" data-iphen-id="12">15-12</td>
+				<td data-shop-id="20" data-iphen-id="12">20-12</td>
             </tr>
             <tr>
 
 
                 <td style="background:#4b5780;text-align:left;">Blue</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-shop-id="14" data-iphen-id="13">14-13</td>
+                <td data-shop-id="1"  data-iphen-id="13">1-13</td>
+                <td data-shop-id="8"  data-iphen-id="13">8-13</td>
+				<td data-shop-id="13" data-iphen-id="13">13-13</td>
+				<td data-shop-id="7" data-iphen-id="13">7-13</td>
+				<td data-shop-id="9" data-iphen-id="13">9-13</td>
+				<td data-shop-id="10" data-iphen-id="13">10-13</td>
+				<td data-shop-id="19" data-iphen-id="13">19-13</td>
+				<td data-shop-id="18" data-iphen-id="13">18-13</td>
+				<td data-shop-id="16" data-iphen-id="13">16-13</td>
+				<td data-shop-id="12" data-iphen-id="13">12-13</td>
+				<td data-shop-id="17" data-iphen-id="13">17-13</td>
+				<td data-shop-id="3" data-iphen-id="13">3-13</td>
+				<td data-shop-id="4" data-iphen-id="13">4-13</td>
+				<td data-shop-id="2" data-iphen-id="13">2-13</td>
+				<td data-shop-id="5" data-iphen-id="13">5-13</td>
+				<td data-shop-id="11" data-iphen-id="13">11-13</td>
+				<td data-shop-id="6" data-iphen-id="13">6-13</td>
+				<td data-shop-id="15" data-iphen-id="13">15-13</td>
+				<td data-shop-id="20" data-iphen-id="13">20-13</td>
             </tr>
             <tr>
 
 
                 <td style="background:#e6e6e6;text-align:left;">Silver</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-shop-id="14" data-iphen-id="11">14-11</td>
+                <td data-shop-id="1"  data-iphen-id="11">1-11</td>
+                <td data-shop-id="8"  data-iphen-id="11">8-11</td>
+				<td data-shop-id="13" data-iphen-id="11">13-11</td>
+				<td data-shop-id="7" data-iphen-id="11">7-11</td>
+				<td data-shop-id="9" data-iphen-id="11">9-11</td>
+				<td data-shop-id="10" data-iphen-id="11">10-11</td>
+				<td data-shop-id="19" data-iphen-id="11">19-11</td>
+				<td data-shop-id="18" data-iphen-id="11">18-11</td>
+				<td data-shop-id="16" data-iphen-id="11">16-11</td>
+				<td data-shop-id="12" data-iphen-id="11">12-11</td>
+				<td data-shop-id="17" data-iphen-id="11">17-11</td>
+				<td data-shop-id="3" data-iphen-id="11">3-11</td>
+				<td data-shop-id="4" data-iphen-id="11">4-11</td>
+				<td data-shop-id="2" data-iphen-id="11">2-11</td>
+				<td data-shop-id="5" data-iphen-id="11">5-11</td>
+				<td data-shop-id="11" data-iphen-id="11">11-11</td>
+				<td data-shop-id="6" data-iphen-id="11">6-11</td>
+				<td data-shop-id="15" data-iphen-id="11">15-11</td>
+				<td data-shop-id="20" data-iphen-id="11">20-11</td>
             </tr>
 
             <!-- 512GB -->
             <tr>
                 <td rowspan="5" style="text-align:left;">512GB</td>
                 <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
+                <td rowspan="5" data-range-shop-id="14 1 8 13 7 9 10 19 18 16 12 17 3 4 2 5 11 5 15 20" data-highest>194,800</td>
+                <td rowspan="5" data-diff>194,800</td>
+                <td rowspan="5" data-rate>194,800</td>
+                <td rowspan="5" data-change-from-crevious-day>194,800</td>
+                <td rowspan="5" data-range-shop-id="14 1 8 13 7 9 10 19 18 16 12 17 3 4 2 5 11 5 15 20" data-average>194,800</td>
             </tr>
 
             <tr class="avg-row">
                 <td colspan="1" style="text-align:left;">ALL平均</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-shop-id="14" data-iphen-average-id="15 16 14">14</td>
+                <td data-shop-id="1"  data-iphen-average-id="15 16 14">1</td>
+                <td data-shop-id="8"  data-iphen-average-id="15 16 14">8</td>
+				<td data-shop-id="13" data-iphen-average-id="15 16 14">13</td>
+				<td data-shop-id="7" data-iphen-average-id="15 16 14">7</td>
+				<td data-shop-id="9" data-iphen-average-id="15 16 14">9</td>
+				<td data-shop-id="10" data-iphen-average-id="15 16 14">10</td>
+				<td data-shop-id="19" data-iphen-average-id="15 16 14">19</td>
+				<td data-shop-id="18" data-iphen-average-id="15 16 14">18</td>
+				<td data-shop-id="16" data-iphen-average-id="15 16 14">16</td>
+				<td data-shop-id="12" data-iphen-average-id="15 16 14">12</td>
+				<td data-shop-id="17" data-iphen-average-id="15 16 14">17</td>
+				<td data-shop-id="3" data-iphen-average-id="15 16 14">3</td>
+				<td data-shop-id="4" data-iphen-average-id="15 16 14">4</td>
+				<td data-shop-id="2" data-iphen-average-id="15 16 14">2</td>
+				<td data-shop-id="5" data-iphen-average-id="15 16 14">5</td>
+				<td data-shop-id="11" data-iphen-average-id="15 16 14">11</td>
+				<td data-shop-id="6" data-iphen-average-id="15 16 14">6</td>
+				<td data-shop-id="15" data-iphen-average-id="15 16 14">15</td>
+				<td data-shop-id="20" data-iphen-average-id="15 16 14">20</td>
             </tr>
             <tr>
                 <td style="background:#f68a44;text-align:left;">Orange</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-shop-id="14" data-iphen-id="15">14-15</td>
+                <td data-shop-id="1"  data-iphen-id="15">1-15</td>
+                <td data-shop-id="8"  data-iphen-id="15">8-15</td>
+				<td data-shop-id="13" data-iphen-id="15">13-15</td>
+				<td data-shop-id="7" data-iphen-id="15">7-15</td>
+				<td data-shop-id="9" data-iphen-id="15">9-15</td>
+				<td data-shop-id="10" data-iphen-id="15">10-15</td>
+				<td data-shop-id="19" data-iphen-id="15">19-15</td>
+				<td data-shop-id="18" data-iphen-id="15">18-15</td>
+				<td data-shop-id="16" data-iphen-id="15">16-15</td>
+				<td data-shop-id="12" data-iphen-id="15">12-15</td>
+				<td data-shop-id="17" data-iphen-id="15">17-15</td>
+				<td data-shop-id="3" data-iphen-id="15">3-15</td>
+				<td data-shop-id="4" data-iphen-id="15">4-15</td>
+				<td data-shop-id="2" data-iphen-id="15">2-15</td>
+				<td data-shop-id="5" data-iphen-id="15">5-15</td>
+				<td data-shop-id="11" data-iphen-id="15">11-15</td>
+				<td data-shop-id="6" data-iphen-id="15">6-15</td>
+				<td data-shop-id="15" data-iphen-id="15">15-15</td>
+				<td data-shop-id="20" data-iphen-id="15">20-15</td>
             </tr>
 
 
             <tr>
                 <td style="background:#4b5780;text-align:left;">Blue</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-shop-id="14" data-iphen-id="16">14-16</td>
+                <td data-shop-id="1"  data-iphen-id="16">1-16</td>
+                <td data-shop-id="8"  data-iphen-id="16">8-16</td>
+				<td data-shop-id="13" data-iphen-id="16">13-16</td>
+				<td data-shop-id="7" data-iphen-id="16">7-16</td>
+				<td data-shop-id="9" data-iphen-id="16">9-16</td>
+				<td data-shop-id="10" data-iphen-id="16">10-16</td>
+				<td data-shop-id="19" data-iphen-id="16">19-16</td>
+				<td data-shop-id="18" data-iphen-id="16">18-16</td>
+				<td data-shop-id="16" data-iphen-id="16">16-16</td>
+				<td data-shop-id="12" data-iphen-id="16">12-16</td>
+				<td data-shop-id="17" data-iphen-id="16">17-16</td>
+				<td data-shop-id="3" data-iphen-id="16">3-16</td>
+				<td data-shop-id="4" data-iphen-id="16">4-16</td>
+				<td data-shop-id="2" data-iphen-id="16">2-16</td>
+				<td data-shop-id="5" data-iphen-id="16">5-16</td>
+				<td data-shop-id="11" data-iphen-id="16">11-16</td>
+				<td data-shop-id="6" data-iphen-id="16">6-16</td>
+				<td data-shop-id="15" data-iphen-id="16">15-16</td>
+				<td data-shop-id="20" data-iphen-id="16">20-16</td>
             </tr>
             <tr>
 
 
                 <td style="background:#e6e6e6;text-align:left;">Silver</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-shop-id="14" data-iphen-id="14">14-14</td>
+                <td data-shop-id="1"  data-iphen-id="14">1-14</td>
+                <td data-shop-id="8"  data-iphen-id="14">8-14</td>
+				<td data-shop-id="13" data-iphen-id="14">13-14</td>
+				<td data-shop-id="7" data-iphen-id="14">7-14</td>
+				<td data-shop-id="9" data-iphen-id="14">9-14</td>
+				<td data-shop-id="10" data-iphen-id="14">10-14</td>
+				<td data-shop-id="19" data-iphen-id="14">19-14</td>
+				<td data-shop-id="18" data-iphen-id="14">18-14</td>
+				<td data-shop-id="16" data-iphen-id="14">16-14</td>
+				<td data-shop-id="12" data-iphen-id="14">12-14</td>
+				<td data-shop-id="17" data-iphen-id="14">17-14</td>
+				<td data-shop-id="3" data-iphen-id="14">3-14</td>
+				<td data-shop-id="4" data-iphen-id="14">4-14</td>
+				<td data-shop-id="2" data-iphen-id="14">2-14</td>
+				<td data-shop-id="5" data-iphen-id="14">5-14</td>
+				<td data-shop-id="11" data-iphen-id="14">11-14</td>
+				<td data-shop-id="6" data-iphen-id="14">6-14</td>
+				<td data-shop-id="15" data-iphen-id="14">15-14</td>
+				<td data-shop-id="20" data-iphen-id="14">20-14</td>
             </tr>
             <!-- 1TB -->
             <tr>
                 <td rowspan="5" style="text-align:left;">1TB</td>
                 <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
-                <td rowspan="5">194,800</td>
+                <td rowspan="5" data-range-shop-id="14 1 8 13 7 9 10 19 18 16 12 17 3 4 2 5 11 5 15 20" data-highest>194,800</td>
+                <td rowspan="5" data-diff>194,800</td>
+                <td rowspan="5" data-rate>194,800</td>
+                <td rowspan="5" data-change-from-crevious-day>194,800</td>
+                <td rowspan="5" data-range-shop-id="14 1 8 13 7 9 10 19 18 16 12 17 3 4 2 5 11 5 15 20" data-average>194,800</td>
             </tr>
             <tr class="avg-row">
                 <td colspan="1" style="text-align:left;">ALL平均</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-shop-id="14" data-iphen-average-id="18 19 17">14</td>
+                <td data-shop-id="1"  data-iphen-average-id="18 19 17">1</td>
+                <td data-shop-id="8"  data-iphen-average-id="18 19 17">8</td>
+				<td data-shop-id="13" data-iphen-average-id="18 19 17">13</td>
+				<td data-shop-id="7" data-iphen-average-id="18 19 17">7</td>
+				<td data-shop-id="9" data-iphen-average-id="18 19 17">9</td>
+				<td data-shop-id="10" data-iphen-average-id="18 19 17">10</td>
+				<td data-shop-id="19" data-iphen-average-id="18 19 17">19</td>
+				<td data-shop-id="18" data-iphen-average-id="18 19 17">18</td>
+				<td data-shop-id="16" data-iphen-average-id="18 19 17">16</td>
+				<td data-shop-id="12" data-iphen-average-id="18 19 17">12</td>
+				<td data-shop-id="17" data-iphen-average-id="18 19 17">17</td>
+				<td data-shop-id="3" data-iphen-average-id="18 19 17">3</td>
+				<td data-shop-id="4" data-iphen-average-id="18 19 17">4</td>
+				<td data-shop-id="2" data-iphen-average-id="18 19 17">2</td>
+				<td data-shop-id="5" data-iphen-average-id="18 19 17">5</td>
+				<td data-shop-id="11" data-iphen-average-id="18 19 17">11</td>
+				<td data-shop-id="6" data-iphen-average-id="18 19 17">6</td>
+				<td data-shop-id="15" data-iphen-average-id="18 19 17">15</td>
+				<td data-shop-id="20" data-iphen-average-id="18 19 17">20</td>
             </tr>
 
             <tr>
                 <td style="background:#f68a44;text-align:left;">Orange</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-shop-id="14" data-iphen-id="18">14-18</td>
+                <td data-shop-id="1"  data-iphen-id="18">1-18</td>
+                <td data-shop-id="8"  data-iphen-id="18">8-18</td>
+				<td data-shop-id="13" data-iphen-id="18">13-18</td>
+				<td data-shop-id="7" data-iphen-id="18">7-18</td>
+				<td data-shop-id="9" data-iphen-id="18">9-18</td>
+				<td data-shop-id="10" data-iphen-id="18">10-18</td>
+				<td data-shop-id="19" data-iphen-id="18">19-18</td>
+				<td data-shop-id="18" data-iphen-id="18">18-18</td>
+				<td data-shop-id="16" data-iphen-id="18">16-18</td>
+				<td data-shop-id="12" data-iphen-id="18">12-18</td>
+				<td data-shop-id="17" data-iphen-id="18">17-18</td>
+				<td data-shop-id="3" data-iphen-id="18">3-18</td>
+				<td data-shop-id="4" data-iphen-id="18">4-18</td>
+				<td data-shop-id="2" data-iphen-id="18">2-18</td>
+				<td data-shop-id="5" data-iphen-id="18">5-18</td>
+				<td data-shop-id="11" data-iphen-id="18">11-18</td>
+				<td data-shop-id="6" data-iphen-id="18">6-18</td>
+				<td data-shop-id="15" data-iphen-id="18">15-18</td>
+				<td data-shop-id="20" data-iphen-id="18">20-18</td>
             </tr>
 
             <tr>
                 <td style="background:#4b5780;text-align:left;">Blue</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-shop-id="14" data-iphen-id="19">14-19</td>
+                <td data-shop-id="1"  data-iphen-id="19">1-19</td>
+                <td data-shop-id="8"  data-iphen-id="19">8-19</td>
+				<td data-shop-id="13" data-iphen-id="19">13-19</td>
+				<td data-shop-id="7" data-iphen-id="19">7-19</td>
+				<td data-shop-id="9" data-iphen-id="19">9-19</td>
+				<td data-shop-id="10" data-iphen-id="19">10-19</td>
+				<td data-shop-id="19" data-iphen-id="19">19-19</td>
+				<td data-shop-id="18" data-iphen-id="19">18-19</td>
+				<td data-shop-id="16" data-iphen-id="19">16-19</td>
+				<td data-shop-id="12" data-iphen-id="19">12-19</td>
+				<td data-shop-id="17" data-iphen-id="19">17-19</td>
+				<td data-shop-id="3" data-iphen-id="19">3-19</td>
+				<td data-shop-id="4" data-iphen-id="19">4-19</td>
+				<td data-shop-id="2" data-iphen-id="19">2-19</td>
+				<td data-shop-id="5" data-iphen-id="19">5-19</td>
+				<td data-shop-id="11" data-iphen-id="19">11-19</td>
+				<td data-shop-id="6" data-iphen-id="19">6-19</td>
+				<td data-shop-id="15" data-iphen-id="19">15-19</td>
+				<td data-shop-id="20" data-iphen-id="19">20-19</td>
             </tr>
 
             <tr>
                 <td style="background:#e6e6e6;text-align:left;">Silver</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-shop-id="14" data-iphen-id="17">14-17</td>
+                <td data-shop-id="1"  data-iphen-id="17">1-17</td>
+                <td data-shop-id="8"  data-iphen-id="17">8-17</td>
+				<td data-shop-id="13" data-iphen-id="17">13-17</td>
+				<td data-shop-id="7" data-iphen-id="17">7-17</td>
+				<td data-shop-id="9" data-iphen-id="17">9-17</td>
+				<td data-shop-id="10" data-iphen-id="17">10-17</td>
+				<td data-shop-id="19" data-iphen-id="17">19-17</td>
+				<td data-shop-id="18" data-iphen-id="17">18-17</td>
+				<td data-shop-id="16" data-iphen-id="17">16-17</td>
+				<td data-shop-id="12" data-iphen-id="17">12-17</td>
+				<td data-shop-id="17" data-iphen-id="17">17-17</td>
+				<td data-shop-id="3" data-iphen-id="17">3-17</td>
+				<td data-shop-id="4" data-iphen-id="17">4-17</td>
+				<td data-shop-id="2" data-iphen-id="17">2-17</td>
+				<td data-shop-id="5" data-iphen-id="17">5-17</td>
+				<td data-shop-id="11" data-iphen-id="17">11-17</td>
+				<td data-shop-id="6" data-iphen-id="17">6-17</td>
+				<td data-shop-id="15" data-iphen-id="17">15-17</td>
+				<td data-shop-id="20" data-iphen-id="17">20-17</td>
             </tr>
 
 
@@ -1074,6 +1183,138 @@
     </div>
 
     <div class="model-gap"></div>
+
+
+    <!-- ================= iPhone Air ================= -->
+    <div class="model-section">
+        <!--       <div class="model-header">iPhone Air</div> -->
+        <table>
+            <thead style='height:0'>
+            <tr>
+                <th class="col-model">機種</th>
+                <th class="col-capacity">容量</th>
+                <th class="col-num">定価</th>
+                <th class="col-num">最高</th>
+                　
+                <th class="col-num">差額</th>
+                <th class="col-num">買取率</th>
+                <th class="col-num">平均値</th>
+                <th class="col-num">前日比</th>
+                <th class="col-color">カラー</th>
+                <!-- Stores -->
+                <th class="shop-col shop-head shop-買取商店">買取商店</th>
+                <th class="shop-col shop-head shop-海峡通信">海峡通信</th>
+                <th class="shop-col shop-head shop-買取１丁目">買取１丁目</th>
+                <th class="shop-col shop-head shop-モバイルミックス">モバイルミックス</th>
+                <th class="shop-col shop-head shop-森森買取">森森買取</th>
+                <th class="shop-col shop-head shop-買取ルデヤ">買取ルデヤ</th>
+                <th class="shop-col shop-head shop-買取Wiki">買取Wiki</th>
+                <th class="shop-col shop-head shop-買取ホムラ">買取ホムラ</th>
+                <th class="shop-col shop-head shop-ドラゴンモバイル-">ドラゴンモバイル-</th>
+                <th class="shop-col shop-head shop-モバステ-">モバステ-</th>
+                <th class="shop-col shop-head shop-アキモバ-">アキモバ-</th>
+                <th class="shop-col shop-head shop-トゥインクル">トゥインクル</th>
+                <th class="shop-col shop-head shop-家電市場">家電市場</th>
+                <th class="shop-col shop-head shop-買取楽園">買取楽園</th>
+                <th class="shop-col shop-head shop-買取当番">買取当番</th>
+                <th class="shop-col shop-head shop-携帯空間">携帯空間</th>
+                <th class="shop-col shop-head shop-ゲストモバイル">ゲストモバイル</th>
+                <th class="shop-col shop-head shop-買取オク">買取オク</th>
+                <th class="shop-col shop-head shop-毎日買取">毎日買取</th>
+                <th class="shop-col shop-head shop-MobileZone">Mobile Zone</th>
+            </tr>
+            </thead>
+
+            <tbody>
+            <tr>
+
+                <td rowspan="3" style="text-align:left;">iPhone Air</td>
+                <td style="text-align:left;">256GB</td>
+                <td rowspan="3">194,800</td>
+                <td rowspan="3" data-range-shop-id="14 1 8 13 7 9 10 19 18 16 12 17 3 4 2 5 11 5 15 20" data-highest>194,800</td>
+                <td rowspan="3" data-diff>194,800</td>
+                <td rowspan="3" data-rate>194,800</td>
+                <td rowspan="3" data-change-from-crevious-day>194,800</td>
+                <td rowspan="3" data-range-shop-id="14 1 8 13 7 9 10 19 18 16 12 17 3 4 2 5 11 5 15 20" data-average>194,800</td>
+                <td style="text-align:left;">ALL平均</td>
+                <td data-shop-id="14" data-iphen-average-id="32 33 34 35">14</td>
+                <td data-shop-id="1"  data-iphen-average-id="32 33 34 35">1</td>
+                <td data-shop-id="8"  data-iphen-average-id="32 33 34 35">8</td>
+                <td data-shop-id="13" data-iphen-average-id="32 33 34 35">13</td>
+                <td data-shop-id="7" data-iphen-average-id="32 33 34 35">7</td>
+                <td data-shop-id="9" data-iphen-average-id="32 33 34 35">9</td>
+                <td data-shop-id="10" data-iphen-average-id="32 33 34 35">10</td>
+                <td data-shop-id="19" data-iphen-average-id="32 33 34 35">19</td>
+                <td data-shop-id="18" data-iphen-average-id="32 33 34 35">18</td>
+                <td data-shop-id="16" data-iphen-average-id="32 33 34 35">16</td>
+                <td data-shop-id="12" data-iphen-average-id="32 33 34 35">12</td>
+                <td data-shop-id="17" data-iphen-average-id="32 33 34 35">17</td>
+                <td data-shop-id="3" data-iphen-average-id="32 33 34 35">3</td>
+                <td data-shop-id="4" data-iphen-average-id="32 33 34 35">4</td>
+                <td data-shop-id="2" data-iphen-average-id="32 33 34 35">2</td>
+                <td data-shop-id="5" data-iphen-average-id="32 33 34 35">5</td>
+                <td data-shop-id="11" data-iphen-average-id="32 33 34 35">11</td>
+                <td data-shop-id="6" data-iphen-average-id="32 33 34 35">6</td>
+                <td data-shop-id="15" data-iphen-average-id="32 33 34 35">15</td>
+                <td data-shop-id="20" data-iphen-average-id="32 33 34 35">20</td>
+            </tr>
+
+            <tr>
+                <td style="text-align:left;">512GB</td>
+                <td style="text-align:left;">ALL平均</td>
+                <td data-shop-id="14" data-iphen-average-id="36 37 38 39">14</td>
+                <td data-shop-id="1"  data-iphen-average-id="36 37 38 39">1</td>
+                <td data-shop-id="8"  data-iphen-average-id="36 37 38 39">8</td>
+                <td data-shop-id="13" data-iphen-average-id="36 37 38 39">13</td>
+                <td data-shop-id="7" data-iphen-average-id="36 37 38 39">7</td>
+                <td data-shop-id="9" data-iphen-average-id="36 37 38 39">9</td>
+                <td data-shop-id="10" data-iphen-average-id="36 37 38 39">10</td>
+                <td data-shop-id="19" data-iphen-average-id="36 37 38 39">19</td>
+                <td data-shop-id="18" data-iphen-average-id="36 37 38 39">18</td>
+                <td data-shop-id="16" data-iphen-average-id="36 37 38 39">16</td>
+                <td data-shop-id="12" data-iphen-average-id="36 37 38 39">12</td>
+                <td data-shop-id="17" data-iphen-average-id="36 37 38 39">17</td>
+                <td data-shop-id="3" data-iphen-average-id="36 37 38 39">3</td>
+                <td data-shop-id="4" data-iphen-average-id="36 37 38 39">4</td>
+                <td data-shop-id="2" data-iphen-average-id="36 37 38 39">2</td>
+                <td data-shop-id="5" data-iphen-average-id="36 37 38 39">5</td>
+                <td data-shop-id="11" data-iphen-average-id="36 37 38 39">11</td>
+                <td data-shop-id="6" data-iphen-average-id="36 37 38 39">6</td>
+                <td data-shop-id="15" data-iphen-average-id="36 37 38 39">15</td>
+                <td data-shop-id="20" data-iphen-average-id="36 37 38 39">20</td>
+            </tr>
+
+            <tr>
+                <td style="text-align:left;">1T</td>
+                <td style="text-align:left;">ALL平均</td>
+                <td data-shop-id="14" data-iphen-average-id="40 41 42 43">14</td>
+                <td data-shop-id="1"  data-iphen-average-id="40 41 42 43">1</td>
+                <td data-shop-id="8"  data-iphen-average-id="40 41 42 43">8</td>
+                <td data-shop-id="13" data-iphen-average-id="40 41 42 43">13</td>
+                <td data-shop-id="7" data-iphen-average-id="40 41 42 43">7</td>
+                <td data-shop-id="9" data-iphen-average-id="40 41 42 43">9</td>
+                <td data-shop-id="10" data-iphen-average-id="40 41 42 43">10</td>
+                <td data-shop-id="19" data-iphen-average-id="40 41 42 43">19</td>
+                <td data-shop-id="18" data-iphen-average-id="40 41 42 43">18</td>
+                <td data-shop-id="16" data-iphen-average-id="40 41 42 43">16</td>
+                <td data-shop-id="12" data-iphen-average-id="40 41 42 43">12</td>
+                <td data-shop-id="17" data-iphen-average-id="40 41 42 43">17</td>
+                <td data-shop-id="3" data-iphen-average-id="40 41 42 43">3</td>
+                <td data-shop-id="4" data-iphen-average-id="40 41 42 43">4</td>
+                <td data-shop-id="2" data-iphen-average-id="40 41 42 43">2</td>
+                <td data-shop-id="5" data-iphen-average-id="40 41 42 43">5</td>
+                <td data-shop-id="11" data-iphen-average-id="40 41 42 43">11</td>
+                <td data-shop-id="6" data-iphen-average-id="40 41 42 43">6</td>
+                <td data-shop-id="15" data-iphen-average-id="40 41 42 43">15</td>
+                <td data-shop-id="20" data-iphen-average-id="40 41 42 43">20</td>
+            </tr>
+
+
+            </tbody>
+        </table>
+    </div>
+
+
 
     <!-- ================= iPhone 17 ================= -->
     <div class="model-section">
@@ -1118,64 +1359,59 @@
             <tr>
                 <td rowspan="2" style="text-align:left;">iPhone 17</td>
                 <td style="text-align:left;">256GB</td>
-                <td>194,800</td>
-                <td>194,800</td>
-                <td>194,800</td>
-                <td>194,800</td>
-                <td>194,800</td>
-                <td>194,800</td>
-                <td style="text-align:left;">(平均値)</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td rowspan="2">194,800</td>
+                <td rowspan="2" data-range-shop-id="14 1 8 13 7 9 10 19 18 16 12 17 3 4 2 5 11 5 15 20" data-highest>194,800</td>
+                <td rowspan="2" data-diff>194,800</td>
+                <td rowspan="2" data-rate>194,800</td>
+                <td rowspan="2" data-change-from-crevious-day>194,800</td>
+                <td rowspan="2" data-range-shop-id="14 1 8 13 7 9 10 19 18 16 12 17 3 4 2 5 11 5 15 20" data-average>194,800</td>
+
+                <td style="text-align:left;">ALL平均</td>
+                <td data-shop-id="14" data-iphen-average-id="1 2 3 4 5">14</td>
+                <td data-shop-id="1"  data-iphen-average-id="1 2 3 4 5">1</td>
+                <td data-shop-id="8"  data-iphen-average-id="1 2 3 4 5">8</td>
+				<td data-shop-id="13" data-iphen-average-id="1 2 3 4 5">13</td>
+				<td data-shop-id="7" data-iphen-average-id="1 2 3 4 5">7</td>
+				<td data-shop-id="9" data-iphen-average-id="1 2 3 4 5">9</td>
+				<td data-shop-id="10" data-iphen-average-id="1 2 3 4 5">10</td>
+				<td data-shop-id="19" data-iphen-average-id="1 2 3 4 5">19</td>
+				<td data-shop-id="18" data-iphen-average-id="1 2 3 4 5">18</td>
+				<td data-shop-id="16" data-iphen-average-id="1 2 3 4 5">16</td>
+				<td data-shop-id="12" data-iphen-average-id="1 2 3 4 5">12</td>
+				<td data-shop-id="17" data-iphen-average-id="1 2 3 4 5">17</td>
+				<td data-shop-id="3" data-iphen-average-id="1 2 3 4 5">3</td>
+				<td data-shop-id="4" data-iphen-average-id="1 2 3 4 5">4</td>
+				<td data-shop-id="2" data-iphen-average-id="1 2 3 4 5">2</td>
+				<td data-shop-id="5" data-iphen-average-id="1 2 3 4 5">5</td>
+				<td data-shop-id="11" data-iphen-average-id="1 2 3 4 5">11</td>
+				<td data-shop-id="6" data-iphen-average-id="1 2 3 4 5">6</td>
+				<td data-shop-id="15" data-iphen-average-id="1 2 3 4 5">15</td>
+				<td data-shop-id="20" data-iphen-average-id="1 2 3 4 5">20</td>
             </tr>
 
             <tr>
                 <td style="text-align:left;">512GB</td>
-                <td>194,800</td>
-                <td>194,800</td>
-                <td>194,800</td>
-                <td>194,800</td>
-                <td>194,800</td>
-                <td>194,800</td>
-                <td style="text-align:left;">(平均値)</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td style="text-align:left;">ALL平均</td>
+                <td data-shop-id="14" data-iphen-average-id="6 7 8 9 10">14</td>
+                <td data-shop-id="1"  data-iphen-average-id="6 7 8 9 10">1</td>
+                <td data-shop-id="8"  data-iphen-average-id="6 7 8 9 10">8</td>
+				<td data-shop-id="13" data-iphen-average-id="6 7 8 9 10">13</td>
+				<td data-shop-id="7" data-iphen-average-id="6 7 8 9 10">7</td>
+				<td data-shop-id="9" data-iphen-average-id="6 7 8 9 10">9</td>
+				<td data-shop-id="10" data-iphen-average-id="6 7 8 9 10">10</td>
+				<td data-shop-id="19" data-iphen-average-id="6 7 8 9 10">19</td>
+				<td data-shop-id="18" data-iphen-average-id="6 7 8 9 10">18</td>
+				<td data-shop-id="16" data-iphen-average-id="6 7 8 9 10">16</td>
+				<td data-shop-id="12" data-iphen-average-id="6 7 8 9 10">12</td>
+				<td data-shop-id="17" data-iphen-average-id="6 7 8 9 10">17</td>
+				<td data-shop-id="3" data-iphen-average-id="6 7 8 9 10">3</td>
+				<td data-shop-id="4" data-iphen-average-id="6 7 8 9 10">4</td>
+				<td data-shop-id="2" data-iphen-average-id="6 7 8 9 10">2</td>
+				<td data-shop-id="5" data-iphen-average-id="6 7 8 9 10">5</td>
+				<td data-shop-id="11" data-iphen-average-id="6 7 8 9 10">11</td>
+				<td data-shop-id="6" data-iphen-average-id="6 7 8 9 10">6</td>
+				<td data-shop-id="15" data-iphen-average-id="6 7 8 9 10">15</td>
+				<td data-shop-id="20" data-iphen-average-id="6 7 8 9 10">20</td>
             </tr>
             </tbody>
         </table>
@@ -1183,114 +1419,112 @@
 
     <div class="model-gap"></div>
 
-    <!-- ================= iPhone Air ================= -->
-    <div class="model-section">
-        <!--       <div class="model-header">iPhone Air</div> -->
-        <table>
-            <thead style='height:0'>
-            <tr>
-                <th class="col-model">機種</th>
-                <th class="col-capacity">容量</th>
-                <th class="col-num">定価</th>
-                <th class="col-num">最高</th>
-                　
-                <th class="col-num">差額</th>
-                <th class="col-num">買取率</th>
-                <th class="col-num">平均値</th>
-                <th class="col-num">前日比</th>
-                <th class="col-color">カラー</th>
-                <!-- Stores -->
-                <th class="shop-col shop-head shop-買取商店">買取商店</th>
-                <th class="shop-col shop-head shop-海峡通信">海峡通信</th>
-                <th class="shop-col shop-head shop-買取１丁目">買取１丁目</th>
-                <th class="shop-col shop-head shop-モバイルミックス">モバイルミックス</th>
-                <th class="shop-col shop-head shop-森森買取">森森買取</th>
-                <th class="shop-col shop-head shop-買取ルデヤ">買取ルデヤ</th>
-                <th class="shop-col shop-head shop-買取Wiki">買取Wiki</th>
-                <th class="shop-col shop-head shop-買取ホムラ">買取ホムラ</th>
-                <th class="shop-col shop-head shop-ドラゴンモバイル-">ドラゴンモバイル-</th>
-                <th class="shop-col shop-head shop-モバステ-">モバステ-</th>
-                <th class="shop-col shop-head shop-アキモバ-">アキモバ-</th>
-                <th class="shop-col shop-head shop-トゥインクル">トゥインクル</th>
-                <th class="shop-col shop-head shop-家電市場">家電市場</th>
-                <th class="shop-col shop-head shop-買取楽園">買取楽園</th>
-                <th class="shop-col shop-head shop-買取当番">買取当番</th>
-                <th class="shop-col shop-head shop-携帯空間">携帯空間</th>
-                <th class="shop-col shop-head shop-ゲストモバイル">ゲストモバイル</th>
-                <th class="shop-col shop-head shop-買取オク">買取オク</th>
-                <th class="shop-col shop-head shop-毎日買取">毎日買取</th>
-                <th class="shop-col shop-head shop-MobileZone">Mobile Zone</th>
-            </tr>
-            </thead>
 
-            <tbody>
-            <tr>
-                <td rowspan="2" style="text-align:left;">iPhone Air</td>
-                <td style="text-align:left;">256GB</td>
-                <td>194,800</td>
-                <td>194,800</td>
-                <td>194,800</td>
-                <td>194,800</td>
-                <td>194,800</td>
-                <td>194,800</td>
-                <td style="text-align:left;">(平均値)</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-            </tr>
-
-            <tr>
-                <td style="text-align:left;">512GB</td>
-                <td>194,800</td>
-                <td>194,800</td>
-                <td>194,800</td>
-                <td>194,800</td>
-                <td>194,800</td>
-                <td>194,800</td>
-                <td style="text-align:left;">(平均値)</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-            </tr>
-
-
-            </tbody>
-        </table>
-    </div>
 </div>
+        <details style="margin:30px">
+        <summary class="muted">店舗ごとの件数／フィルタ後件数／開始・終了時刻）</summary>
+    </details>
+<script>
+(() => {
+  const API_BASE = '/AppleStockChecker';
+
+  // ---- DOM ----
+  const input   = document.getElementById('start');        // datetime-local
+  const btnPick = document.getElementById('select-all');   // 選択時刻
+  const btnNew  = document.getElementById('clear-all');    // 最新
+
+  // ---- 时间工具（固定以 JST 输出 +09:00）----
+  const fmt = new Intl.DateTimeFormat('sv-SE', {
+    year:'numeric', month:'2-digit', day:'2-digit',
+    hour:'2-digit', minute:'2-digit', second:'2-digit',
+    hour12:false, timeZone:'Asia/Tokyo'
+  });
+  const toIsoTZ = d => fmt.format(d).replace(' ', 'T') + '+09:00';
+  const enc = encodeURIComponent;
+  const floorToMinute = d => new Date(Math.floor(d.getTime()/60000)*60000);
+
+  // ---- 拉取区间 ----
+  async function fetchRows(start, end) {
+    const url = `${API_BASE}/purchasing-time-analyses-psta-compact/?start=${enc(toIsoTZ(start))}&end=${enc(toIsoTZ(end))}`;
+    const r = await fetch(url, { headers:{ 'Accept':'application/json' }});
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  }
+
+  // ---- 以 refTs 为参照，挑各 (shop_id, iphone_id) 最近一条 ----
+  function buildClosest(rows, refTs) {
+    const m = new Map(); // key `${shop}-${iphone}` -> {price, ts}
+    for (const x of rows) {
+      const key = `${x.shop_id}-${x.iphone_id}`;
+      const ts  = Date.parse(x.Timestamp_Time);
+      if (!Number.isFinite(ts)) continue;
+      const cur = m.get(key);
+      if (!cur || Math.abs(ts - refTs) < Math.abs(cur.ts - refTs)) {
+        m.set(key, { price: x.New_Product_Price, ts });
+      }
+    }
+    return m;
+  }
+
+  // ---- 只按 data-* 属性填充（完全不看单元格文本占位）----
+  function fillSingles(closest) {
+    const nf = new Intl.NumberFormat('ja-JP');
+    document.querySelectorAll('td[data-shop-id][data-iphen-id]').forEach(td => {
+      const shopId  = Number(td.dataset.shopId);
+      const iphenId = Number(td.dataset.iphenId);
+      const hit = closest.get(`${shopId}-${iphenId}`);
+      if (hit && Number.isFinite(hit.price)) {
+        td.dataset.v = String(hit.price);
+        td.textContent = nf.format(hit.price);
+      } else {
+        td.dataset.v = '';
+        td.textContent = '-';
+      }
+    });
+  }
+  function fillAverages(closest) {
+    const nf = new Intl.NumberFormat('ja-JP');
+    document.querySelectorAll('td[data-shop-id][data-iphen-average-id], td[data-shop-id][iphen-average-id]').forEach(td => {
+      const shopId = Number(td.dataset.shopId);
+      const raw = td.getAttribute('data-iphen-average-id') || td.getAttribute('iphen-average-id') || '';
+      const ids = raw.trim().split(/\s+/).map(Number).filter(Number.isFinite);
+      // 可选：去重，避免 "36 37 38 38" 这类重复影响
+      const uniq = [...new Set(ids)];
+      let sum = 0, n = 0;
+      for (const id of uniq) {
+        const hit = closest.get(`${shopId}-${id}`);
+        if (hit && Number.isFinite(hit.price)) { sum += hit.price; n++; }
+      }
+      if (n) {
+        const avg = Math.round(sum / n);
+        td.dataset.v = String(avg);
+        td.textContent = nf.format(avg);
+      } else {
+        td.dataset.v = '';
+        td.textContent = '-';
+      }
+    });
+  }
+
+  async function run(endBase, btnLabel) {
+    const end   = floorToMinute(endBase);
+    const start = new Date(end.getTime() - 25*60*1000);
+    const rows  = await fetchRows(start, end);
+    const map   = buildClosest(rows, end.getTime());
+    fillSingles(map);
+    fillAverages(map);
+    console.log(`[PSTA] ${btnLabel}: rows=${rows.length} window=${toIsoTZ(start)}→${toIsoTZ(end)}`);
+  }
+
+  // 事件：選択時刻（以选择的时刻为参照）
+  btnPick?.addEventListener('click', () => {
+    if (!input?.value) { alert('時刻を選択してください'); return; }
+    run(new Date(input.value), '選択時刻');
+  });
+
+  // 事件：最新（以现在为参照）
+  btnNew?.addEventListener('click', () => run(new Date(), '最新'));
+})();
+</script>
 </body>
 </html>
