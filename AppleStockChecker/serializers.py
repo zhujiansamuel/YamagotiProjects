@@ -120,7 +120,7 @@ class TrendResponseByPNSerializer(serializers.Serializer):
 class SecondHandShopSerializer(serializers.ModelSerializer):
     class Meta:
         model = SecondHandShop
-        fields = ["id", "name", "website", "address"]
+        fields = ["pk", "name", "website", "address"]
 
 
 class PurchasingShopPriceRecordSerializer(serializers.ModelSerializer):
