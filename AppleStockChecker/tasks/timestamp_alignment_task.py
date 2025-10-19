@@ -53,12 +53,35 @@ def _tz_offset_str(dt: timezone.datetime) -> str:
     hh, mm = divmod(total // 60, 60)
     return f"{sign}{hh:02d}:{mm:02d}"
 
+# AppleStockChecker/tasks.py
+from typing import Any, Dict, List, Optional
+from collections import Counter, defaultdict
+from celery import shared_task, chord
+from django.core.exceptions import ObjectDoesNotExist, ValidationError
+from django.db import transaction, IntegrityError
 
+# === 可调参数（根据你们前后端链路容量调节） ===
+MAX_BUCKET_ERROR_SAMPLES = 50       # 单桶保留的 error 明细条数上限
+MAX_BUCKET_CHART_POINTS = 1000      # 单桶打包给回调聚合用的 chart point 上限
+MAX_PUSH_POINTS = 20000             # 本次广播给前端的 point 总上限（超过则裁剪到最近 N 条）
 
+# -----------------------------------------------
+# 子任务：处理“分钟桶”并返回桶级摘要 + 图表增量
+# -----------------------------------------------
 @shared_task(name="AppleStockChecker.tasks.psta_process_minute_bucket")
-def psta_process_minute_bucket(*, ts_iso: str, rows: List[Dict[str, Any]], job_id: str) -> Dict[str, Any]:
-    """为某分钟桶生成/更新 PSTA。返回错误详情与直方图，便于定位 why ok=0 failed>0。"""
-    from django.utils import timezone
+def psta_process_minute_bucket(
+    *,
+    ts_iso: str,
+    rows: List[Dict[str, Any]],
+    job_id: str
+) -> Dict[str, Any]:
+    """
+    为某分钟桶生成/更新 PSTA。
+    返回：
+      - 错误详情与直方图（便于定位 why ok=0 failed>0）
+      - chart_points：给 finalize 汇总后推送到前端的图表增量（去重由前端做）
+    """
+    from django.utils import timezone  # 若你有用到
     ok = 0
     failed = 0
     errors: List[Dict[str, Any]] = []
@@ -67,6 +90,8 @@ def psta_process_minute_bucket(*, ts_iso: str, rows: List[Dict[str, Any]], job_i
     ts_dt = _to_aware(ts_iso)
     ts_tz = _tz_offset_str(ts_dt)
     orig_tz = "+09:00"
+
+    chart_points: List[Dict[str, Any]] = []
 
     for r in rows:
         try:
@@ -82,7 +107,6 @@ def psta_process_minute_bucket(*, ts_iso: str, rows: List[Dict[str, Any]], job_i
 
             rec_dt = _to_aware(r.get("recorded_at"))
             new_price = r.get("price_new") or r.get("New_Product_Price")
-
             if new_price is None:
                 raise ValueError("missing New_Product_Price")
 
@@ -103,7 +127,7 @@ def psta_process_minute_bucket(*, ts_iso: str, rows: List[Dict[str, Any]], job_i
                     inst.Update_Count = (inst.Update_Count or 0) + 1
                     inst.save()
                 else:
-                    PurchasingShopTimeAnalysis.objects.create(
+                    inst = PurchasingShopTimeAnalysis.objects.create(
                         Batch_ID=None,
                         Job_ID=job_id,
                         Original_Record_Time_Zone=orig_tz,
@@ -116,33 +140,47 @@ def psta_process_minute_bucket(*, ts_iso: str, rows: List[Dict[str, Any]], job_i
                         iphone_id=iphone_id,
                         New_Product_Price=int(new_price),
                     )
+
             ok += 1
+
+            # === 收集图表增量：每条成功写库就记录一个点 ===
+            if len(chart_points) < MAX_BUCKET_CHART_POINTS:
+                chart_points.append({
+                    "id": inst.pk,                      # 用于前端幂等去重（可选）
+                    "t": ts_iso,                        # 分钟桶时间（x 轴）
+                    "iphone_id": iphone_id,
+                    "shop_id": shop_id,
+                    "price": int(new_price),
+                    "recorded_at": rec_dt.isoformat(),  # 原始记录时间（辅助展示）
+                })
 
         except (ObjectDoesNotExist, ValidationError, IntegrityError, TypeError, ValueError) as e:
             failed += 1
             err_counter[e.__class__.__name__] += 1
-            errors.append({
-                "exc": e.__class__.__name__,
-                "msg": str(e),
-                "item": {
-                    "shop_id": r.get("shop_id"),
-                    "iphone_id": r.get("iphone_id"),
-                    "recorded_at": r.get("recorded_at"),
-                    "New_Product_Price": r.get("price_new") or r.get("New_Product_Price"),
-                }
-            })
+            if len(errors) < MAX_BUCKET_ERROR_SAMPLES:
+                errors.append({
+                    "exc": e.__class__.__name__,
+                    "msg": str(e),
+                    "item": {
+                        "shop_id": r.get("shop_id"),
+                        "iphone_id": r.get("iphone_id"),
+                        "recorded_at": r.get("recorded_at"),
+                        "New_Product_Price": r.get("price_new") or r.get("New_Product_Price"),
+                    }
+                })
         except Exception as e:
             failed += 1
             err_counter[e.__class__.__name__] += 1
-            errors.append({
-                "exc": e.__class__.__name__,
-                "msg": str(e),
-                "item": {
-                    "shop_id": r.get("shop_id"),
-                    "iphone_id": r.get("iphone_id"),
-                    "recorded_at": r.get("recorded_at"),
-                }
-            })
+            if len(errors) < MAX_BUCKET_ERROR_SAMPLES:
+                errors.append({
+                    "exc": e.__class__.__name__,
+                    "msg": str(e),
+                    "item": {
+                        "shop_id": r.get("shop_id"),
+                        "iphone_id": r.get("iphone_id"),
+                        "recorded_at": r.get("recorded_at"),
+                    }
+                })
 
     # 有错误就推一条“桶级摘要”调试消息（ALL 频道）
     if failed:
@@ -165,53 +203,129 @@ def psta_process_minute_bucket(*, ts_iso: str, rows: List[Dict[str, Any]], job_i
         "failed": failed,
         "total": ok + failed,
         "error_hist": dict(err_counter),
-        "errors": errors[:50],  # 返回最多 50 条以防 payload 过大
+        "errors": errors[:MAX_BUCKET_ERROR_SAMPLES],
+        "chart_points": chart_points,  # ✅ 传给回调聚合后做图表更新
     }
 
 
+# -----------------------------------------------
+# 回调：聚合所有分钟桶，广播最终“done + 图表增量”
+# -----------------------------------------------
 @shared_task(name="AppleStockChecker.tasks.psta_finalize_buckets")
-def psta_finalize_buckets(results: List[Dict[str, Any]], job_id: str, ts_iso: str) -> Dict[str, Any]:
-    """汇总所有分钟桶的错误直方图，并推送最终 done。"""
-    total_buckets = len(results)
-    total_ok = sum(r.get("ok", 0) for r in results)
-    total_failed = sum(r.get("failed", 0) for r in results)
+def psta_finalize_buckets(
+    results: List[Dict[str, Any]],
+    job_id: str,
+    ts_iso: str
+) -> Dict[str, Any]:
+    """汇总所有分钟桶的错误直方图 + 打包本次入库的图表增量，并推送最终 done。"""
+    total_buckets = len(results or [])
+    total_ok = sum(int(r.get("ok", 0)) for r in results or [])
+    total_failed = sum(int(r.get("failed", 0)) for r in results or [])
 
     # 汇总错误直方图
-    agg = Counter()
-    for r in results:
+    agg_err = Counter()
+    for r in results or []:
         for k, v in (r.get("error_hist") or {}).items():
-            agg[k] += v
+            agg_err[k] += v
 
+    # === 聚合图表增量：分组为 (iphone_id, shop_id) 的独立序列 ===
+    series_map = defaultdict(list)  # key: (iphone_id, shop_id) -> List[point]
+    total_points = 0
+
+    for r in results or []:
+        for p in (r.get("chart_points") or []):
+            key = (p.get("iphone_id"), p.get("shop_id"))
+            # 仅保留必要字段，减小 payload
+            series_map[key].append({
+                "id": p.get("id"),
+                "t": p.get("t"),
+                "price": p.get("price"),
+                "recorded_at": p.get("recorded_at"),
+            })
+            total_points += 1
+
+    # 按时间排序，并做全局裁剪（保留最近 MAX_PUSH_POINTS 条）
+    # 思路：先合并后排序，再裁剪；时间为 ISO 字符串，可直接字典序
+    # 同时把结果转成前端友好的 list 结构
+    # 统计全量点数，必要时截断
+    clipped = False
+    if total_points > MAX_PUSH_POINTS:
+        clipped = True
+        # 计算需要保留的最近点的全局阈值：先把所有点扁平化排序，再筛回各组
+        flat = []
+        for (iphone_id, shop_id), pts in series_map.items():
+            for item in pts:
+                flat.append((item["t"], iphone_id, shop_id, item))
+        flat.sort(key=lambda x: x[0])  # 按时间升序
+        flat = flat[-MAX_PUSH_POINTS:]  # 仅保留最近 N 条
+
+        # 重建 series_map（仅保留被截断后的点）
+        series_map = defaultdict(list)
+        for _, iphone_id, shop_id, item in flat:
+            series_map[(iphone_id, shop_id)].append(item)
+
+    # 每个序列内再做一次排序，以免截断后顺序被打乱
+    series_delta = []
+    for (iphone_id, shop_id), pts in series_map.items():
+        pts.sort(key=lambda x: x["t"])
+        series_delta.append({
+            "iphone_id": iphone_id,
+            "shop_id": shop_id,
+            "points": pts,  # [{id, t, price, recorded_at}, ...]
+        })
+
+    # 构建 summary
     summary = {
         "timestamp": ts_iso,
+        "job_id": job_id,
         "total_buckets": total_buckets,
         "ok": total_ok,
         "failed": total_failed,
-        "error_hist": dict(agg),      # 全局错误直方图
+        "error_hist": dict(agg_err),      # 全局错误直方图
         "by_bucket": [
             {k: r.get(k) for k in ("ts_iso", "ok", "failed", "total", "error_hist")}
-            for r in results
+            for r in (results or [])
         ][:100],  # 明细最多 100 桶
     }
 
+    payload = {
+        "status": "done",
+        "step": "finalize",
+        "progress": 100,
+        "summary": summary,
+        # ✅ 前端图表直接应用的增量
+        "chart_delta": {
+            "job_id": job_id,
+            "timestamp": ts_iso,
+            "series_delta": series_delta,
+            "meta": {
+                "total_points": min(total_points, MAX_PUSH_POINTS),
+                "clipped": clipped,
+            }
+        }
+    }
+
+    # 广播
     try:
-        notify_progress_all(data={"status": "done", "progress": 100, "summary": summary})
+        notify_progress_all(data=payload)
     except Exception:
         pass
 
-    return summary
+    # 任务返回值也带上（便于后端排查）
+    return payload
 
 
-
-# ========= 修改：父任务用 chord，不再 .get() 阻塞 =========
+# -----------------------------------------------
+# 父任务：chord 并行 + 回调（保持你已有写法）
+# -----------------------------------------------
 @shared_task(bind=True, name="AppleStockChecker.tasks.batch_generate_psta_same_ts")
 def batch_generate_psta_same_ts(
     self,
     *,
     job_id: Optional[str] = None,
-    items: Optional[List[Dict[str, Any]]] = None,   # 此版本仍按“分钟桶并行”，items 保留为兼容
+    items: Optional[List[Dict[str, Any]]] = None,   # 兼容
     timestamp_iso: Optional[str] = None,
-    chunk_size: int = 200,                          # 并行桶版不使用，但保留形参以兼容
+    chunk_size: int = 200,                          # 兼容
     query_window_minutes: int = 15,
     shop_ids: Optional[List[int]] = None,
     iphone_ids: Optional[List[int]] = None,
@@ -268,24 +382,27 @@ def batch_generate_psta_same_ts(
         # 无桶可处理，直接返回空摘要
         empty = {"timestamp": ts_iso, "total_buckets": 0, "ok": 0, "failed": 0, "by_bucket": []}
         try:
-            notify_progress_all(data={"status": "done", "progress": 100, "summary": empty})
+            notify_progress_all(data={
+                "status": "done",
+                "progress": 100,
+                "summary": empty,
+                "chart_delta": {"job_id": task_job_id, "timestamp": ts_iso, "series_delta": [], "meta": {"total_points": 0, "clipped": False}}
+            })
         except Exception:
             pass
         return empty
 
-    # ★ 关键：使用 chord 触发并行执行 + 汇总回调；不要 .get()！
-    # 返回 AsyncResult（callback），供调用侧按需追踪
+    # ★ 使用 chord 并行执行 + 汇总回调，不要 .get()
     callback = psta_finalize_buckets.s(task_job_id, ts_iso)
     chord_result = chord(subtasks)(callback)
 
-    # 直接返回“编排任务”的 id 等；最终汇总在 finalize 任务返回中
+    # 返回“编排任务”信息；前端通过广播拿最终 summary+chart_delta
     return {
         "timestamp": ts_iso,
         "total_buckets": total_buckets,
         "job_id": task_job_id,
         "chord_id": chord_result.id,
     }
-
 
 
 #-----------------------------------------------------

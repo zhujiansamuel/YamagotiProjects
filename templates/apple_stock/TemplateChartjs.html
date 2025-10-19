@@ -18,7 +18,7 @@
         .wrap {
             max-width: var(--w);
             margin: 0 auto;
-            
+
         }
 
         fieldset {
@@ -201,11 +201,6 @@
 </div>
 
 
-
-
-
-
-
 <script>
     /* ===================== 1) 固定颜色方案 ===================== */
     const LINE_PALETTE = [
@@ -373,213 +368,215 @@
     chart.setOption(baseOption);
     $('reset').addEventListener('click', () => chart.setOption(baseOption, true));
     window.addEventListener('resize', () => chart.resize());
-
-    const ENDPOINT_SHOPS = "https://verbless-sadistically-jayceon.ngrok-free.dev/AppleStockChecker/secondhand-shops/";
-    const ENDPOINT_IPHONES = "https://verbless-sadistically-jayceon.ngrok-free.dev/AppleStockChecker/iphones/";
+    const API_BASE = '/AppleStockChecker';
+    const ENDPOINT_SHOPS= `${API_BASE}/secondhand-shops/`
+    const ENDPOINT_SHOPS= `${API_BASE}/iphones/`
+    {#const ENDPOINT_SHOPS = "https://verbless-sadistically-jayceon.ngrok-free.dev/AppleStockChecker/secondhand-shops/";#}
+    {#const ENDPOINT_IPHONES = "https://verbless-sadistically-jayceon.ngrok-free.dev/AppleStockChecker/iphones/";#}
 
     async function loadShops() {
-    const box = $('shops');
-    box.innerHTML = '';
-    try {
-        const resp = await fetch(ENDPOINT_SHOPS);
-        const items = await resp.json();
-        for (const s of items) {
-            const id = `shop_${s.id}`;
-            const label = document.createElement('label');
-            label.title = s.name;
-            label.innerHTML = `<input type="checkbox" value="${s.id}" data-name="${s.name}" id="${id}"><span>${s.name}</span>`;
-            box.appendChild(label);
-        }
-    } catch (e) {
-        $('err').textContent = '店舗の読み込みに失敗しました（CORSまたはネットワーク）';
-    }
-}
-
-async function loadIphones() {
-    const dl = $('iphone-list');
-    dl.innerHTML = '';
-    try {
-        const resp = await fetch(ENDPOINT_IPHONES);
-        const items = await resp.json();
-        for (const i of items) {
-            const text = `${i.part_number} ｜ ${i.model_name} ${i.capacity_label} ｜ ${i.color}`;
-            const opt = document.createElement('option');
-            opt.value = i.part_number;
-            opt.label = text;
-            dl.appendChild(opt);
-        }
-        $('iphone-hint').textContent = 'プルダウンから選択するか、part_number を直接入力してください';
-    } catch (e) {
-        $('iphone-hint').textContent = 'iPhone の読み込みに失敗しました（CORSまたはネットワーク）';
-    }
-}
-
-$('select-all').addEventListener('click', () => {
-    document.querySelectorAll('#shops input[type=checkbox]').forEach(cb => cb.checked = true);
-});
-$('clear-all').addEventListener('click', () => {
-    document.querySelectorAll('#shops input[type=checkbox]').forEach(cb => cb.checked = false);
-});
-
-async function fetchOneShopSeries(base, startIsoJST, endIsoJST, shopId, shopName, partNumber) {
-    const url = buildURL(base, startIsoJST, endIsoJST, shopId, partNumber);
-    const resp = await fetch(url, {headers: {"Accept": "application/json"}});
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const data = await resp.json();
-
-    // 後端ではすでに part_number でフィルタ済み。念のためのチェック（極端な場合）
-    let rows = Array.isArray(data) ? data : [];
-    const returned = rows.length;
-    if (rows.length && rows[0]?.iphone && rows[0].iphone !== partNumber) {
-        rows = rows.filter(r => r.iphone === partNumber);
-    }
-    const filtered = rows.length;
-
-    const seriesData = rows
-        .map(r => [
-            new Date(r.Timestamp_Time).valueOf(),  // ミリ秒
-            Number(r.New_Product_Price)            // tooltip 用の値（空でも可）
-        ])
-        .filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]))
-        .sort((a, b) => a[0] - b[0]);
-
-    const firstT = seriesData[0]?.[0];
-    const lastT = seriesData[seriesData.length - 1]?.[0];
-
-    return {name: shopName, data: seriesData, stat: {shopId, shopName, returned, filtered, firstT, lastT, url}};
-}
-
-function putStats(stats) {
-    const div = $('stats');
-    const lines = stats.map(s => {
-        const t0 = s.firstT ? new Date(s.firstT).toLocaleString() : '-';
-        const t1 = s.lastT ? new Date(s.lastT).toLocaleString() : '-';
-        return `#${s.shopId} ${s.shopName}\n  取得件数: ${s.returned}\n  フィルタ後の点数: ${s.filtered}\n  開始/終了時刻: ${t0}  →  ${t1}\n  URL: ${s.url}\n`;
-    });
-    div.textContent = lines.join('\n');
-}
-
-async function loadAndPlot() {
-    $('status').textContent = '読み込み中…';
-    $('err').textContent = '';
-    $('stats').textContent = '';
-
-    const base = $('base').value.trim();
-    const part = $('iphone').value.trim();
-    const startIso = toIsoLocal($('start').value);
-    const endIso = toIsoLocal($('end').value);
-
-    if (!base || !startIso || !endIso) {
-        $('err').textContent = 'ベースURLと時間範囲を入力してください';
-        $('status').textContent = '';
-        return;
-    }
-    if (!part) {
-        $('err').textContent = 'part_number を入力してください';
-        $('status').textContent = '';
-        return;
-    }
-
-    const shopCbs = [...document.querySelectorAll('#shops input[type=checkbox]:checked')];
-    if (shopCbs.length === 0) {
-        $('err').textContent = '少なくとも1店舗を選択してください';
-        $('status').textContent = '';
-        return;
-    }
-
-    try {
-        const tasks = shopCbs.map(cb => {
-            const id = cb.value;
-            const name = cb.getAttribute('data-name') || id;
-            return fetchOneShopSeries(base, startIso, endIso, id, name, part)
-                .then(r => ({ok: true, r}))
-                .catch(e => ({ok: false, name, e}));
-        });
-
-        const results = await Promise.all(tasks);
-        const series = [];
-        const failed = [];
-        const stats = [];
-
-        for (const it of results) {
-            if (it.ok) {
-                stats.push(it.r.stat);
-                series.push({
-                    name: it.r.name,
-                    type: 'line',
-                    showSymbol: false,
-                    smooth: 0.15,
-                    emphasis: {focus: 'series'},
-                    data: it.r.data
-                });
-            } else {
-                failed.push(it.name);
+        const box = $('shops');
+        box.innerHTML = '';
+        try {
+            const resp = await fetch(ENDPOINT_SHOPS);
+            const items = await resp.json();
+            for (const s of items) {
+                const id = `shop_${s.id}`;
+                const label = document.createElement('label');
+                label.title = s.name;
+                label.innerHTML = `<input type="checkbox" value="${s.id}" data-name="${s.name}" id="${id}"><span>${s.name}</span>`;
+                box.appendChild(label);
             }
+        } catch (e) {
+            $('err').textContent = '店舗の読み込みに失敗しました（CORSまたはネットワーク）';
         }
+    }
 
-        putStats(stats);
+    async function loadIphones() {
+        const dl = $('iphone-list');
+        dl.innerHTML = '';
+        try {
+            const resp = await fetch(ENDPOINT_IPHONES);
+            const items = await resp.json();
+            for (const i of items) {
+                const text = `${i.part_number} ｜ ${i.model_name} ${i.capacity_label} ｜ ${i.color}`;
+                const opt = document.createElement('option');
+                opt.value = i.part_number;
+                opt.label = text;
+                dl.appendChild(opt);
+            }
+            $('iphone-hint').textContent = 'プルダウンから選択するか、part_number を直接入力してください';
+        } catch (e) {
+            $('iphone-hint').textContent = 'iPhone の読み込みに失敗しました（CORSまたはネットワーク）';
+        }
+    }
 
-        const anyPoints = series.some(s => s.data.length > 0);
-        const subTitle = `iPhone：${part} ｜ ${new Date(startIso).toLocaleString()} → ${new Date(endIso).toLocaleString()}`;
+    $('select-all').addEventListener('click', () => {
+        document.querySelectorAll('#shops input[type=checkbox]').forEach(cb => cb.checked = true);
+    });
+    $('clear-all').addEventListener('click', () => {
+        document.querySelectorAll('#shops input[type=checkbox]').forEach(cb => cb.checked = false);
+    });
 
-        if (!anyPoints) {
-            chart.clear();
-            chart.setOption({
-                title: {text: 'データなし', subtext: subTitle, left: 'center', top: 'middle'}
-            });
-            $('status').textContent = 'データがありません。part_number と時間範囲が選択した店舗の記録をカバーしているか確認してください。';
+    async function fetchOneShopSeries(base, startIsoJST, endIsoJST, shopId, shopName, partNumber) {
+        const url = buildURL(base, startIsoJST, endIsoJST, shopId, partNumber);
+        const resp = await fetch(url, {headers: {"Accept": "application/json"}});
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+
+        // 後端ではすでに part_number でフィルタ済み。念のためのチェック（極端な場合）
+        let rows = Array.isArray(data) ? data : [];
+        const returned = rows.length;
+        if (rows.length && rows[0]?.iphone && rows[0].iphone !== partNumber) {
+            rows = rows.filter(r => r.iphone === partNumber);
+        }
+        const filtered = rows.length;
+
+        const seriesData = rows
+            .map(r => [
+                new Date(r.Timestamp_Time).valueOf(),  // ミリ秒
+                Number(r.New_Product_Price)            // tooltip 用の値（空でも可）
+            ])
+            .filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]))
+            .sort((a, b) => a[0] - b[0]);
+
+        const firstT = seriesData[0]?.[0];
+        const lastT = seriesData[seriesData.length - 1]?.[0];
+
+        return {name: shopName, data: seriesData, stat: {shopId, shopName, returned, filtered, firstT, lastT, url}};
+    }
+
+    function putStats(stats) {
+        const div = $('stats');
+        const lines = stats.map(s => {
+            const t0 = s.firstT ? new Date(s.firstT).toLocaleString() : '-';
+            const t1 = s.lastT ? new Date(s.lastT).toLocaleString() : '-';
+            return `#${s.shopId} ${s.shopName}\n  取得件数: ${s.returned}\n  フィルタ後の点数: ${s.filtered}\n  開始/終了時刻: ${t0}  →  ${t1}\n  URL: ${s.url}\n`;
+        });
+        div.textContent = lines.join('\n');
+    }
+
+    async function loadAndPlot() {
+        $('status').textContent = '読み込み中…';
+        $('err').textContent = '';
+        $('stats').textContent = '';
+
+        const base = $('base').value.trim();
+        const part = $('iphone').value.trim();
+        const startIso = toIsoLocal($('start').value);
+        const endIso = toIsoLocal($('end').value);
+
+        if (!base || !startIso || !endIso) {
+            $('err').textContent = 'ベースURLと時間範囲を入力してください';
+            $('status').textContent = '';
+            return;
+        }
+        if (!part) {
+            $('err').textContent = 'part_number を入力してください';
+            $('status').textContent = '';
             return;
         }
 
-        chart.setOption({
-            tooltip: {
-                trigger: 'axis',
-                axisPointer: {
-                    type: 'cross'
+        const shopCbs = [...document.querySelectorAll('#shops input[type=checkbox]:checked')];
+        if (shopCbs.length === 0) {
+            $('err').textContent = '少なくとも1店舗を選択してください';
+            $('status').textContent = '';
+            return;
+        }
+
+        try {
+            const tasks = shopCbs.map(cb => {
+                const id = cb.value;
+                const name = cb.getAttribute('data-name') || id;
+                return fetchOneShopSeries(base, startIso, endIso, id, name, part)
+                    .then(r => ({ok: true, r}))
+                    .catch(e => ({ok: false, name, e}));
+            });
+
+            const results = await Promise.all(tasks);
+            const series = [];
+            const failed = [];
+            const stats = [];
+
+            for (const it of results) {
+                if (it.ok) {
+                    stats.push(it.r.stat);
+                    series.push({
+                        name: it.r.name,
+                        type: 'line',
+                        showSymbol: false,
+                        smooth: 0.15,
+                        emphasis: {focus: 'series'},
+                        data: it.r.data
+                    });
+                } else {
+                    failed.push(it.name);
                 }
-            },
-            toolbox: {
-                show: true,
-                feature: {
-                    saveAsImage: {}
-                }
-            },
-            legend: {data: series.map(s => s.name)},
-            xAxis: {
-                type: 'time',
-                axisLabel: {
-                    formatter: verticalTickFormatter,
-                    lineHeight: 16,
-                    margin: 18
+            }
+
+            putStats(stats);
+
+            const anyPoints = series.some(s => s.data.length > 0);
+            const subTitle = `iPhone：${part} ｜ ${new Date(startIso).toLocaleString()} → ${new Date(endIso).toLocaleString()}`;
+
+            if (!anyPoints) {
+                chart.clear();
+                chart.setOption({
+                    title: {text: 'データなし', subtext: subTitle, left: 'center', top: 'middle'}
+                });
+                $('status').textContent = 'データがありません。part_number と時間範囲が選択した店舗の記録をカバーしているか確認してください。';
+                return;
+            }
+
+            chart.setOption({
+                tooltip: {
+                    trigger: 'axis',
+                    axisPointer: {
+                        type: 'cross'
+                    }
                 },
-                axisTick: {alignWithLabel: true}
-            },
-            yAxis: {
-                type: 'value',
-                position: 'right',              // ✅ 縦軸を右側に配置
-                name: 'JPY',
-                scale: true
-            },
-            series
-        }, true);
+                toolbox: {
+                    show: true,
+                    feature: {
+                        saveAsImage: {}
+                    }
+                },
+                legend: {data: series.map(s => s.name)},
+                xAxis: {
+                    type: 'time',
+                    axisLabel: {
+                        formatter: verticalTickFormatter,
+                        lineHeight: 16,
+                        margin: 18
+                    },
+                    axisTick: {alignWithLabel: true}
+                },
+                yAxis: {
+                    type: 'value',
+                    position: 'right',              // ✅ 縦軸を右側に配置
+                    name: 'JPY',
+                    scale: true
+                },
+                series
+            }, true);
 
-        $('status').textContent = `完了：${series.length} 店舗${failed.length ? `／失敗：${failed.join(', ')}` : ''}`;
-    } catch (e) {
-        $('err').textContent = '読み込みに失敗しました：' + e.message;
-        $('status').textContent = '';
-        console.error(e);
+            $('status').textContent = `完了：${series.length} 店舗${failed.length ? `／失敗：${failed.join(', ')}` : ''}`;
+        } catch (e) {
+            $('err').textContent = '読み込みに失敗しました：' + e.message;
+            $('status').textContent = '';
+            console.error(e);
+        }
     }
-}
 
-$('load').addEventListener('click', loadAndPlot);
+    $('load').addEventListener('click', loadAndPlot);
 
-(function initDefaults() {
-    $('start').value = "2025-10-11T09:00";
-    $('end').value = "2025-10-11T20:00";
-    loadShops();
-    loadIphones();
-    $('iphone').placeholder = "例：MG864J/A";
-})();    })();
+    (function initDefaults() {
+        $('start').value = "2025-10-11T09:00";
+        $('end').value = "2025-10-11T20:00";
+        loadShops();
+        loadIphones();
+        $('iphone').placeholder = "例：MG864J/A";
+    })();
 </script>
 </body>
 </html>
