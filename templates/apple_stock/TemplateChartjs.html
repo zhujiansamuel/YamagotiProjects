@@ -542,17 +542,37 @@
 
     let liveWS = null;
 
+    function getAccessToken() {
+        // 1) URL 查询：?access=...  （方便临时传）
+        const fromQuery = new URLSearchParams(location.search).get('access');
+        if (fromQuery) return fromQuery.trim();
+
+        // 2) meta 标签：<meta name="psta-access" content="...">
+        const meta = document.querySelector('meta[name="psta-access"]');
+        if (meta?.content) return meta.content.trim();
+
+        // 3) body data- 属性：<body data-access="...">
+        const fromData = document.body?.dataset?.access;
+        if (fromData) return fromData.trim();
+
+        // 4) Cookie：access=...  （注意非 HttpOnly 才能读，HttpOnly 则由服务端在 WS 层校验）
+        const m = document.cookie.match(/(?:^|;\s*)access=([^;]+)/);
+        if (m) return decodeURIComponent(m[1]).trim();
+
+        // 5) localStorage（你已在用）
+        const ls = localStorage.getItem('iphone:token');
+        if (ls) return ls.trim();
+
+        return '';
+    }
+
+
     function connectLive() {
         // 1) 取 token（localStorage 优先，data-* 备选）
         const access =
             (localStorage.getItem('iphone:token') || '').trim() ||
             (document.body.dataset?.access || '').trim();
 
-        if (!access) {
-            console.warn('[WS] missing token: localStorage("iphone:token") is empty');
-            // 给 UI 明确提示
-            if (typeof LiveLog !== 'undefined') LiveLog.warn('WS token missing. Run: localStorage.setItem("iphone:token","<ACCESS>")');
-        }
 
         // 2) 目标 host：你可以用固定 ngrok 域名，或用当前站点
         //    如果你的后端不和前端同域，建议固定 ngrok 域名，避免 Origin 不匹配迷惑
@@ -567,13 +587,9 @@
                 } catch (_) {
                 }
             }
-            LiveLog?.info?.(`[WS] connect ${wsUrl.replace(/token=.+$/, 'token=***')}`);
 
             liveWS = new WebSocket(wsUrl);
 
-            liveWS.onopen = () => {
-                LiveLog?.info?.('[WS] open');
-            };
 
             liveWS.onmessage = (ev) => {
                 // 可能是大 JSON 或 NDJSON，逐条尝试解析
@@ -582,13 +598,11 @@
                     if (typeof txt !== 'string') continue;
                     try {
                         const msg = JSON.parse(txt);
-                        LiveLog?.event?.(msg);
+
                         if (msg?.status === 'done' && msg?.chart_delta?.series_delta) {
                             applyChartDelta(msg.chart_delta);
-                            LiveLog?.delta?.(msg.chart_delta);
                         } else if (msg?.type === 'chart_update' && msg?.series_delta) {
                             applyChartDelta(msg);
-                            LiveLog?.delta?.(msg);
                         }
                     } catch { /* 忽略无法解析的行 */
                     }
@@ -597,17 +611,14 @@
 
             liveWS.onerror = (e) => {
                 console.warn('[WS] error', e);
-                LiveLog?.warn?.('[WS] error');
             };
 
             liveWS.onclose = (e) => {
-                LiveLog?.warn?.(`[WS] closed code=${e.code} reason=${e.reason || ''}`);
                 // 简单重连（如需可加指数退避）
                 setTimeout(connectLive, 3000);
             };
         } catch (e) {
             console.error('[WS] connect failed', e);
-            LiveLog?.error?.(`[WS] connect failed: ${e.message}`);
         }
     }
 
@@ -621,11 +632,12 @@
             applyChartDelta(msg.chart_delta);
             if (msg?.status === 'done' && msg?.chart_delta?.series_delta) {
                 applyChartDelta(msg.chart_delta);
-                LiveLog.delta(msg.chart_delta);    // ← 统计本次增量的 series/points/shadow
+                ensureEdgePointForAllSeries(msg.chart_delta.timestamp);
                 return;
             }
         } else if (msg?.type === 'chart_update' && msg?.series_delta) {
             applyChartDelta(msg); // 如果你在子任务阶段也做了中间广播
+            ensureEdgePointForAllSeries(msg.timestamp /* 如果有 */);
         }
     }
 
@@ -738,7 +750,6 @@
     }
 
     async function loadAndPlot() {
-        LiveLog.info('loadAndPlot: start');
         $('status').textContent = '読み込み中…';
         $('err').textContent = '';
         $('stats').textContent = '';
@@ -747,6 +758,9 @@
         const part = $('iphone').value.trim();
         const startIso = toIsoLocal($('start').value);
         const endIso = toIsoLocal($('end').value);
+
+        SELECTED_START_MS = startIso ? new Date(startIso).getTime() : null;
+SELECTED_END_MS   = endIso   ? new Date(endIso).getTime()   : null;
 
         if (!base || !startIso || !endIso) {
             $('err').textContent = 'ベースURLと時間範囲を入力してください';
@@ -874,6 +888,148 @@
     }
 
     $('load').addEventListener('click', loadAndPlot);
+
+    // 最近整数分钟（毫秒）
+    function nearestPastMinuteMs(d = new Date()) {
+        return Math.floor(d.getTime() / 60000) * 60000;
+    }
+
+    // 选中时窗（全局缓存）
+    let SELECTED_START_MS = null;
+    let SELECTED_END_MS = null;
+
+    // 获取“图表实际结束时间”（毫秒）：min(所选end, 最近整数分钟)
+    function getEffectiveEndMs() {
+        const nowMin = nearestPastMinuteMs();
+        const endMs = SELECTED_END_MS ?? nowMin;
+        return Math.min(endMs, nowMin);
+    }
+
+    // —— 轻量 toast —— //
+    function showToast(txt) {
+        let div = document.getElementById('psta-toast');
+        if (!div) {
+            div = document.createElement('div');
+            div.id = 'psta-toast';
+            Object.assign(div.style, {
+                position: 'fixed', right: '16px', top: '16px', zIndex: 99999,
+                background: 'rgba(30, 41, 59, .95)', color: '#e2e8f0',
+                padding: '8px 12px', borderRadius: '10px', border: '1px solid #334',
+                font: '12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                boxShadow: '0 8px 24px rgba(0,0,0,.25)', transition: 'opacity .2s'
+            });
+            document.body.appendChild(div);
+        }
+        div.textContent = txt;
+        div.style.opacity = '1';
+        setTimeout(() => {
+            div.style.opacity = '0';
+        }, 1000); // 1 秒消失
+    }
+
+    // —— 闪烁层：在 targetMs 位置做 1s 涟漪特效 —— //
+    function flashAtMinute(targetMs, seriesIds = []) {
+        const opt = chart.getOption();
+        const baseSeries = opt.series || [];
+        const points = [];
+
+        for (const id of seriesIds) {
+            const s = baseSeries.find(x => x.id === id);
+            if (!s) continue;
+            // 取该系列的颜色
+            const color = (s.itemStyle && s.itemStyle[0]?.color) || s.itemStyle?.color || s.lineStyle?.color;
+            points.push({
+                value: [targetMs, null],  // y 值不重要，effectScatter 不会用
+                itemStyle: color ? {color} : undefined
+            });
+        }
+        if (!points.length) return;
+
+        const flashSeries = {
+            id: 'psta-flash-layer',
+            type: 'effectScatter',
+            zlevel: 10,
+            symbolSize: 10,
+            rippleEffect: {scale: 3, brushType: 'stroke'},
+            data: points,
+            xAxisIndex: 0, yAxisIndex: 0
+        };
+
+        // 添加闪烁层
+        chart.setOption({series: [flashSeries]}, {notMerge: false, lazyUpdate: true});
+
+        // 1 秒后移除
+        setTimeout(() => {
+            const cur = chart.getOption().series || [];
+            const remain = cur.filter(s => s.id !== 'psta-flash-layer');
+            chart.setOption({series: remain}, {notMerge: true, lazyUpdate: true});
+        }, 1000);
+    }
+
+    // —— 核心：确保在 targetMinute 每条线都有一个点（若缺则补影子），并提示 —— //
+    function ensureEdgePointForAllSeries(targetIso) {
+        const targetMs = targetIso ? new Date(targetIso).getTime() : nearestPastMinuteMs();
+        const effEnd = getEffectiveEndMs();
+        const now = Date.now();
+
+        // 仅当 "实际结束时间" 距现在 ≤ 2 分钟 才触发
+        if (Math.abs(now - effEnd) > 2 * 60 * 1000) return;
+
+        const opt = chart.getOption();
+        const seriesArr = (opt.series || []).filter(s => String(s.id || '').startsWith('s:'));
+        const touchedIds = [];
+        const patches = [];
+
+        seriesArr.forEach(s => {
+            const data = (s.data || []).slice();
+            // 是否已有 targetMs 的点
+            const hasAt = data.some(item => {
+                const v = Array.isArray(item) ? item : item?.value;
+                return Array.isArray(v) && v[0] === targetMs;
+            });
+            if (hasAt) return;
+
+            // 找 <= targetMs 的最近点
+            let lastTs = null, lastPrice = null;
+            for (let i = data.length - 1; i >= 0; i--) {
+                const v = Array.isArray(data[i]) ? data[i] : data[i]?.value;
+                const t = Array.isArray(v) ? v[0] : null;
+                const y = Array.isArray(v) ? v[1] : null;
+                if (t != null && y != null && t <= targetMs) {
+                    lastTs = t;
+                    lastPrice = y;
+                    break;
+                }
+            }
+            if (lastPrice == null) return; // 没有历史值就不补
+
+            // 追加影子点
+            data.push({
+                value: [targetMs, lastPrice],
+                shadow: true,
+                src_ts: lastTs,
+                symbol: 'emptyCircle',
+                symbolSize: 6
+            });
+
+            // 时间排序 & 裁剪可选（通常数据量不大可略）
+            data.sort((a, b) => {
+                const va = Array.isArray(a) ? a : a.value;
+                const vb = Array.isArray(b) ? b : b.value;
+                return va[0] - vb[0];
+            });
+
+            patches.push({id: s.id, data});
+            touchedIds.push(s.id);
+        });
+
+        if (patches.length) {
+            chart.setOption({series: patches}, {notMerge: false, lazyUpdate: true});
+            flashAtMinute(targetMs, touchedIds);
+            showToast(`+${patches.length} 系列补点 @ ${new Date(targetMs).toLocaleTimeString('ja-JP', {hour12: false})}`);
+        }
+    }
+
 
     // =============== LiveLog（右下角直播调试面板）================
     const LiveLog = (() => {
@@ -1031,7 +1187,6 @@
 
 
     (function initDefaults() {
-        LiveLog.init({maxLines: 800});
         $('start').value = "2025-10-01T10:00";
         $('end').value = "2025-10-20T10:00";
         loadShops();
