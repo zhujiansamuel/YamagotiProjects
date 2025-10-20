@@ -224,11 +224,6 @@
         "#033F68", /* 買取オク-shop18 */
         /* #84cc16, 基础-19（保留空位） */
         "#C30D23", /* 毎日買取-shop20 */
-        /* #84cc16, 基础-21 */
-        /* #84cc16, 基础-22 */
-        /* #84cc16, 基础-23 */
-        /* #84cc16, 基础-24 */
-        /* #84cc16, 基础-25 */
     ];
 
     // 名称→固定色（模糊匹配），其余回退到调色板序号
@@ -270,25 +265,34 @@
     const fmtJST = ts => new Date(ts).toLocaleString('ja-JP', {hour12: false});
     const WDAY = ['日', '月', '火', '水', '木', '金', '土'];
 
+    /* ====== 常量：时间序列 API & SSE 路径 ====== */
+    const SERIES_API_BASE = '/AppleStockChecker/purchasing-time-analyses/psta-compact/'; // ← 如需调整，改这条
+    const BROADCAST_URL = '/events/notify_progress_all';                                  // SSE 路径
+
+    /* ====== 运行态索引与状态 ====== */
+    const SHOPS_INDEX = new Map();        // shopId -> shopName
+    const IPHONE_ID_BY_PART = new Map();  // part_number -> iphone_id
+    let ACTIVE_PART_NUMBER = '';
+    let ACTIVE_IPHONE_ID = null;          // 当前选择的机型 id（来自 IPHONE_ID_BY_PART）
+    let SELECTED_SHOP_IDS = new Set();    // 当前勾选的门店
+    let liveES = null;
+
     function toIsoLocal(dtStr) {
         return dtStr ? dtStr + ":00+09:00" : "";
     }
-
-    function ms(s) {
-        const t = new Date(s).valueOf();
-        return Number.isFinite(t) ? t : NaN;
-    }
-
     function toMillis(s) {
         const t = new Date(s).valueOf();
         return Number.isFinite(t) ? t : NaN;
     }
+    function nearestPastMinuteMs(date = new Date()) {
+        return Math.floor(date.getTime() / 60000) * 60000;
+    }
 
     function buildURL(base, startIsoJST, endIsoJST, shopId, partNumber) {
-        const u = new URL(base);
+        const u = new URL(base, location.origin);
         u.searchParams.set("start", startIsoJST);
         u.searchParams.set("end", endIsoJST);
-        u.searchParams.set("shop", String(shopId));
+        u.searchParams.set("shop", String(shopId));                 // 如后端要求 shop_id，这里改成 "shop_id"
         u.searchParams.set("iphone__part_number", String(partNumber));
         return u.toString();
     }
@@ -296,70 +300,44 @@
     /* ============ 3) X 轴标签：竖排（月/日/（周）） ============ */
     function verticalTickFormatter(value /* ms */) {
         const d = new Date(value);
-        const m = d.getMonth() + 1;         // 1..12
-        const day = d.getDate();          // 1..31
-        const w = WDAY[d.getDay()];       // '日'..'土'
-        // 竖排（多行）
+        const m = d.getMonth() + 1;
+        const day = d.getDate();
+        const w = WDAY[d.getDay()];
         return `${m}\n月\n${day}日\n（${w}）`;
     }
 
-    /* ============ 4) 每天 9:00–20:00 markArea 背景 ============ */
+    /* ============ 4) 每天 9:00–20:00 markArea 背景（保留） ============ */
     function buildBusinessHoursMarkArea(startMs, endMs) {
-        // 以 JST 为准，构造每天 09:00 → 20:00 的区间
         const oneDay = 24 * 3600 * 1000;
         const data = [];
-        // 对齐到当天 0:00（JST）
         let d = new Date(startMs);
         d.setHours(0, 0, 0, 0);
         for (let t = d.valueOf(); t <= endMs + oneDay; t += oneDay) {
             const s = new Date(t);
-            const s9 = new Date(s);
-            s9.setHours(9, 0, 0, 0);
-            const e20 = new Date(s);
-            e20.setHours(20, 0, 0, 0);
+            const s9 = new Date(s); s9.setHours(9, 0, 0, 0);
+            const e20 = new Date(s); e20.setHours(20, 0, 0, 0);
             const s9ms = s9.valueOf(), e20ms = e20.valueOf();
-            // 只添加与区间相交的片段
             const left = Math.max(s9ms, startMs);
             const right = Math.min(e20ms, endMs);
-            if (left < right) {
-                data.push([{xAxis: left}, {xAxis: right}]);
-            }
+            if (left < right) data.push([{xAxis: left}, {xAxis: right}]);
         }
-        return {
-            silent: true,
-            itemStyle: {color: '#faebd7', opacity: 0.35},
-            data
-        };
+        return { silent: true, itemStyle: {color: '#faebd7', opacity: 0.35}, data };
     }
-
 
     // --- ECharts ---
     const chart = echarts.init($('chart'));
     const baseOption = {
         animation: false,
-        tooltip: {
-            show: true,
-            trigger: 'axis'
-        },
-        legend: {top: 8, left: 10, itemGap: 14},
-        grid: {left: 16, right: 48, top: 40, bottom: 12},
+        tooltip: { show: true, trigger: 'axis' },
+        legend: { top: 8, left: 10, itemGap: 14 },
+        grid: { left: 16, right: 48, top: 40, bottom: 12 },
         xAxis: {
             type: 'time',
-            axisLabel: {
-                formatter: verticalTickFormatter,
-                lineHeight: 16,
-                margin: 18
-            },
-            axisTick: {alignWithLabel: true}
+            axisLabel: { formatter: verticalTickFormatter, lineHeight: 16, margin: 18 },
+            axisTick: { alignWithLabel: true }
         },
-        yAxis: {
-            type: 'value',
-            position: 'right',              // ✅ 纵轴放到右边
-            name: 'JPY',
-            scale: true
-        },
+        yAxis: { type: 'value', position: 'right', name: 'JPY', scale: true },
         dataZoom: [
-            // 拖动/滚轮缩放作用于两张图
             {type: 'inside', xAxisIndex: [0]},
             {type: 'slider', xAxisIndex: [0], bottom: -2, height: 12, handleSize: 0}
         ],
@@ -368,15 +346,15 @@
     chart.setOption(baseOption);
     $('reset').addEventListener('click', () => chart.setOption(baseOption, true));
     window.addEventListener('resize', () => chart.resize());
+
     const API_BASE = '/AppleStockChecker';
-    const ENDPOINT_SHOPS= `${API_BASE}/secondhand-shops/`
-    const ENDPOINT_IPHONES= `${API_BASE}/iphones/`
-    {#const ENDPOINT_SHOPS = "https://verbless-sadistically-jayceon.ngrok-free.dev/AppleStockChecker/secondhand-shops/";#}
-    {#const ENDPOINT_IPHONES = "https://verbless-sadistically-jayceon.ngrok-free.dev/AppleStockChecker/iphones/";#}
+    const ENDPOINT_SHOPS  = `${API_BASE}/secondhand-shops/`;
+    const ENDPOINT_IPHONES= `${API_BASE}/iphones/`;
 
     async function loadShops() {
         const box = $('shops');
         box.innerHTML = '';
+        SHOPS_INDEX.clear();
         try {
             const resp = await fetch(ENDPOINT_SHOPS);
             const items = await resp.json();
@@ -386,6 +364,7 @@
                 label.title = s.name;
                 label.innerHTML = `<input type="checkbox" value="${s.id}" data-name="${s.name}" id="${id}"><span>${s.name}</span>`;
                 box.appendChild(label);
+                SHOPS_INDEX.set(Number(s.id), s.name); // 索引
             }
         } catch (e) {
             $('err').textContent = '店舗の読み込みに失敗しました（CORSまたはネットワーク）';
@@ -395,6 +374,7 @@
     async function loadIphones() {
         const dl = $('iphone-list');
         dl.innerHTML = '';
+        IPHONE_ID_BY_PART.clear();
         try {
             const resp = await fetch(ENDPOINT_IPHONES);
             const items = await resp.json();
@@ -404,6 +384,9 @@
                 opt.value = i.part_number;
                 opt.label = text;
                 dl.appendChild(opt);
+                if (i.id != null && i.part_number) {
+                    IPHONE_ID_BY_PART.set(String(i.part_number), Number(i.id));
+                }
             }
             $('iphone-hint').textContent = 'プルダウンから選択するか、part_number を直接入力してください';
         } catch (e) {
@@ -418,32 +401,178 @@
         document.querySelectorAll('#shops input[type=checkbox]').forEach(cb => cb.checked = false);
     });
 
+    // ---- 取数（带埋点 & 可选鉴权） ----
     async function fetchOneShopSeries(base, startIsoJST, endIsoJST, shopId, shopName, partNumber) {
         const url = buildURL(base, startIsoJST, endIsoJST, shopId, partNumber);
-        const resp = await fetch(url, {headers: {"Accept": "application/json"}});
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const data = await resp.json();
+        console.debug('[FETCH]', url);
+        const headers = {"Accept": "application/json"};
+        const token = localStorage.getItem('iphone:token'); // 如有鉴权，放入本地存储
+        if (token) headers["Authorization"] = `Bearer ${token}`;
 
-        // 後端ではすでに part_number でフィルタ済み。念のためのチェック（極端な場合）
-        let rows = Array.isArray(data) ? data : [];
-        const returned = rows.length;
-        if (rows.length && rows[0]?.iphone && rows[0].iphone !== partNumber) {
-            rows = rows.filter(r => r.iphone === partNumber);
+        const resp = await fetch(url, {headers});
+        let rawText = '';
+        if (!resp.ok) {
+            try { rawText = await resp.text(); } catch(_) {}
+            throw new Error(`HTTP ${resp.status} ${resp.statusText} | ${rawText.slice(0,200)}`);
         }
-        const filtered = rows.length;
+
+        // 兼容包裹层
+        let payload = await resp.json();
+        const data = Array.isArray(payload) ? payload
+                   : Array.isArray(payload?.results) ? payload.results
+                   : Array.isArray(payload?.items) ? payload.items
+                   : [];
+
+        // 字段名兜底（驼峰/蛇形/别名）
+        const pick = (r, kList) => kList.find(k => k in r) ?? kList[0];
+        const tKey  = data[0] ? pick(data[0], ["Timestamp_Time","timestamp_time","timestamp","ts","t"]) : "Timestamp_Time";
+        const pKey  = data[0] ? pick(data[0], ["New_Product_Price","new_product_price","price","value"]) : "New_Product_Price";
+        const pnKey = data[0] ? pick(data[0], ["iphone","iphone__part_number","part_number"]) : "iphone";
+
+        const rows = data.filter(r => !r[pnKey] || r[pnKey] === partNumber);
 
         const seriesData = rows
-            .map(r => [
-                new Date(r.Timestamp_Time).valueOf(),  // ミリ秒
-                Number(r.New_Product_Price)            // tooltip 用の値（空でも可）
-            ])
+            .map(r => [ new Date(r[tKey]).valueOf(), Number(r[pKey]) ])
             .filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]))
             .sort((a, b) => a[0] - b[0]);
 
         const firstT = seriesData[0]?.[0];
-        const lastT = seriesData[seriesData.length - 1]?.[0];
+        const lastT  = seriesData[seriesData.length - 1]?.[0];
 
-        return {name: shopName, data: seriesData, stat: {shopId, shopName, returned, filtered, firstT, lastT, url}};
+        return {name: shopName, data: seriesData, stat: {shopId, shopName, returned: data.length, filtered: rows.length, firstT, lastT, url}};
+    }
+
+    // ---- 影子点：把最后一个点拉到最近整数分钟 ----
+    function appendShadowToNowIfNeeded(seriesData) {
+        if (!seriesData.length) return seriesData;
+        const last = seriesData[seriesData.length - 1];
+        const nowMin = nearestPastMinuteMs();
+        if (last[0] < nowMin) {
+            const hasNow = seriesData.length && (
+                (Array.isArray(seriesData[seriesData.length - 1]) && seriesData[seriesData.length - 1][0] === nowMin) ||
+                (seriesData[seriesData.length - 1]?.value?.[0] === nowMin)
+            );
+            if (!hasNow) {
+                seriesData.push({ value: [nowMin, last[1]], symbol:'emptyCircle', symbolSize:6, shadow:true, src_ts: last[0] });
+            }
+        }
+        return seriesData;
+    }
+
+    // ---- SSE：实时增量 ----
+    function connectLive() {
+        if (liveES) try { liveES.close(); } catch(_) {}
+        try {
+            liveES = new EventSource(BROADCAST_URL, {withCredentials: true});
+            liveES.onmessage = ev => {
+                try {
+                    const msg = JSON.parse(ev.data);
+                    onBroadcast(msg);
+                } catch (e) {
+                    console.error('SSE parse error', e);
+                }
+            };
+            liveES.onerror = err => console.warn('SSE error', err);
+        } catch (e) {
+            console.warn('EventSource not available:', e);
+        }
+    }
+
+    function onBroadcast(msg) {
+        if (msg?.status === 'running') {
+            // 可选：显示进度
+            $('status').textContent = `処理中… ${msg.timestamp} / バケット: ${msg.buckets}`;
+            return;
+        }
+        if (msg?.status === 'done' && msg?.chart_delta?.series_delta) {
+            applyChartDelta(msg.chart_delta);
+        } else if (msg?.type === 'chart_update' && msg?.series_delta) {
+            applyChartDelta(msg); // 如果你在子任务阶段也做了中间广播
+        }
+    }
+
+    function ensureSeriesByShop(shopId, name) {
+        const id = `s:${shopId}`;
+        const opt = chart.getOption();
+        const arr = opt.series || [];
+        if (arr.findIndex(s => s.id === id) >= 0) return id;
+
+        const color = fixedColorFor(name, arr.length);
+        arr.push({
+            id, name,
+            type:'line',
+            showSymbol:false,
+            smooth:0.15,
+            emphasis:{focus:'series'},
+            lineStyle:{width:2, color},
+            itemStyle:{color},
+            data:[]
+        });
+        chart.setOption({ series: arr, legend: {data: arr.map(s => s.name)} });
+        return id;
+    }
+
+    function applyChartDelta(delta) {
+        if (!delta || !Array.isArray(delta.series_delta)) return;
+
+        const touched = [];
+
+        for (const sd of delta.series_delta) {
+            // ★ 仅接收当前选择的 iPhone（patch 1/3）
+            if (ACTIVE_IPHONE_ID && Number(sd.iphone_id) !== Number(ACTIVE_IPHONE_ID)) continue;
+
+            const shopId = Number(sd.shop_id);
+            if (!SELECTED_SHOP_IDS.has(shopId)) continue; // 仅更新当前勾选的门店
+
+            const shopName = SHOPS_INDEX.get(shopId) || `#${shopId}`;
+            const id = ensureSeriesByShop(shopId, shopName);
+
+            const opt = chart.getOption();
+            const seriesArr = opt.series || [];
+            const idx = seriesArr.findIndex(s => s.id === id);
+            const cur = (idx >= 0 ? seriesArr[idx].data : []) || [];
+
+            // 建立 ts->索引 的索引，并标记是否是影子点
+            const indexByTs = new Map();
+            cur.forEach((item, i) => {
+                const v = Array.isArray(item) ? item : item?.value;
+                const t = Array.isArray(v) ? v[0] : undefined;
+                const isShadow = !!(item && item.shadow === true);
+                if (Number.isFinite(t)) indexByTs.set(t, {idx: i, isShadow});
+            });
+
+            const patch = cur.slice();
+
+            for (const p of (sd.points || [])) {
+                const t = toMillis(p.t);
+                const y = Number(p.price);
+                if (!Number.isFinite(t) || !Number.isFinite(y)) continue;
+
+                const curAtT = indexByTs.get(t);
+                if (p.shadow) {
+                    if (curAtT && !curAtT.isShadow) continue; // 有真实点就忽略影子
+                    const item = { value:[t, y], symbol:'emptyCircle', symbolSize:6, shadow:true, src_ts: p.src_t || null };
+                    if (curAtT) patch[curAtT.idx] = item; else { indexByTs.set(t, {idx: patch.length, isShadow:true}); patch.push(item); }
+                } else {
+                    const item = [t, y]; // 真实点用数组，渲染更快
+                    if (curAtT) { patch[curAtT.idx] = item; indexByTs.set(t, {idx: curAtT.idx, isShadow:false}); }
+                    else { indexByTs.set(t, {idx: patch.length, isShadow:false}); patch.push(item); }
+                    // 确保把同刻影子移掉（如果有）
+                    const shadowIdx = patch.findIndex(x => !Array.isArray(x) && x?.shadow === true && x?.value?.[0] === t);
+                    if (shadowIdx >= 0) patch.splice(shadowIdx, 1);
+                }
+            }
+
+            patch.sort((a,b) => {
+                const va = Array.isArray(a) ? a : a.value;
+                const vb = Array.isArray(b) ? b : b.value;
+                return va[0] - vb[0];
+            });
+            if (patch.length > MAX_POINTS_PER_SERIES) patch.splice(0, patch.length - MAX_POINTS_PER_SERIES);
+
+            chart.setOption({ series: [{ id, data: patch }] }, { notMerge:false, lazyUpdate:true });
+            touched.push(id);
+        }
     }
 
     function putStats(stats) {
@@ -461,11 +590,10 @@
         $('err').textContent = '';
         $('stats').textContent = '';
 
-        const base = `${API_BASE}/purchasing-time-analyses-psta-compact/`
+        const base = SERIES_API_BASE; // ★ 不再依赖 $('base')，固定你的序列 API
         const part = $('iphone').value.trim();
-
         const startIso = toIsoLocal($('start').value);
-        const endIso = toIsoLocal($('end').value);
+        const endIso   = toIsoLocal($('end').value);
 
         if (!base || !startIso || !endIso) {
             $('err').textContent = 'ベースURLと時間範囲を入力してください';
@@ -485,6 +613,11 @@
             return;
         }
 
+        // ★ 记录活动条件（patch 2/3）
+        ACTIVE_PART_NUMBER = part;
+        ACTIVE_IPHONE_ID = IPHONE_ID_BY_PART.get(part) ?? null;
+        SELECTED_SHOP_IDS = new Set(shopCbs.map(cb => Number(cb.value)));
+
         try {
             const tasks = shopCbs.map(cb => {
                 const id = cb.value;
@@ -499,16 +632,27 @@
             const failed = [];
             const stats = [];
 
+            let idxFallback = 0;
             for (const it of results) {
                 if (it.ok) {
                     stats.push(it.r.stat);
+                    const shopIdNum = Number(it.r.stat.shopId);
+                    const name = it.r.name;
+                    const color = fixedColorFor(name, idxFallback++);
+
+                    // ★ 首屏：若最后点早于最近整数分钟，补一个影子点（patch 3/3）
+                    const data = appendShadowToNowIfNeeded(it.r.data.slice());
+
                     series.push({
-                        name: it.r.name,
+                        id: `s:${shopIdNum}`,     // 稳定 id，方便后续增量定点刷新
+                        name,
                         type: 'line',
                         showSymbol: false,
                         smooth: 0.15,
                         emphasis: {focus: 'series'},
-                        data: it.r.data
+                        lineStyle: {width: 2, color},
+                        itemStyle: {color},
+                        data
                     });
                 } else {
                     failed.push(it.name);
@@ -532,29 +676,34 @@
             chart.setOption({
                 tooltip: {
                     trigger: 'axis',
-                    axisPointer: {
-                        type: 'cross'
+                    axisPointer: { type: 'cross' },
+                    formatter: function (params) {
+                        if (!params || !params.length) return '';
+                        const head = new Date(params[0].axisValue).toLocaleString('ja-JP', {hour12: false});
+                        const lines = [head];
+                        for (const p of params) {
+                            const v = Array.isArray(p.value) ? p.value[1] : (p.data?.value?.[1] ?? p.value);
+                            const isShadow = p.data && p.data.shadow === true;
+                            let line = `${p.seriesName}: ${fmtJPY(v)}`;
+                            if (isShadow) {
+                                const src = p.data.src_ts ? new Date(p.data.src_ts).toLocaleString('ja-JP', {hour12: false}) : '';
+                                line += src ? `（影子 ← ${src}）` : `（影子）`;
+                            }
+                            lines.push(line);
+                        }
+                        return lines.join('<br>');
                     }
                 },
-                toolbox: {
-                    show: true,
-                    feature: {
-                        saveAsImage: {}
-                    }
-                },
-                legend: {data: series.map(s => s.name)},
+                toolbox: { show: true, feature: { saveAsImage: {} } },
+                legend: { data: series.map(s => s.name) },
                 xAxis: {
                     type: 'time',
-                    axisLabel: {
-                        formatter: verticalTickFormatter,
-                        lineHeight: 16,
-                        margin: 18
-                    },
-                    axisTick: {alignWithLabel: true}
+                    axisLabel: { formatter: verticalTickFormatter, lineHeight: 16, margin: 18 },
+                    axisTick: { alignWithLabel: true }
                 },
                 yAxis: {
                     type: 'value',
-                    position: 'right',              // ✅ 縦軸を右側に配置
+                    position: 'right',
                     name: 'JPY',
                     scale: true
                 },
@@ -573,10 +722,11 @@
 
     (function initDefaults() {
         $('start').value = "2025-10-11T09:00";
-        $('end').value = "2025-10-11T20:00";
+        $('end').value   = "2025-10-11T20:00";
         loadShops();
         loadIphones();
         $('iphone').placeholder = "例：MG864J/A";
+        connectLive(); // 开启 SSE 订阅
     })();
 </script>
 </body>
