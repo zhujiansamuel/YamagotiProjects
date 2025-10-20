@@ -632,7 +632,7 @@
             applyChartDelta(msg.chart_delta);
             if (msg?.status === 'done' && msg?.chart_delta?.series_delta) {
                 applyChartDelta(msg.chart_delta);
-                ensureEdgePointForAllSeries(msg.chart_delta.timestamp);
+                ensureEdgePointForSelectedShops(msg.chart_delta.timestamp || null);
                 return;
             }
         } else if (msg?.type === 'chart_update' && msg?.series_delta) {
@@ -957,7 +957,11 @@ SELECTED_END_MS   = endIso   ? new Date(endIso).getTime()   : null;
 
         // 添加闪烁层
         chart.setOption({series: [flashSeries]}, {notMerge: false, lazyUpdate: true});
+// 记录选择的 end，用于“实际结束时间”的判定
+SELECTED_END_MS = endIso ? new Date(endIso).getTime() : null;
 
+// ...你原来的 chart.setOption(...) 之后：
+ensureEdgePointForSelectedShops(null); // 用最近整分作为目标分钟强制刷新边界
         // 1 秒后移除
         setTimeout(() => {
             const cur = chart.getOption().series || [];
@@ -1184,6 +1188,81 @@ SELECTED_END_MS   = endIso   ? new Date(endIso).getTime()   : null;
             }
         };
     })();
+// --- 若没这两个全局，请在 loadAndPlot 里赋值（见下方调用处） ---
+let SELECTED_END_MS = null;        // new Date(endIso).getTime()
+let SELECTED_SHOP_IDS = new Set(); // 你已有
+
+// 从系列 id "s:<shopId>" 提取数字 shopId
+function seriesShopId(series) {
+  const m = String(series?.id || '').match(/^s:(\d+)$/);
+  return m ? Number(m[1]) : null;
+}
+// 最近整分（毫秒）
+function nearestPastMinuteMs(d = new Date()) {
+  return Math.floor(d.getTime() / 60000) * 60000;
+}
+// 实际结束时间：min(用户选的 end, 最近整分)
+function _effectiveEndMs() {
+  const nowMin = nearestPastMinuteMs();
+  return Math.min(SELECTED_END_MS ?? nowMin, nowMin);
+}
+
+/** 只对已勾选门店强制刷新边界分钟：
+ *  targetIso：优先用后端广播的 timestamp（ISO）；没有就用最近整分
+ *  规则：若该分钟无点，取该线 <= 该分钟最近的历史点价格补一个“影子点”（emptyCircle）
+ */
+function ensureEdgePointForSelectedShops(targetIso) {
+  if (!SELECTED_SHOP_IDS || SELECTED_SHOP_IDS.size === 0) return;
+
+  const targetMs = targetIso ? new Date(targetIso).getTime() : nearestPastMinuteMs();
+  const effEnd   = _effectiveEndMs();
+  const now      = Date.now();
+
+  // 只在“实际结束时间”距现在 <= 2 分钟时生效
+  if (Math.abs(now - effEnd) > 2 * 60 * 1000) return;
+
+  const opt = chart.getOption();
+  const seriesArr = (opt.series || []).filter(s => {
+    const sid = seriesShopId(s);
+    return sid != null && SELECTED_SHOP_IDS.has(sid);
+  });
+
+  const patches = [];
+  for (const s of seriesArr) {
+    const data = (s.data || []).slice();
+
+    // 已有该分钟就跳过
+    const hasAt = data.some(item => {
+      const v = Array.isArray(item) ? item : item?.value;
+      return Array.isArray(v) && v[0] === targetMs;
+    });
+    if (hasAt) continue;
+
+    // 找 <= targetMs 的最近历史点
+    let lastTs = null, lastPrice = null;
+    for (let i = data.length - 1; i >= 0; i--) {
+      const v = Array.isArray(data[i]) ? data[i] : data[i]?.value;
+      const t = Array.isArray(v) ? v[0] : null;
+      const y = Array.isArray(v) ? v[1] : null;
+      if (t != null && y != null && t <= targetMs) { lastTs = t; lastPrice = y; break; }
+    }
+    if (lastPrice == null) continue; // 没历史值就不补
+
+    // 追加影子点（仅前端渲染，不落库）
+    data.push({ value:[targetMs, lastPrice], shadow:true, src_ts:lastTs, symbol:'emptyCircle', symbolSize:6 });
+    data.sort((a,b) => {
+      const va = Array.isArray(a) ? a : a.value;
+      const vb = Array.isArray(b) ? b : b.value;
+      return va[0] - vb[0];
+    });
+
+    patches.push({ id: s.id, data });
+  }
+
+  if (patches.length) {
+    chart.setOption({ series: patches }, { notMerge:false, lazyUpdate:true });
+  }
+}
 
 
     (function initDefaults() {
