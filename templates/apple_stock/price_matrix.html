@@ -1685,6 +1685,75 @@
     31:173, 32:174, 33:175, 34:176, 35:177, 36:178, 37:179, 38:180, 39:181, 40:182,
     41:183, 42:184, 43:185
   };
+    // ===== 样式（绿色底 / 红色字） =====
+    (function injectPstaRowStyles(){
+      if (document.getElementById('psta-row-styles')) return;
+      const css = `
+        .psta-max   { background: #d9fbe5 !important; color: #b42318 !important; } /* 绿底+红字 */
+        .psta-min   { color: #b42318 !important; }                                 /* 红字 */
+        .psta-close { background: #d9fbe5 !important; }                             /* 绿底 */
+      `;
+      const style = document.createElement('style');
+      style.id = 'psta-row-styles';
+      style.textContent = css;
+      document.head.appendChild(style);
+    })();
+function highlightRowExtremes(){
+  const rows = document.querySelectorAll('tr');
+  let affected = 0;
+
+  for (const tr of rows){
+    // 只看“店铺格子”：既有 data-shop-id 又有 data-iphen-id
+    const cells = [...tr.querySelectorAll('td[data-shop-id][data-iphen-id]')];
+
+    if (!cells.length) continue;
+
+    // 清除上一次的标记
+    for (const td of cells){
+      td.classList.remove('psta-max','psta-min','psta-close');
+    }
+
+    // 收集有效数字
+    const items = [];
+    for (const td of cells){
+      const v = Number(td.dataset.v);
+      if (Number.isFinite(v)) items.push({ td, v });
+    }
+    if (!items.length) continue;
+
+    // 平均值取优先：行内 E 列（data-average）算好的 dataset.v；没有就用本行店铺值均值
+    let avgVal = NaN;
+    const avgCell = tr.querySelector('td[data-average]');
+    if (avgCell){
+      const v = Number(avgCell.dataset.v);
+      if (Number.isFinite(v)) avgVal = v;
+    }
+    if (!Number.isFinite(avgVal)){
+      avgVal = items.reduce((s, x)=>s+x.v, 0) / items.length;
+    }
+
+    // 求 max / min
+    const maxVal = Math.max(...items.map(x=>x.v));
+    const minVal = Math.min(...items.map(x=>x.v));
+
+    // 与平均最近：找最小绝对差，允许并列
+    let bestDiff = Infinity;
+    for (const it of items){
+      const d = Math.abs(it.v - avgVal);
+      if (d < bestDiff) bestDiff = d;
+    }
+
+    // 打标：并列时全部标
+    for (const it of items){
+      if (it.v === maxVal) it.td.classList.add('psta-max');            // 绿底+红字
+      if (it.v === minVal) it.td.classList.add('psta-min');            // 红字
+      if (Math.abs(it.v - avgVal) === bestDiff) it.td.classList.add('psta-close'); // 绿底
+    }
+
+    affected++;
+  }
+  console.log(`[PSTA] row extremes highlighted on ${affected} row(s).`);
+}
 
   // ===== 1) 映射开关（UI + localStorage） =====
   const LS_KEY = 'useLocalIdMap';
@@ -1985,6 +2054,7 @@
 
       // 再算“行级区间” B/C/D/E
       recalcRangeCells(map1);
+      highlightRowExtremes();
 
       // —— 检测是否有“完全没数据的店铺”，做 2 天回填 —— //
       const missingShops = getShopsWithNoAnyData();
@@ -2001,6 +2071,7 @@
         const merged = mergeClosestMaps(map1, map2);
         fillAverages(merged);
         recalcRangeCells(merged);
+        highlightRowExtremes();
 
         // 仍然没有数据的店铺，显示为 “--”
         for (const sSrv of missingShops){

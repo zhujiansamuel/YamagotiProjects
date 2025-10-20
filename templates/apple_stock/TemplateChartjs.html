@@ -277,9 +277,12 @@
     let SELECTED_SHOP_IDS = new Set();    // 当前勾选的门店
     let liveES = null;
 
-    function toIsoLocal(dtStr) {
-        return dtStr ? dtStr + ":00+09:00" : "";
-    }
+function toIsoLocal(dtStr) {
+  // <input type="datetime-local"> 通常形如 "2025-10-10T09:00"
+  if (!dtStr || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dtStr)) return '';
+  return `${dtStr}:00+09:00`;   // → "2025-10-10T09:00:00+09:00"
+}
+
 
     function toMillis(s) {
         const t = new Date(s).valueOf();
@@ -290,14 +293,23 @@
         return Math.floor(date.getTime() / 60000) * 60000;
     }
 
-    function buildURL(base, startIsoJST, endIsoJST, shopId, partNumber) {
-        const u = new URL(base, location.origin);
-        u.searchParams.set("start", startIsoJST);
-        u.searchParams.set("end", endIsoJST);
-        u.searchParams.set("shop", String(shopId));                 // 如后端要求 shop_id，这里改成 "shop_id"
-        u.searchParams.set("iphone__part_number", String(partNumber));
-        return u.toString();
-    }
+function buildURL(base, startIsoJST, endIsoJST, shopId, partNumber) {
+  const sid = Number(shopId);
+  if (!Number.isFinite(sid)) {
+    console.warn('[buildURL] invalid shopId:', shopId, {startIsoJST, endIsoJST, partNumber});
+    throw new Error('Invalid shop id');
+  }
+  if (!startIsoJST || !endIsoJST) {
+    throw new Error('Invalid time range');
+  }
+
+  const u = new URL(base, location.origin);
+  u.searchParams.set("start", startIsoJST);               // URLSearchParams 会把 + 编成 %2B
+  u.searchParams.set("end",   endIsoJST);
+  u.searchParams.set("shop", String(sid));                // 若后端是 shop_id，这里改 "shop_id"
+  u.searchParams.set("iphone__part_number", String(partNumber));
+  return u.toString();
+}
 
     /* ============ 3) X 轴标签：竖排（月/日/（周）） ============ */
     function verticalTickFormatter(value /* ms */) {
@@ -808,8 +820,8 @@
     $('load').addEventListener('click', loadAndPlot);
 
     (function initDefaults() {
-        $('start').value = "2025-10-11T09:00";
-        $('end').value = "2025-10-11T20:00";
+        $('start').value = "2025-10-01T10:00";
+        $('end').value = "2025-10-20T10:00";
         loadShops();
         loadIphones();
         $('iphone').placeholder = "例：MG864J/A";
