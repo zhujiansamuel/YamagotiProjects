@@ -889,10 +889,6 @@ SELECTED_END_MS   = endIso   ? new Date(endIso).getTime()   : null;
 
     $('load').addEventListener('click', loadAndPlot);
 
-    // 最近整数分钟（毫秒）
-    function nearestPastMinuteMs(d = new Date()) {
-        return Math.floor(d.getTime() / 60000) * 60000;
-    }
 
     // 选中时窗（全局缓存）
     let SELECTED_START_MS = null;
@@ -1189,18 +1185,15 @@ ensureEdgePointForSelectedShops(null); // 用最近整分作为目标分钟强�
         };
     })();
 // --- 若没这两个全局，请在 loadAndPlot 里赋值（见下方调用处） ---
-let SELECTED_END_MS = null;        // new Date(endIso).getTime()
-let SELECTED_SHOP_IDS = new Set(); // 你已有
+{#let SELECTED_END_MS = null;        // new Date(endIso).getTime()#}
+{#let SELECTED_SHOP_IDS = new Set(); // 你已有#}
 
 // 从系列 id "s:<shopId>" 提取数字 shopId
 function seriesShopId(series) {
   const m = String(series?.id || '').match(/^s:(\d+)$/);
   return m ? Number(m[1]) : null;
 }
-// 最近整分（毫秒）
-function nearestPastMinuteMs(d = new Date()) {
-  return Math.floor(d.getTime() / 60000) * 60000;
-}
+
 // 实际结束时间：min(用户选的 end, 最近整分)
 function _effectiveEndMs() {
   const nowMin = nearestPastMinuteMs();
