@@ -277,11 +277,11 @@
     let SELECTED_SHOP_IDS = new Set();    // 当前勾选的门店
     let liveES = null;
 
-function toIsoLocal(dtStr) {
-  // <input type="datetime-local"> 通常形如 "2025-10-10T09:00"
-  if (!dtStr || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dtStr)) return '';
-  return `${dtStr}:00+09:00`;   // → "2025-10-10T09:00:00+09:00"
-}
+    function toIsoLocal(dtStr) {
+        // <input type="datetime-local"> 通常形如 "2025-10-10T09:00"
+        if (!dtStr || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dtStr)) return '';
+        return `${dtStr}:00+09:00`;   // → "2025-10-10T09:00:00+09:00"
+    }
 
 
     function toMillis(s) {
@@ -293,23 +293,23 @@ function toIsoLocal(dtStr) {
         return Math.floor(date.getTime() / 60000) * 60000;
     }
 
-function buildURL(base, startIsoJST, endIsoJST, shopId, partNumber) {
-  const sid = Number(shopId);
-  if (!Number.isFinite(sid)) {
-    console.warn('[buildURL] invalid shopId:', shopId, {startIsoJST, endIsoJST, partNumber});
-    throw new Error('Invalid shop id');
-  }
-  if (!startIsoJST || !endIsoJST) {
-    throw new Error('Invalid time range');
-  }
+    function buildURL(base, startIsoJST, endIsoJST, shopId, partNumber) {
+        const sid = Number(shopId);
+        if (!Number.isFinite(sid)) {
+            console.warn('[buildURL] invalid shopId:', shopId, {startIsoJST, endIsoJST, partNumber});
+            throw new Error('Invalid shop id');
+        }
+        if (!startIsoJST || !endIsoJST) {
+            throw new Error('Invalid time range');
+        }
 
-  const u = new URL(base, location.origin);
-  u.searchParams.set("start", startIsoJST);               // URLSearchParams 会把 + 编成 %2B
-  u.searchParams.set("end",   endIsoJST);
-  u.searchParams.set("shop", String(sid));                // 若后端是 shop_id，这里改 "shop_id"
-  u.searchParams.set("iphone__part_number", String(partNumber));
-  return u.toString();
-}
+        const u = new URL(base, location.origin);
+        u.searchParams.set("start", startIsoJST);               // URLSearchParams 会把 + 编成 %2B
+        u.searchParams.set("end", endIsoJST);
+        u.searchParams.set("shop", String(sid));                // 若后端是 shop_id，这里改 "shop_id"
+        u.searchParams.set("iphone__part_number", String(partNumber));
+        return u.toString();
+    }
 
     /* ============ 3) X 轴标签：竖排（月/日/（周）） ============ */
     function verticalTickFormatter(value /* ms */) {
@@ -540,78 +540,76 @@ function buildURL(base, startIsoJST, endIsoJST, shopId, partNumber) {
     }
 
 
-    let liveWS = null;   // 替代原来的 liveES
+    let liveWS = null;
 
     function connectLive() {
-  // 1) 取 token：用你之前放入 localStorage 的 Bearer 值
-  const access = (localStorage.getItem('iphone:token') || '').trim();
-  if (!access) {
-    console.warn('[live] no token in localStorage("iphone:token"). WebSocket may be rejected.');
-  }
+        // 1) 取 token（localStorage 优先，data-* 备选）
+        const access =
+            (localStorage.getItem('iphone:token') || '').trim() ||
+            (document.body.dataset?.access || '').trim();
 
-  // 2) 选择 WS/WSS
-  const scheme = (location.protocol === 'https:') ? 'wss' : 'ws';
-
-  // 3) 构造你终端能通的同款地址（把 token 放到 query 参数）
-  const wsUrl = `${scheme}://${location.host}/ws/stream/psta/?token=${encodeURIComponent(access)}`;
-
-  try {
-    if (liveWS) { try { liveWS.close(); } catch(_){} }
-    LiveLog?.info?.(`[WS] connect ${wsUrl}`);
-    liveWS = new WebSocket(wsUrl);
-
-    liveWS.onopen = () => LiveLog?.info?.('[WS] open');
-
-    liveWS.onmessage = (ev) => {
-      // 服务器可能分块/拼包，这里逐条尝试解析
-      const texts = typeof ev.data === 'string' ? [ev.data] : [];
-      for (const txt of texts) {
-        try {
-          const msg = JSON.parse(txt);
-          LiveLog?.event?.(msg);
-          // 和你原来一样：running 忽略/显示，done 应用增量
-          if (msg?.status === 'done' && msg?.chart_delta?.series_delta) {
-            applyChartDelta(msg.chart_delta);
-            LiveLog?.delta?.(msg.chart_delta);
-          } else if (msg?.type === 'chart_update' && msg?.series_delta) {
-            applyChartDelta(msg);
-            LiveLog?.delta?.(msg);
-          }
-        } catch (e) {
-          // 如果后端发的是 NDJSON / 带换行，可以按行切
-          const lines = txt.split(/\r?\n/).filter(Boolean);
-          for (const line of lines) {
-            try {
-              const msg2 = JSON.parse(line);
-              LiveLog?.event?.(msg2);
-              if (msg2?.status === 'done' && msg2?.chart_delta?.series_delta) {
-                applyChartDelta(msg2.chart_delta);
-                LiveLog?.delta?.(msg2.chart_delta);
-              } else if (msg2?.type === 'chart_update' && msg2?.series_delta) {
-                applyChartDelta(msg2);
-                LiveLog?.delta?.(msg2);
-              }
-            } catch (_) { /* 静默 */ }
-          }
+        if (!access) {
+            console.warn('[WS] missing token: localStorage("iphone:token") is empty');
+            // 给 UI 明确提示
+            if (typeof LiveLog !== 'undefined') LiveLog.warn('WS token missing. Run: localStorage.setItem("iphone:token","<ACCESS>")');
         }
-      }
-    };
 
-    liveWS.onerror = (e) => {
-      console.warn('[WS] error', e);
-      LiveLog?.warn?.('[WS] error');
-    };
+        // 2) 目标 host：你可以用固定 ngrok 域名，或用当前站点
+        //    如果你的后端不和前端同域，建议固定 ngrok 域名，避免 Origin 不匹配迷惑
+        const WS_HOST = 'yamaguti.ngrok.io'; // ← 如需同域改成 location.host
+        const scheme = 'wss';                 // ngrok 一般用 wss
+        const wsUrl = `${scheme}://${WS_HOST}/ws/stream/psta/?token=${encodeURIComponent(access)}`;
 
-    liveWS.onclose = (e) => {
-      LiveLog?.warn?.(`[WS] closed code=${e.code} reason=${e.reason||''}`);
-      // 简单重连（可按需指数退避）
-      setTimeout(connectLive, 3000);
-    };
-  } catch (e) {
-    console.error('[WS] connect failed', e);
-    LiveLog?.error?.(`[WS] connect failed: ${e.message}`);
-  }
-}
+        try {
+            if (liveWS) {
+                try {
+                    liveWS.close();
+                } catch (_) {
+                }
+            }
+            LiveLog?.info?.(`[WS] connect ${wsUrl.replace(/token=.+$/, 'token=***')}`);
+
+            liveWS = new WebSocket(wsUrl);
+
+            liveWS.onopen = () => {
+                LiveLog?.info?.('[WS] open');
+            };
+
+            liveWS.onmessage = (ev) => {
+                // 可能是大 JSON 或 NDJSON，逐条尝试解析
+                const chunks = typeof ev.data === 'string' ? ev.data.split(/\r?\n/).filter(Boolean) : [];
+                for (const txt of chunks.length ? chunks : [ev.data]) {
+                    if (typeof txt !== 'string') continue;
+                    try {
+                        const msg = JSON.parse(txt);
+                        LiveLog?.event?.(msg);
+                        if (msg?.status === 'done' && msg?.chart_delta?.series_delta) {
+                            applyChartDelta(msg.chart_delta);
+                            LiveLog?.delta?.(msg.chart_delta);
+                        } else if (msg?.type === 'chart_update' && msg?.series_delta) {
+                            applyChartDelta(msg);
+                            LiveLog?.delta?.(msg);
+                        }
+                    } catch { /* 忽略无法解析的行 */
+                    }
+                }
+            };
+
+            liveWS.onerror = (e) => {
+                console.warn('[WS] error', e);
+                LiveLog?.warn?.('[WS] error');
+            };
+
+            liveWS.onclose = (e) => {
+                LiveLog?.warn?.(`[WS] closed code=${e.code} reason=${e.reason || ''}`);
+                // 简单重连（如需可加指数退避）
+                setTimeout(connectLive, 3000);
+            };
+        } catch (e) {
+            console.error('[WS] connect failed', e);
+            LiveLog?.error?.(`[WS] connect failed: ${e.message}`);
+        }
+    }
 
     function onBroadcast(msg) {
         if (msg?.status === 'running') {
@@ -622,10 +620,10 @@ function buildURL(base, startIsoJST, endIsoJST, shopId, partNumber) {
         if (msg?.status === 'done' && msg?.chart_delta?.series_delta) {
             applyChartDelta(msg.chart_delta);
             if (msg?.status === 'done' && msg?.chart_delta?.series_delta) {
-  applyChartDelta(msg.chart_delta);
-  LiveLog.delta(msg.chart_delta);    // ← 统计本次增量的 series/points/shadow
-  return;
-}
+                applyChartDelta(msg.chart_delta);
+                LiveLog.delta(msg.chart_delta);    // ← 统计本次增量的 series/points/shadow
+                return;
+            }
         } else if (msg?.type === 'chart_update' && msg?.series_delta) {
             applyChartDelta(msg); // 如果你在子任务阶段也做了中间广播
         }
@@ -878,26 +876,28 @@ function buildURL(base, startIsoJST, endIsoJST, shopId, partNumber) {
     $('load').addEventListener('click', loadAndPlot);
 
     // =============== LiveLog（右下角直播调试面板）================
-const LiveLog = (() => {
-  let root, body, counters, paused = false, maxLines = 500;
-  let stat = { total:0, running:0, done:0, chartSeries:0, chartPoints:0, shadowPoints:0, last:'' };
+    const LiveLog = (() => {
+        let root, body, counters, paused = false, maxLines = 500;
+        let stat = {total: 0, running: 0, done: 0, chartSeries: 0, chartPoints: 0, shadowPoints: 0, last: ''};
 
-  function el(tag, attrs={}, children=[]) {
-    const e = document.createElement(tag);
-    for (const [k,v] of Object.entries(attrs)) {
-      if (k === 'style') Object.assign(e.style, v);
-      else if (k.startsWith('on') && typeof v === 'function') e.addEventListener(k.substring(2), v);
-      else e.setAttribute(k, v);
-    }
-    for (const c of [].concat(children)) e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
-    return e;
-  }
+        function el(tag, attrs = {}, children = []) {
+            const e = document.createElement(tag);
+            for (const [k, v] of Object.entries(attrs)) {
+                if (k === 'style') Object.assign(e.style, v);
+                else if (k.startsWith('on') && typeof v === 'function') e.addEventListener(k.substring(2), v);
+                else e.setAttribute(k, v);
+            }
+            for (const c of [].concat(children)) e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+            return e;
+        }
 
-  function fmtTime(d=new Date()){ return d.toLocaleString('ja-JP', { hour12:false }); }
+        function fmtTime(d = new Date()) {
+            return d.toLocaleString('ja-JP', {hour12: false});
+        }
 
-  function render() {
-    if (root) return;
-    const css = `
+        function render() {
+            if (root) return;
+            const css = `
       .ll-box{position:fixed;right:12px;bottom:12px;width:420px;max-height:50vh;z-index:99999;
         background:#0b1020;color:#e9eef9;border:1px solid #334;border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.25);font:12px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}
       .ll-head{display:flex;gap:8px;align-items:center;padding:8px 10px;border-bottom:1px solid #223;}
@@ -912,97 +912,126 @@ const LiveLog = (() => {
       .ll-row.err{color:#ff9090}
       .ll-meta{font-size:11px;color:#9bb}
     `;
-    document.head.appendChild(el('style', {}, css));
-    body = el('div', { class:'ll-body', id:'ll-body' });
+            document.head.appendChild(el('style', {}, css));
+            body = el('div', {class: 'll-body', id: 'll-body'});
 
-    counters = el('div', { class:'ll-meta', id:'ll-meta' });
-    const title = el('div', { class:'ll-head' }, [
-      el('b', {}, 'Live Debug'),
-      el('span', { class:'ll-pill', id:'ll-pill-msg' }, 'msg: 0'),
-      el('span', { class:'ll-pill', id:'ll-pill-run' }, 'running: 0'),
-      el('span', { class:'ll-pill', id:'ll-pill-done' }, 'done: 0'),
-      el('span', { style:{marginLeft:'auto'} }, ''),
-      el('button', { class:'ll-btn', onclick:() => { paused=!paused; updateMeta(); } }, '⏸/▶'),
-      el('button', { class:'ll-btn', onclick:() => { body.textContent=''; updateMeta(); } }, 'Clear'),
-      el('button', { class:'ll-btn', onclick:copyAll }, 'Copy')
-    ]);
+            counters = el('div', {class: 'll-meta', id: 'll-meta'});
+            const title = el('div', {class: 'll-head'}, [
+                el('b', {}, 'Live Debug'),
+                el('span', {class: 'll-pill', id: 'll-pill-msg'}, 'msg: 0'),
+                el('span', {class: 'll-pill', id: 'll-pill-run'}, 'running: 0'),
+                el('span', {class: 'll-pill', id: 'll-pill-done'}, 'done: 0'),
+                el('span', {style: {marginLeft: 'auto'}}, ''),
+                el('button', {
+                    class: 'll-btn', onclick: () => {
+                        paused = !paused;
+                        updateMeta();
+                    }
+                }, '⏸/▶'),
+                el('button', {
+                    class: 'll-btn', onclick: () => {
+                        body.textContent = '';
+                        updateMeta();
+                    }
+                }, 'Clear'),
+                el('button', {class: 'll-btn', onclick: copyAll}, 'Copy')
+            ]);
 
-    root = el('div', { class:'ll-box', id:'live-log' }, [title, counters, body]);
-    document.body.appendChild(root);
-    updateMeta();
-  }
-
-  function copyAll() {
-    const txt = [...body.querySelectorAll('.ll-row')].map(n=>n.textContent).join('\n');
-    navigator.clipboard.writeText(txt).catch(()=>{});
-  }
-
-  function updateMeta() {
-    const $ = id => root.querySelector(id);
-    $('#ll-pill-msg').textContent = `msg: ${stat.total}`;
-    $('#ll-pill-run').textContent = `running: ${stat.running}`;
-    $('#ll-pill-done').textContent = `done: ${stat.done}`;
-    counters.textContent =
-      `series: ${stat.chartSeries} | points: ${stat.chartPoints} (shadow: ${stat.shadowPoints})` +
-      `   last: ${stat.last || '-'}` + (paused ? '   [PAUSED]' : '');
-  }
-
-  function pushLine(text, cls='') {
-    const row = el('div', { class:`ll-row ${cls}` }, [
-      el('span', { class:'t' }, `[${fmtTime()}] `),
-      text
-    ]);
-    body.appendChild(row);
-    // 限制行数
-    const rows = body.querySelectorAll('.ll-row');
-    if (rows.length > maxLines) for (let i=0;i<rows.length-maxLines;i++) rows[i].remove();
-    if (!paused) body.scrollTop = body.scrollHeight;
-  }
-
-  // 公开 API
-  return {
-    init(opts={}) { maxLines = opts.maxLines ?? maxLines; render(); },
-    info(msg){ stat.total++; stat.last = fmtTime(); pushLine(String(msg)); updateMeta(); },
-    warn(msg){ stat.total++; stat.last = fmtTime(); pushLine(String(msg), 'warn'); updateMeta(); },
-    error(msg){ stat.total++; stat.last = fmtTime(); pushLine(String(msg), 'err'); updateMeta(); },
-    /** 收到任意广播（原始 payload） */
-    event(payload){
-      stat.total++; stat.last = fmtTime();
-      if (payload?.status === 'running') stat.running++;
-      if (payload?.status === 'done')    stat.done++;
-      const brief = payload?.status === 'running'
-        ? `RUN ${payload.timestamp} buckets=${payload.buckets}`
-        : payload?.status === 'done'
-          ? `DONE ts=${payload?.summary?.timestamp || payload?.chart_delta?.timestamp} job=${payload?.chart_delta?.job_id || '-'}`
-          : `MSG`;
-      pushLine(brief + (payload?.status === 'done' ? '' : '' ));
-      updateMeta();
-    },
-    /** 收到 chart_delta（统计 series / points / shadow） */
-    delta(chartDelta){
-      if (!chartDelta?.series_delta) return;
-      let series = 0, points = 0, shadows = 0;
-      for (const s of chartDelta.series_delta) {
-        series++;
-        for (const p of (s.points||[])) {
-          points++;
-          if (p.shadow) shadows++;
+            root = el('div', {class: 'll-box', id: 'live-log'}, [title, counters, body]);
+            document.body.appendChild(root);
+            updateMeta();
         }
-      }
-      stat.chartSeries = series;
-      stat.chartPoints = points;
-      stat.shadowPoints = shadows;
-      stat.last = fmtTime();
-      pushLine(`Δ series=${series} points=${points} shadow=${shadows}`);
-      updateMeta();
-    }
-  };
-})();
 
+        function copyAll() {
+            const txt = [...body.querySelectorAll('.ll-row')].map(n => n.textContent).join('\n');
+            navigator.clipboard.writeText(txt).catch(() => {
+            });
+        }
+
+        function updateMeta() {
+            const $ = id => root.querySelector(id);
+            $('#ll-pill-msg').textContent = `msg: ${stat.total}`;
+            $('#ll-pill-run').textContent = `running: ${stat.running}`;
+            $('#ll-pill-done').textContent = `done: ${stat.done}`;
+            counters.textContent =
+                `series: ${stat.chartSeries} | points: ${stat.chartPoints} (shadow: ${stat.shadowPoints})` +
+                `   last: ${stat.last || '-'}` + (paused ? '   [PAUSED]' : '');
+        }
+
+        function pushLine(text, cls = '') {
+            const row = el('div', {class: `ll-row ${cls}`}, [
+                el('span', {class: 't'}, `[${fmtTime()}] `),
+                text
+            ]);
+            body.appendChild(row);
+            // 限制行数
+            const rows = body.querySelectorAll('.ll-row');
+            if (rows.length > maxLines) for (let i = 0; i < rows.length - maxLines; i++) rows[i].remove();
+            if (!paused) body.scrollTop = body.scrollHeight;
+        }
+
+        // 公开 API
+        return {
+            init(opts = {}) {
+                maxLines = opts.maxLines ?? maxLines;
+                render();
+            },
+            info(msg) {
+                stat.total++;
+                stat.last = fmtTime();
+                pushLine(String(msg));
+                updateMeta();
+            },
+            warn(msg) {
+                stat.total++;
+                stat.last = fmtTime();
+                pushLine(String(msg), 'warn');
+                updateMeta();
+            },
+            error(msg) {
+                stat.total++;
+                stat.last = fmtTime();
+                pushLine(String(msg), 'err');
+                updateMeta();
+            },
+            /** 收到任意广播（原始 payload） */
+            event(payload) {
+                stat.total++;
+                stat.last = fmtTime();
+                if (payload?.status === 'running') stat.running++;
+                if (payload?.status === 'done') stat.done++;
+                const brief = payload?.status === 'running'
+                    ? `RUN ${payload.timestamp} buckets=${payload.buckets}`
+                    : payload?.status === 'done'
+                        ? `DONE ts=${payload?.summary?.timestamp || payload?.chart_delta?.timestamp} job=${payload?.chart_delta?.job_id || '-'}`
+                        : `MSG`;
+                pushLine(brief + (payload?.status === 'done' ? '' : ''));
+                updateMeta();
+            },
+            /** 收到 chart_delta（统计 series / points / shadow） */
+            delta(chartDelta) {
+                if (!chartDelta?.series_delta) return;
+                let series = 0, points = 0, shadows = 0;
+                for (const s of chartDelta.series_delta) {
+                    series++;
+                    for (const p of (s.points || [])) {
+                        points++;
+                        if (p.shadow) shadows++;
+                    }
+                }
+                stat.chartSeries = series;
+                stat.chartPoints = points;
+                stat.shadowPoints = shadows;
+                stat.last = fmtTime();
+                pushLine(`Δ series=${series} points=${points} shadow=${shadows}`);
+                updateMeta();
+            }
+        };
+    })();
 
 
     (function initDefaults() {
-        LiveLog.init({ maxLines: 800 });
+        LiveLog.init({maxLines: 800});
         $('start').value = "2025-10-01T10:00";
         $('end').value = "2025-10-20T10:00";
         loadShops();
