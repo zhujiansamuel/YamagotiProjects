@@ -184,14 +184,16 @@ zoomAll(factor)、panAll(frac)、resetAllZoom() 对所有图统一操作，仅�
 git fetch --all --prune
 git reset --hard origin/master
 git pull origin master
-docker compose build --pull web
+docker compose build
 docker compose up -d web nginx
+
+docker compose up -d --scale worker=12
 
 docker compose logs -f web
 docker compose logs -f celery
 docker compose logs -f nginx
 
-
+docker compose up -d --scale worker=6
 
 
 brew services start redis
@@ -213,12 +215,20 @@ celery -A YamagotiProjects worker -l info -P eventlet --concurrency=15
 daphne -b 0.0.0.0 -p 8000 YamagotiProjects.asgi:application
 
 --------------------------------------------
-ACCESS="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwODc5MDE2LCJpYXQiOjE3NjA4NzcyMTYsImp0aSI6ImZjZDczMzAxYWNmNjQxMDFhNTdlODNkNGFiMjA5MDFlIiwidXNlcl9pZCI6IjEifQ.UEnYCQYm5-wRglszUvgN757lnZqHZ5Tev9UAPg4AZSg"
+ACCESS="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwOTQ1MDQwLCJpYXQiOjE3NjA5NDMyNDAsImp0aSI6IjU1YTFiYmI1NThmODRhMmE5NWQxYWNhN2E4Mjk1MmMzIiwidXNlcl9pZCI6IjEifQ.vt3NyU_pE9V-HWuL9Z6fu8aKbw9zoYGzZ1SPglzEq94"
 noglob websocat -t \
   -H='Origin: https://yamaguti.ngrok.io' \
   -H="Authorization: Bearer $ACCESS" \
   "wss://yamaguti.ngrok.io/ws/stream/psta/?token=$ACCESS"
 --------------------------------------------
+ACCESS="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwOTI1OTM0LCJpYXQiOjE3NjA5MjQxMzQsImp0aSI6ImRiMjBiYjdiZTYxMzRlNjA4ZTgyYTk1NjQ2MmY4NGI4IiwidXNlcl9pZCI6IjEifQ.pNPnkVH1nnMfxJlcEPrOufFGkuPJzNN9lpJ2Ys9w0fM"
+
+noglob websocat -t \
+  -H='Origin: https://127.0.0.1' \
+  -H="Authorization: Bearer $ACCESS" \
+  "wss://127.0.0.1/ws/stream/psta/?token=$ACCESS"
+
+
 
 
 shop1---->ok
