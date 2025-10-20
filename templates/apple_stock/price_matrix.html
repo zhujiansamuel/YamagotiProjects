@@ -33,7 +33,6 @@
         }
 
         .wrap {
-            max-width: 100px;
             margin: 3px 3px;
             margin-inline: auto; /* 等价于左右 auto，现代语法 */
             box-sizing: border-box; /* 防止内边距撑破宽度 */
@@ -1452,7 +1451,7 @@
                                 <td rowspan="1">194,800</td>
                 <td rowspan="1" 
                 data-range-shop-id="14 1 8 13 7 9 10 19 18 16 12 17 3 4 2 5 11 5 15 20" 
-                data-range-iphen-id="32 33 34 35"
+                data-range-iphen-id="36 37 38 39"
                 data-highest>
                     -
                 </td>
@@ -1493,7 +1492,7 @@
                                 <td rowspan="1">229,800</td>
                 <td rowspan="1" 
                 data-range-shop-id="14 1 8 13 7 9 10 19 18 16 12 17 3 4 2 5 11 5 15 20" 
-                data-range-iphen-id="32 33 34 35"
+                data-range-iphen-id="40 41 42 43"
                 data-highest>
                     -
                 </td>
@@ -1623,7 +1622,7 @@
                                 <td rowspan="1">164,800</td>
                 <td rowspan="1" 
                 data-range-shop-id="14 1 8 13 7 9 10 19 18 16 12 17 3 4 2 5 11 5 15 20" 
-                data-range-iphen-id="32 33 34 35"
+                data-range-iphen-id="6 7 8 9 10"
                 data-highest>
                     -
                 </td>
@@ -1729,6 +1728,7 @@
   const btnPick = document.getElementById('select-all');   // 「選択時刻」
   const btnNew  = document.getElementById('clear-all');    // 「最新」
   const caption = document.getElementById('range-caption');// 可选显示
+  const updatedAtEl = document.getElementById('updated-at');
 
   // ===== 3) 时间 & 请求 =====
   const fmt = new Intl.DateTimeFormat('sv-SE', {
@@ -1739,6 +1739,14 @@
   const toIsoTZ = d => fmt.format(d).replace(' ', 'T') + '+09:00';
   const enc = encodeURIComponent;
   const floorToMinute = d => new Date(Math.floor(d.getTime()/60000)*60000);
+
+  function formatDisplayJP(d){
+    const z = new Intl.DateTimeFormat('ja-JP', {
+      timeZone:'Asia/Tokyo', year:'numeric', month:'2-digit', day:'2-digit',
+      hour:'2-digit', minute:'2-digit', hour12:false
+    }).formatToParts(d).reduce((acc,p)=>{acc[p.type]=p.value;return acc;}, {});
+    return `${z.year}/${z.month}/${z.day} ${z.hour}時${z.minute}分`;
+  }
 
   async function fetchRows(start, end) {
     const url = `${API_BASE}/purchasing-time-analyses-psta-compact/?start=${enc(toIsoTZ(start))}&end=${enc(toIsoTZ(end))}`;
@@ -1795,6 +1803,27 @@
       }
     }
     console.log(`[PSTA] singles filled: ${ok}/${cells.length} (map=${isMappingEnabled()})`);
+  }
+
+  // 仅对指定店铺做“空格子”的填充（用于 2 天回填）
+  function fillSinglesSelective(closest, shopIdSet) {
+    const cells = document.querySelectorAll('td[data-shop-id][data-iphen-id]');
+    let ok = 0;
+    for (const td of cells) {
+      const sSrv = Number(td.dataset.shopId);
+      if (!shopIdSet.has(sSrv)) continue;
+      if (td.dataset.v) continue;  // 已有值则不覆盖
+      const iSrv = Number(td.dataset.iphenId);
+      const sKey = serverToMatchShop(sSrv);
+      const iKey = serverToMatchIphen(iSrv);
+      const rec = closest.get(`${sKey}-${iKey}`);
+      if (rec && Number.isFinite(rec.price)) {
+        td.dataset.v = String(rec.price);
+        td.textContent = nfJPY.format(rec.price);
+        ok++;
+      }
+    }
+    console.log(`[PSTA] singles backfilled for ${ok} cell(s) across ${shopIdSet.size} shop(s).`);
   }
 
   function fillAverages(closest) {
@@ -1912,32 +1941,91 @@
     console.log(`[PSTA] range highest/diff/rate/average recalculated for ${rowsDone} row(s).`);
   }
 
+  // ===== 7.5) 缺失店铺识别 & Map 合并 =====
+  function getShopsWithNoAnyData(){
+    const shops = new Map(); // sSrv -> { total, hasValue }
+    const cells = document.querySelectorAll('td[data-shop-id][data-iphen-id]');
+    for (const td of cells) {
+      const sSrv = Number(td.dataset.shopId);
+      const st = shops.get(sSrv) || { total:0, hasValue:false };
+      st.total += 1;
+      if (td.dataset.v) st.hasValue = true;
+      shops.set(sSrv, st);
+    }
+    const missing = [...shops.entries()]
+      .filter(([,st]) => st.total > 0 && !st.hasValue)
+      .map(([sSrv]) => sSrv);
+    return new Set(missing);
+  }
+
+  function mergeClosestMaps(primary, fallback){
+    const res = new Map(primary);
+    for (const [k, v] of fallback.entries()){
+      if (!res.has(k)) res.set(k, v);
+    }
+    return res;
+  }
+
   // ===== 8) 主流程（两按钮各自参照自己的 end） =====
   async function runWithEnd(endBase, tag, btn){
     try{
       if (btn) { btn.disabled = true; btn.dataset.t = btn.textContent; btn.textContent = '取得中…'; }
+
       const end   = floorToMinute(endBase);
       const start = new Date(end.getTime() - 25*60*1000);
       caption && (caption.textContent = `${tag}（start=${toIsoTZ(start)} / end=${toIsoTZ(end)}）`);
 
-      const rows = await fetchRows(start, end);
-      const map  = buildClosestByRef(rows, end.getTime());
+      // —— 第一次：25 分钟窗口 —— //
+      const rows1 = await fetchRows(start, end);
+      const map1  = buildClosestByRef(rows1, end.getTime());
 
       // 先填“格子级”数据
-      fillSingles(map);
-      fillAverages(map);
+      fillSingles(map1);
+      fillAverages(map1);
 
       // 再算“行级区间” B/C/D/E
-      recalcRangeCells(map);
+      recalcRangeCells(map1);
 
-      // 诊断示例
-      const sample = [...document.querySelectorAll('td[data-shop-id][data-iphen-id]')].slice(0, 20).map(td => {
+      // —— 检测是否有“完全没数据的店铺”，做 2 天回填 —— //
+      const missingShops = getShopsWithNoAnyData();
+      if (missingShops.size > 0){
+        const start2d = new Date(end.getTime() - 2*24*60*60*1000);
+        console.log(`[PSTA] backfill: ${missingShops.size} shop(s) have no data, searching last 2 days...`);
+        const rows2 = await fetchRows(start2d, end);
+        const map2  = buildClosestByRef(rows2, end.getTime());
+
+        // 针对缺失店铺做“空格子填充”
+        fillSinglesSelective(map2, missingShops);
+
+        // 使用“初查+回填”的合并 Map 来重算平均 & 行级
+        const merged = mergeClosestMaps(map1, map2);
+        fillAverages(merged);
+        recalcRangeCells(merged);
+
+        // 仍然没有数据的店铺，显示为 “--”
+        for (const sSrv of missingShops){
+          const tds = document.querySelectorAll(`td[data-shop-id="${sSrv}"][data-iphen-id]`);
+          for (const td of tds){
+            if (!td.dataset.v){
+              td.textContent = '--';
+            }
+          }
+        }
+      }
+
+      // —— 更新“更新日時” —— //
+      if (updatedAtEl){
+        updatedAtEl.textContent = `更新日時：${formatDisplayJP(end)}`;
+      }
+
+      // 诊断输出
+      const cellsDiag = [...document.querySelectorAll('td[data-shop-id][data-iphen-id]')].slice(0, 20).map(td => {
         const sSrv = Number(td.dataset.shopId), iSrv = Number(td.dataset.iphenId);
         const sKey = serverToMatchShop(sSrv),   iKey = serverToMatchIphen(iSrv);
-        return `${sSrv}-${iSrv}  (srv→match: ${sKey}-${iKey})  ${map.has(`${sKey}-${iKey}`)?'✓':'✗'}`;
+        return `${sSrv}-${iSrv}  (srv→match: ${sKey}-${iKey})`;
       });
-      console.log('[PSTA] key map sample:\n' + sample.join('\n'));
-      console.log(`[PSTA] ${tag}: rows=${rows.length} (map=${isMappingEnabled()})`);
+      console.log('[PSTA] key map sample:\n' + cellsDiag.join('\n'));
+      console.log(`[PSTA] ${tag}: rows25m=${rows1.length}${missingShops.size ? `, rows2d=${(await 0,0)}`: ''} (map=${isMappingEnabled()})`);
     } catch(e){
       console.error(e);
       alert(e.message || 'データ取得に失敗しました');
@@ -1951,7 +2039,12 @@
     if (!input?.value) { alert('時刻を選択してください'); return; }
     runWithEnd(new Date(input.value), '選択時刻', btnPick);
   });
-  btnNew?.addEventListener('click', () => runWithEnd(new Date(), '最新', btnNew));
+
+  // 变更①：最新 = 当前时间 - 3 分钟（向下取整到分钟）
+  btnNew?.addEventListener('click', () => {
+    const endMinus3m = new Date(Date.now() - 3*60*1000);
+    runWithEnd(endMinus3m, '最新', btnNew);
+  });
 })();
 </script>
 </body>

@@ -355,26 +355,6 @@
     const ENDPOINT_SHOPS = `${API_BASE}/secondhand-shops/`;
     const ENDPOINT_IPHONES = `${API_BASE}/iphones/`;
 
-    async function loadShops() {
-        const box = $('shops');
-        box.innerHTML = '';
-        SHOPS_INDEX.clear();
-        try {
-            const resp = await fetch(ENDPOINT_SHOPS);
-            const items = await resp.json();
-            for (const s of items) {
-                const id = `shop_${s.id}`;
-                const label = document.createElement('label');
-                label.title = s.name;
-                label.innerHTML = `<input type="checkbox" value="${s.id}" data-name="${s.name}" id="${id}"><span>${s.name}</span>`;
-                box.appendChild(label);
-                SHOPS_INDEX.set(Number(s.id), s.name); // 索引
-            }
-        } catch (e) {
-            $('err').textContent = '店舗の読み込みに失敗しました（CORSまたはネットワーク）';
-        }
-    }
-
     // —— 更健壮的 loadShops —— //
     async function loadShops() {
         const box = $('shops');
@@ -445,13 +425,36 @@
         }
     }
 
-    // —— 仅选/清 有效门店（带 data-shop-id） —— //
+    async function loadIphones() {
+        const dl = $('iphone-list');
+        dl.innerHTML = '';
+        IPHONE_ID_BY_PART.clear();
+        try {
+            const resp = await fetch(ENDPOINT_IPHONES);
+            const items = await resp.json();
+            for (const i of items) {
+                const text = `${i.part_number} ｜ ${i.model_name} ${i.capacity_label} ｜ ${i.color}`;
+                const opt = document.createElement('option');
+                opt.value = i.part_number;
+                opt.label = text;
+                dl.appendChild(opt);
+                if (i.id != null && i.part_number) {
+                    IPHONE_ID_BY_PART.set(String(i.part_number), Number(i.id));
+                }
+            }
+            $('iphone-hint').textContent = 'プルダウンから選択するか、part_number を直接入力してください';
+        } catch (e) {
+            $('iphone-hint').textContent = 'iPhone の読み込みに失敗しました（CORSまたはネットワーク）';
+        }
+    }
+
     $('select-all').addEventListener('click', () => {
         document.querySelectorAll('#shops input[type=checkbox][data-shop-id]').forEach(cb => cb.checked = true);
     });
     $('clear-all').addEventListener('click', () => {
         document.querySelectorAll('#shops input[type=checkbox][data-shop-id]').forEach(cb => cb.checked = false);
     });
+
 
     // ---- 取数（带埋点 & 可选鉴权） ----
     async function fetchOneShopSeries(base, startIsoJST, endIsoJST, shopId, shopName, partNumber) {
