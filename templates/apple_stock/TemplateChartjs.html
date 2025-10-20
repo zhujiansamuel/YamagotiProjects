@@ -539,37 +539,79 @@ function buildURL(base, startIsoJST, endIsoJST, shopId, partNumber) {
         return seriesData;
     }
 
-    // ---- SSE：实时增量 ----
-    function connectLive() {
-        if (liveES) try {
-            liveES.close();
-        } catch (_) {
-        }
-        try {
-            liveES = new EventSource(BROADCAST_URL, {withCredentials: true});
-            liveES.onmessage = ev => {
-                try {
-                    const msg = JSON.parse(ev.data);
-                    onBroadcast(msg);
-                } catch (e) {
-                    console.error('SSE parse error', e);
-                }
-            };
-            liveES.onerror = err => console.warn('SSE error', err);
-        } catch (e) {
-            console.warn('EventSource not available:', e);
-        }
-        liveES.onmessage = ev => {
-              try {
-                const msg = JSON.parse(ev.data);
-                LiveLog.event(msg);           // ← 显示一条广播
-                onBroadcast(msg);             // 你原本的处理
-              } catch (e) {
-                console.error('SSE parse error', e);
-              }
-            };
 
-    }
+    let liveWS = null;   // 替代原来的 liveES
+
+    function connectLive() {
+  // 1) 取 token：用你之前放入 localStorage 的 Bearer 值
+  const access = (localStorage.getItem('iphone:token') || '').trim();
+  if (!access) {
+    console.warn('[live] no token in localStorage("iphone:token"). WebSocket may be rejected.');
+  }
+
+  // 2) 选择 WS/WSS
+  const scheme = (location.protocol === 'https:') ? 'wss' : 'ws';
+
+  // 3) 构造你终端能通的同款地址（把 token 放到 query 参数）
+  const wsUrl = `${scheme}://${location.host}/ws/stream/psta/?token=${encodeURIComponent(access)}`;
+
+  try {
+    if (liveWS) { try { liveWS.close(); } catch(_){} }
+    LiveLog?.info?.(`[WS] connect ${wsUrl}`);
+    liveWS = new WebSocket(wsUrl);
+
+    liveWS.onopen = () => LiveLog?.info?.('[WS] open');
+
+    liveWS.onmessage = (ev) => {
+      // 服务器可能分块/拼包，这里逐条尝试解析
+      const texts = typeof ev.data === 'string' ? [ev.data] : [];
+      for (const txt of texts) {
+        try {
+          const msg = JSON.parse(txt);
+          LiveLog?.event?.(msg);
+          // 和你原来一样：running 忽略/显示，done 应用增量
+          if (msg?.status === 'done' && msg?.chart_delta?.series_delta) {
+            applyChartDelta(msg.chart_delta);
+            LiveLog?.delta?.(msg.chart_delta);
+          } else if (msg?.type === 'chart_update' && msg?.series_delta) {
+            applyChartDelta(msg);
+            LiveLog?.delta?.(msg);
+          }
+        } catch (e) {
+          // 如果后端发的是 NDJSON / 带换行，可以按行切
+          const lines = txt.split(/\r?\n/).filter(Boolean);
+          for (const line of lines) {
+            try {
+              const msg2 = JSON.parse(line);
+              LiveLog?.event?.(msg2);
+              if (msg2?.status === 'done' && msg2?.chart_delta?.series_delta) {
+                applyChartDelta(msg2.chart_delta);
+                LiveLog?.delta?.(msg2.chart_delta);
+              } else if (msg2?.type === 'chart_update' && msg2?.series_delta) {
+                applyChartDelta(msg2);
+                LiveLog?.delta?.(msg2);
+              }
+            } catch (_) { /* 静默 */ }
+          }
+        }
+      }
+    };
+
+    liveWS.onerror = (e) => {
+      console.warn('[WS] error', e);
+      LiveLog?.warn?.('[WS] error');
+    };
+
+    liveWS.onclose = (e) => {
+      LiveLog?.warn?.(`[WS] closed code=${e.code} reason=${e.reason||''}`);
+      // 简单重连（可按需指数退避）
+      setTimeout(connectLive, 3000);
+    };
+  } catch (e) {
+    console.error('[WS] connect failed', e);
+    LiveLog?.error?.(`[WS] connect failed: ${e.message}`);
+  }
+}
 
     function onBroadcast(msg) {
         if (msg?.status === 'running') {
