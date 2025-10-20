@@ -737,14 +737,10 @@
             const tIso = msg.chart_delta.timestamp || null;
             if (tIso) forceGrowAtMinute(new Date(tIso).getTime());
             return;
+        } else if (msg?.type === 'chart_update' && msg?.series_delta) {
+            applyChartDelta(msg); // 如果你在子任务阶段也做了中间广播
+            ensureEdgePointForAllSeries(msg.timestamp /* 如果有 */);
         }
-    }
-
-    else
-    if (msg?.type === 'chart_update' && msg?.series_delta) {
-        applyChartDelta(msg); // 如果你在子任务阶段也做了中间广播
-        ensureEdgePointForAllSeries(msg.timestamp /* 如果有 */);
-    }
     }
 
     function ensureSeriesByShop(shopId, name) {
