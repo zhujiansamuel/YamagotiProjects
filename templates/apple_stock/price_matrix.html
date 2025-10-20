@@ -163,10 +163,6 @@
             background: #374151;
         }
 
-        /*         button.ghost { */
-        /*             background: #f3f4f6; */
-        /*             color: #111827; */
-        /*         } */
 
         .col-model {
             width: 130px;
@@ -215,8 +211,12 @@
         /* 店舗ヘッダーの色（白文字）*/
         .shop-head {
             color: #fff;
-            line-height: 1.1;
             font-weight: 400;
+            line-height: 0.8;           /* 行间距更紧凑，可在 1.0~1.2 间微调 */
+            font-size: 14px;
+        }
+        .shop-time {
+        font-size: 9px;
         }
 
         .shop-買取商店 {
@@ -376,26 +376,109 @@
                 <th class="col-num">平均値</th>
                 <th class="col-color">カラー</th>
                 <!-- Stores -->
-                <th class="shop-col shop-head shop-買取商店">買取商店</th>
-                <th class="shop-col shop-head shop-海峡通信">海峡通信</th>
-                <th class="shop-col shop-head shop-買取１丁目">買取１丁目</th>
-                <th class="shop-col shop-head shop-モバイルミックス">モバイルミックス</th>
-                <th class="shop-col shop-head shop-森森買取">森森買取</th>
-                <th class="shop-col shop-head shop-買取ルデヤ">買取ルデヤ</th>
-                <th class="shop-col shop-head shop-買取Wiki">買取Wiki</th>
-                <th class="shop-col shop-head shop-買取ホムラ">買取ホムラ</th>
-                <th class="shop-col shop-head shop-ドラゴンモバイル-">ドラゴンモバイル</th>
-                <th class="shop-col shop-head shop-モバステ-">モバステ</th>
-                <th class="shop-col shop-head shop-アキモバ-">アキモバ</th>
-                <th class="shop-col shop-head shop-トゥインクル">トゥインクル</th>
-                <th class="shop-col shop-head shop-家電市場">家電市場</th>
-                <th class="shop-col shop-head shop-買取楽園">買取楽園</th>
-                <th class="shop-col shop-head shop-買取当番">買取当番</th>
-                <th class="shop-col shop-head shop-携帯空間">携帯空間</th>
-                <th class="shop-col shop-head shop-ゲストモバイル">ゲストモバイル</th>
-                <th class="shop-col shop-head shop-買取オク">買取オク</th>
-                <th class="shop-col shop-head shop-毎日買取">毎日買取</th>
-                <th class="shop-col shop-head shop-MobileZone">Mobile Zone</th>
+                <th class="shop-col shop-head shop-買取商店"  style="font-size: 14px;">
+                買取商店
+                <p class="shop-time">営業時間</p>
+                <p class="shop-time">11:00~18:00</p>
+                <p class="shop-time">(月火水木金)</p>
+                </th>
+                
+                
+                <th class="shop-col shop-head shop-海峡通信">海峡通信
+                <p class="shop-time">営業時間</p>
+                <p class="shop-time">10:00~19:00</p>
+                <p class="shop-time">(月火水木金土日祝)</p>
+                </th>
+                <th class="shop-col shop-head shop-買取１丁目">買取一丁目
+                <p class="shop-time">営業時間</p>
+                <p class="shop-time">10:00~19:00</p>
+                <p class="shop-time">(月火水木金土)</p>
+                </th>
+                <th class="shop-col shop-head shop-モバイルミックス">モバイルミックス
+                <p class="shop-time">営業時間</p>
+                <p class="shop-time">11:00~19:00</p>
+                <p class="shop-time">(月火水木金土)</p>
+                </th>
+                <th class="shop-col shop-head shop-森森買取">森森買取
+                <p class="shop-time">営業時間</p>
+                <p class="shop-time">11:00~20:00</p>
+                <p class="shop-time">(月火水木金土日祝)</p>
+                </th>
+                <th class="shop-col shop-head shop-買取ルデヤ">買取ルデヤ
+                <p class="shop-time">営業時間</p>
+                <p class="shop-time">11:00~19:00</p>
+                <p class="shop-time">(月火水木金土)</p>
+                </th>
+                <th class="shop-col shop-head shop-買取Wiki">買取Wiki
+                <p class="shop-time">営業時間</p>
+                <p class="shop-time">10:30~19:30</p>
+                <p class="shop-time">(月火水木金土日祝)</p>
+                </th>
+                <th class="shop-col shop-head shop-買取ホムラ">買取ホムラ
+                <p class="shop-time">営業時間</p>
+                <p class="shop-time">11:00~19:00</p>
+                <p class="shop-time">(月火水木金土日祝)</p>
+                </th>
+                <th class="shop-col shop-head shop-ドラゴンモバイル-">ドラゴンモバイル
+                <p class="shop-time">営業時間</p>
+                <p class="shop-time">11:00~19:30</p>
+                <p class="shop-time">(月火水木金土)</p>
+                </th>
+                <th class="shop-col shop-head shop-モバステ-">モバステ
+                <p class="shop-time">営業時間</p>
+                <p class="shop-time">11:00~18:00</p>
+                <p class="shop-time">(月火水木金)</p>
+                </th>
+                <th class="shop-col shop-head shop-アキモバ-">アキモバ
+                <p class="shop-time">営業時間</p>
+                <p class="shop-time">11:00~18:00</p>
+                <p class="shop-time">(月火水木金)</p>
+                </th>
+                <th class="shop-col shop-head shop-トゥインクル">トゥインクル
+                <p class="shop-time">営業時間</p>
+                <p class="shop-time">11:00~18:00</p>
+                <p class="shop-time">(月火水木金)</p>
+                </th>
+                <th class="shop-col shop-head shop-家電市場">家電市場
+                <p class="shop-time">営業時間</p>
+                <p class="shop-time">11:00~18:00</p>
+                <p class="shop-time">(月火水木金)</p>
+                </th>
+                <th class="shop-col shop-head shop-買取楽園">買取楽園
+                <p class="shop-time">営業時間</p>
+                <p class="shop-time">11:00~18:00</p>
+                <p class="shop-time">(月火水木金)</p>
+                </th>
+                <th class="shop-col shop-head shop-買取当番">買取当番
+                <p class="shop-time">営業時間</p>
+                <p class="shop-time">11:00~18:00</p>
+                <p class="shop-time">(月火水木金)</p>
+                </th>
+                <th class="shop-col shop-head shop-携帯空間">携帯空間
+                <p class="shop-time">営業時間</p>
+                <p class="shop-time">11:00~18:00</p>
+                <p class="shop-time">(月火水木金)</p>
+                </th>
+                <th class="shop-col shop-head shop-ゲストモバイル">ゲストモバイル
+                <p class="shop-time">営業時間</p>
+                <p class="shop-time">11:00~18:00</p>
+                <p class="shop-time">(月火水木金)</p>
+                </th>
+                <th class="shop-col shop-head shop-買取オク">買取オク
+                <p class="shop-time">営業時間</p>
+                <p class="shop-time">11:00~18:00</p>
+                <p class="shop-time">(月火水木金)</p>
+                </th>
+                <th class="shop-col shop-head shop-毎日買取">毎日買取
+                <p class="shop-time">営業時間</p>
+                <p class="shop-time">11:00~18:00</p>
+                <p class="shop-time">(月火水木金)</p>
+                </th>
+                <th class="shop-col shop-head shop-MobileZone">Mobile Zone
+                <p class="shop-time">営業時間</p>
+                <p class="shop-time">11:00~18:00</p>
+                <p class="shop-time">(月火水木金)</p>
+                </th>
             </tr>
             </thead>
             <tbody>

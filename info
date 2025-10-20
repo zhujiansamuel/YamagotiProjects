@@ -212,8 +212,13 @@ celery -A YamagotiProjects worker -l info -P threads --concurrency=8
 celery -A YamagotiProjects worker -l info -P eventlet --concurrency=15
 daphne -b 0.0.0.0 -p 8000 YamagotiProjects.asgi:application
 
-
-noglob websocat -t "ws://localhost:8000/ws/stream/psta/?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwMDgzMTU5LCJpYXQiOjE3NjAwODEzNTksImp0aSI6IjUwZTcyZjQxNDJjMzRhNWNhM2ViNjdkMWEzNjcwOTZjIiwidXNlcl9pZCI6IjEifQ.wpy10gAcQFyKJLZQAD7Z6uYbn3bG-Zdc7agEL8cvvqY"
+--------------------------------------------
+ACCESS="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwODc5MDE2LCJpYXQiOjE3NjA4NzcyMTYsImp0aSI6ImZjZDczMzAxYWNmNjQxMDFhNTdlODNkNGFiMjA5MDFlIiwidXNlcl9pZCI6IjEifQ.UEnYCQYm5-wRglszUvgN757lnZqHZ5Tev9UAPg4AZSg"
+noglob websocat -t \
+  -H='Origin: https://yamaguti.ngrok.io' \
+  -H="Authorization: Bearer $ACCESS" \
+  "wss://yamaguti.ngrok.io/ws/stream/psta/?token=$ACCESS"
+--------------------------------------------
 
 
 shop1---->ok
@@ -235,10 +240,10 @@ shop16--->ok
 shop18--->ok
 shop20--->ok
 
+https://verbless-sadistically-jayceon.ngrok-free.dev/AppleStockChecker/purchasing-time-analyses-psta-compact/?start=2025-10-11T00:00:00%2B09:00&end=2025-10-13T00:00:00%2B09:00
 
 
-
- docker compose build
+docker compose build
 docker compose run --rm -v "$PWD":/app web python manage.py makemigrations AppleStockChecker
 docker compose run --rm -v "$PWD":/app web python manage.py makemigrations AppleStockChecker
 
@@ -271,10 +276,6 @@ docker compose run --rm web bash -lc '
 docker compose run --rm web bash -lc '
   python manage.py loaddata /app/sqlite_data.json
 '
-
-
-# 在项目根目录执行（有 docker-compose.yml 的地方）
-docker compose run --rm -v web python manage.py makemigrations AppleStockChecker
 
 
 
@@ -323,22 +324,7 @@ ALTER TABLE applestockchecker_secondhandshop RENAME TO "Applestockchecker_second
 
 celery -A YamagotiProjects beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
 
-noglob websocat -t "ws://127.0.0.1:8000/ws/stream/psta/?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwMDgzMTU5LCJpYXQiOjE3NjAwODEzNTksImp0aSI6IjUwZTcyZjQxNDJjMzRhNWNhM2ViNjdkMWEzNjcwOTZjIiwidXNlcl9pZCI6IjEifQ.wpy10gAcQFyKJLZQAD7Z6uYbn3bG-Zdc7agEL8cvvqY"
 
-
-
-
-
-noglob websocat -t "ws://localhost:8000/ws/stream/psta/?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwMzMwMDg0LCJpYXQiOjE3NjAzMjgyODQsImp0aSI6IjgxYjZlM2UxZTk2OTQ4MTFhZDYzMWY1N2I3YTg3MDQ1IiwidXNlcl9pZCI6IjEifQ.fK4Ajk29I_VLT9virnzMvnc5Quol4eg7exh3qX4RY64"
-
-
-uvicorn YamagotiProjects.asgi:application --reload
-
-
-uvicorn YamagotiProjects.asgi:application --reload --port 8000
-
-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwMDgzMTU5LCJpYXQiOjE3NjAwODEzNTksImp0aSI6IjUwZTcyZjQxNDJjMzRhNWNhM2ViNjdkMWEzNjcwOTZjIiwidXNlcl9pZCI6IjEifQ.wpy10gAcQFyKJLZQAD7Z6uYbn3bG-Zdc7agEL8cvvqY
-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwMDg3MjAwLCJpYXQiOjE3NjAwODU0MDAsImp0aSI6IjhjNzM0MDVlNzIyMzQzMmZiOTQwN2MyZWMwZDU4ZWE4IiwidXNlcl9pZCI6IjEifQ.ppF75-k_9BWevpEQInAvXuKOpxZzt7mThrLzrmU2Djw
 
 
 pkill -f 'celery worker' ; celery -A YamagotiProjects worker -l info --concurrency=15
@@ -397,10 +383,13 @@ curl -i -X POST \
   -F "files=@/Users/syu/Downloads/shop2.xlsx"
 
 
+curl -i -X POST \
+  "http://yamaguti.ngrok.io/AppleStockChecker/purchasing-price-records/import-tradein-xlsx/?dry_run=0" \
+  -H "Authorization: Bearer ${ACCESS}" \
+  -F "files=@/Users/syu/Downloads/shop2.xlsx"
 
 
 
-https://verbless-sadistically-jayceon.ngrok-free.dev/AppleStockChecker/purchasing-time-analyses-psta-compact/?start=2025-10-11T00:00:00%2B09:00&end=2025-10-13T00:00:00%2B09:00
 
 
 
@@ -411,14 +400,6 @@ curl -i "https://verbless-sadistically-jayceon.ngrok-free.dev/AppleStockChecker/
 
 
 
-curl -i "https://verbless-sadistically-jayceon.ngrok-free.dev/AppleStockChecker/purchasing-price-records/?shop=17&iphone_part_number=MFY94J%2FA" \
-  -H 'Accept: application/json' \
-  -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwMzQxOTkyLCJpYXQiOjE3NjAzNDAxOTIsImp0aSI6ImI0N2VmNDcxNmVmNjQ2NGRiMjdhODk5ZTQ5OTBkYzVjIiwidXNlcl9pZCI6IjEifQ.Kr_ty2MjxoPfdnqbIsa-DNXHq-BT60w6M-ELNYXiLVo' \
-  -H 'ngrok-skip-browser-warning: 1'
-
-
-
-start=2025-10-11T00:00:00%2B09:00&end=2025-10-13T00:00:00%2B09:00
 
 
 https://verbless-sadistically-jayceon.ngrok-free.dev/AppleStockChecker/purchasing-time-analyses-psta-compact/?start=2025-10-10T09:00:00%2B09:00&end=2025-10-11T20:00:00%2B09:00&shop=11&iphone__jan=4549995648300
@@ -430,3 +411,16 @@ docker compose run --rm \
   -e DJANGO_SUPERUSER_EMAIL=samuel201111@gmail.com \
   -e DJANGO_SUPERUSER_PASSWORD='Xdb73008762' \
   web python manage.py createsuperuser --noinput
+
+
+
+curl -v --max-time 600 \
+  -H "Authorization: Bearer ${ACCESS}" \
+  -F "files=@/Users/syu/PycharmProjects/YamagotiProjects/WebScraperData/shop18/shop18.xlsx" \
+  "https://yamaguti.ngrok.io/AppleStockChecker/purchasing-price-records/import-tradein-xlsx/?dry_run=0"
+
+
+
+curl -I http://yamaguti.ngrok.io/AppleStockChecker/static/admin/simplepro/images/bg.svg
+
+curl -i https://yamaguti.ngrok.io/AppleStockChecker/static/admin/simplepro/images/bg.svg
