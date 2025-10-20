@@ -15,7 +15,6 @@ from AppleStockChecker.tasks.timestamp_alignment_task import batch_generate_psta
 #@permission_classes([IsAuthenticatedOrReadOnly])
 
 @api_view(["POST"])
-
 @permission_classes([AllowAny])  # 本地调试也可 AllowAny
 def dispatch_psta_batch_same_ts(request):
     body = request.data or {}

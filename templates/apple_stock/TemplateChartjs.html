@@ -461,8 +461,9 @@
         $('err').textContent = '';
         $('stats').textContent = '';
 
-        const base = $('base').value.trim();
+        const base = `${API_BASE}/purchasing-time-analyses-psta-compact/`
         const part = $('iphone').value.trim();
+
         const startIso = toIsoLocal($('start').value);
         const endIso = toIsoLocal($('end').value);
 
