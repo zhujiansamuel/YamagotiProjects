@@ -559,6 +559,16 @@ function buildURL(base, startIsoJST, endIsoJST, shopId, partNumber) {
         } catch (e) {
             console.warn('EventSource not available:', e);
         }
+        liveES.onmessage = ev => {
+              try {
+                const msg = JSON.parse(ev.data);
+                LiveLog.event(msg);           // ← 显示一条广播
+                onBroadcast(msg);             // 你原本的处理
+              } catch (e) {
+                console.error('SSE parse error', e);
+              }
+            };
+
     }
 
     function onBroadcast(msg) {
@@ -569,6 +579,11 @@ function buildURL(base, startIsoJST, endIsoJST, shopId, partNumber) {
         }
         if (msg?.status === 'done' && msg?.chart_delta?.series_delta) {
             applyChartDelta(msg.chart_delta);
+            if (msg?.status === 'done' && msg?.chart_delta?.series_delta) {
+  applyChartDelta(msg.chart_delta);
+  LiveLog.delta(msg.chart_delta);    // ← 统计本次增量的 series/points/shadow
+  return;
+}
         } else if (msg?.type === 'chart_update' && msg?.series_delta) {
             applyChartDelta(msg); // 如果你在子任务阶段也做了中间广播
         }
@@ -683,6 +698,7 @@ function buildURL(base, startIsoJST, endIsoJST, shopId, partNumber) {
     }
 
     async function loadAndPlot() {
+        LiveLog.info('loadAndPlot: start');
         $('status').textContent = '読み込み中…';
         $('err').textContent = '';
         $('stats').textContent = '';
@@ -819,7 +835,132 @@ function buildURL(base, startIsoJST, endIsoJST, shopId, partNumber) {
 
     $('load').addEventListener('click', loadAndPlot);
 
+    // =============== LiveLog（右下角直播调试面板）================
+const LiveLog = (() => {
+  let root, body, counters, paused = false, maxLines = 500;
+  let stat = { total:0, running:0, done:0, chartSeries:0, chartPoints:0, shadowPoints:0, last:'' };
+
+  function el(tag, attrs={}, children=[]) {
+    const e = document.createElement(tag);
+    for (const [k,v] of Object.entries(attrs)) {
+      if (k === 'style') Object.assign(e.style, v);
+      else if (k.startsWith('on') && typeof v === 'function') e.addEventListener(k.substring(2), v);
+      else e.setAttribute(k, v);
+    }
+    for (const c of [].concat(children)) e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+    return e;
+  }
+
+  function fmtTime(d=new Date()){ return d.toLocaleString('ja-JP', { hour12:false }); }
+
+  function render() {
+    if (root) return;
+    const css = `
+      .ll-box{position:fixed;right:12px;bottom:12px;width:420px;max-height:50vh;z-index:99999;
+        background:#0b1020;color:#e9eef9;border:1px solid #334;border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.25);font:12px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}
+      .ll-head{display:flex;gap:8px;align-items:center;padding:8px 10px;border-bottom:1px solid #223;}
+      .ll-head b{font-weight:700}
+      .ll-pill{display:inline-block;padding:2px 8px;border-radius:9999px;background:#1a2540;color:#cde}
+      .ll-btn{cursor:pointer;border:1px solid #345;background:#162036;color:#cde;border-radius:6px;padding:4px 8px}
+      .ll-btn:hover{filter:brightness(1.1)}
+      .ll-body{padding:6px 8px;max-height:calc(50vh - 44px);overflow:auto;white-space:pre-wrap}
+      .ll-row{padding:2px 0;border-bottom:1px dashed #243}
+      .ll-row .t{color:#9ad}
+      .ll-row.warn{color:#ffc36b}
+      .ll-row.err{color:#ff9090}
+      .ll-meta{font-size:11px;color:#9bb}
+    `;
+    document.head.appendChild(el('style', {}, css));
+    body = el('div', { class:'ll-body', id:'ll-body' });
+
+    counters = el('div', { class:'ll-meta', id:'ll-meta' });
+    const title = el('div', { class:'ll-head' }, [
+      el('b', {}, 'Live Debug'),
+      el('span', { class:'ll-pill', id:'ll-pill-msg' }, 'msg: 0'),
+      el('span', { class:'ll-pill', id:'ll-pill-run' }, 'running: 0'),
+      el('span', { class:'ll-pill', id:'ll-pill-done' }, 'done: 0'),
+      el('span', { style:{marginLeft:'auto'} }, ''),
+      el('button', { class:'ll-btn', onclick:() => { paused=!paused; updateMeta(); } }, '⏸/▶'),
+      el('button', { class:'ll-btn', onclick:() => { body.textContent=''; updateMeta(); } }, 'Clear'),
+      el('button', { class:'ll-btn', onclick:copyAll }, 'Copy')
+    ]);
+
+    root = el('div', { class:'ll-box', id:'live-log' }, [title, counters, body]);
+    document.body.appendChild(root);
+    updateMeta();
+  }
+
+  function copyAll() {
+    const txt = [...body.querySelectorAll('.ll-row')].map(n=>n.textContent).join('\n');
+    navigator.clipboard.writeText(txt).catch(()=>{});
+  }
+
+  function updateMeta() {
+    const $ = id => root.querySelector(id);
+    $('#ll-pill-msg').textContent = `msg: ${stat.total}`;
+    $('#ll-pill-run').textContent = `running: ${stat.running}`;
+    $('#ll-pill-done').textContent = `done: ${stat.done}`;
+    counters.textContent =
+      `series: ${stat.chartSeries} | points: ${stat.chartPoints} (shadow: ${stat.shadowPoints})` +
+      `   last: ${stat.last || '-'}` + (paused ? '   [PAUSED]' : '');
+  }
+
+  function pushLine(text, cls='') {
+    const row = el('div', { class:`ll-row ${cls}` }, [
+      el('span', { class:'t' }, `[${fmtTime()}] `),
+      text
+    ]);
+    body.appendChild(row);
+    // 限制行数
+    const rows = body.querySelectorAll('.ll-row');
+    if (rows.length > maxLines) for (let i=0;i<rows.length-maxLines;i++) rows[i].remove();
+    if (!paused) body.scrollTop = body.scrollHeight;
+  }
+
+  // 公开 API
+  return {
+    init(opts={}) { maxLines = opts.maxLines ?? maxLines; render(); },
+    info(msg){ stat.total++; stat.last = fmtTime(); pushLine(String(msg)); updateMeta(); },
+    warn(msg){ stat.total++; stat.last = fmtTime(); pushLine(String(msg), 'warn'); updateMeta(); },
+    error(msg){ stat.total++; stat.last = fmtTime(); pushLine(String(msg), 'err'); updateMeta(); },
+    /** 收到任意广播（原始 payload） */
+    event(payload){
+      stat.total++; stat.last = fmtTime();
+      if (payload?.status === 'running') stat.running++;
+      if (payload?.status === 'done')    stat.done++;
+      const brief = payload?.status === 'running'
+        ? `RUN ${payload.timestamp} buckets=${payload.buckets}`
+        : payload?.status === 'done'
+          ? `DONE ts=${payload?.summary?.timestamp || payload?.chart_delta?.timestamp} job=${payload?.chart_delta?.job_id || '-'}`
+          : `MSG`;
+      pushLine(brief + (payload?.status === 'done' ? '' : '' ));
+      updateMeta();
+    },
+    /** 收到 chart_delta（统计 series / points / shadow） */
+    delta(chartDelta){
+      if (!chartDelta?.series_delta) return;
+      let series = 0, points = 0, shadows = 0;
+      for (const s of chartDelta.series_delta) {
+        series++;
+        for (const p of (s.points||[])) {
+          points++;
+          if (p.shadow) shadows++;
+        }
+      }
+      stat.chartSeries = series;
+      stat.chartPoints = points;
+      stat.shadowPoints = shadows;
+      stat.last = fmtTime();
+      pushLine(`Δ series=${series} points=${points} shadow=${shadows}`);
+      updateMeta();
+    }
+  };
+})();
+
+
+
     (function initDefaults() {
+        LiveLog.init({ maxLines: 800 });
         $('start').value = "2025-10-01T10:00";
         $('end').value = "2025-10-20T10:00";
         loadShops();
