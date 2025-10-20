@@ -280,10 +280,12 @@
     function toIsoLocal(dtStr) {
         return dtStr ? dtStr + ":00+09:00" : "";
     }
+
     function toMillis(s) {
         const t = new Date(s).valueOf();
         return Number.isFinite(t) ? t : NaN;
     }
+
     function nearestPastMinuteMs(date = new Date()) {
         return Math.floor(date.getTime() / 60000) * 60000;
     }
@@ -314,29 +316,31 @@
         d.setHours(0, 0, 0, 0);
         for (let t = d.valueOf(); t <= endMs + oneDay; t += oneDay) {
             const s = new Date(t);
-            const s9 = new Date(s); s9.setHours(9, 0, 0, 0);
-            const e20 = new Date(s); e20.setHours(20, 0, 0, 0);
+            const s9 = new Date(s);
+            s9.setHours(9, 0, 0, 0);
+            const e20 = new Date(s);
+            e20.setHours(20, 0, 0, 0);
             const s9ms = s9.valueOf(), e20ms = e20.valueOf();
             const left = Math.max(s9ms, startMs);
             const right = Math.min(e20ms, endMs);
             if (left < right) data.push([{xAxis: left}, {xAxis: right}]);
         }
-        return { silent: true, itemStyle: {color: '#faebd7', opacity: 0.35}, data };
+        return {silent: true, itemStyle: {color: '#faebd7', opacity: 0.35}, data};
     }
 
     // --- ECharts ---
     const chart = echarts.init($('chart'));
     const baseOption = {
         animation: false,
-        tooltip: { show: true, trigger: 'axis' },
-        legend: { top: 8, left: 10, itemGap: 14 },
-        grid: { left: 16, right: 48, top: 40, bottom: 12 },
+        tooltip: {show: true, trigger: 'axis'},
+        legend: {top: 8, left: 10, itemGap: 14},
+        grid: {left: 16, right: 48, top: 40, bottom: 12},
         xAxis: {
             type: 'time',
-            axisLabel: { formatter: verticalTickFormatter, lineHeight: 16, margin: 18 },
-            axisTick: { alignWithLabel: true }
+            axisLabel: {formatter: verticalTickFormatter, lineHeight: 16, margin: 18},
+            axisTick: {alignWithLabel: true}
         },
-        yAxis: { type: 'value', position: 'right', name: 'JPY', scale: true },
+        yAxis: {type: 'value', position: 'right', name: 'JPY', scale: true},
         dataZoom: [
             {type: 'inside', xAxisIndex: [0]},
             {type: 'slider', xAxisIndex: [0], bottom: -2, height: 12, handleSize: 0}
@@ -348,8 +352,8 @@
     window.addEventListener('resize', () => chart.resize());
 
     const API_BASE = '/AppleStockChecker';
-    const ENDPOINT_SHOPS  = `${API_BASE}/secondhand-shops/`;
-    const ENDPOINT_IPHONES= `${API_BASE}/iphones/`;
+    const ENDPOINT_SHOPS = `${API_BASE}/secondhand-shops/`;
+    const ENDPOINT_IPHONES = `${API_BASE}/iphones/`;
 
     async function loadShops() {
         const box = $('shops');
@@ -371,34 +375,82 @@
         }
     }
 
-    async function loadIphones() {
-        const dl = $('iphone-list');
-        dl.innerHTML = '';
-        IPHONE_ID_BY_PART.clear();
+    // —— 更健壮的 loadShops —— //
+    async function loadShops() {
+        const box = $('shops');
+        box.innerHTML = '';
+        SHOPS_INDEX.clear();
+
         try {
-            const resp = await fetch(ENDPOINT_IPHONES);
-            const items = await resp.json();
-            for (const i of items) {
-                const text = `${i.part_number} ｜ ${i.model_name} ${i.capacity_label} ｜ ${i.color}`;
-                const opt = document.createElement('option');
-                opt.value = i.part_number;
-                opt.label = text;
-                dl.appendChild(opt);
-                if (i.id != null && i.part_number) {
-                    IPHONE_ID_BY_PART.set(String(i.part_number), Number(i.id));
-                }
+            const resp = await fetch(ENDPOINT_SHOPS);
+            if (!resp.ok) {
+                const txt = await resp.text().catch(() => '');
+                throw new Error(`HTTP ${resp.status} ${resp.statusText} ${txt.slice(0, 200)}`);
             }
-            $('iphone-hint').textContent = 'プルダウンから選択するか、part_number を直接入力してください';
+            const payload = await resp.json();
+
+            // 兼容数组 / results / items
+            const items = Array.isArray(payload) ? payload
+                : Array.isArray(payload?.results) ? payload.results
+                    : Array.isArray(payload?.items) ? payload.items
+                        : [];
+
+            let invalidCount = 0;
+
+            for (const s of items) {
+                // 尝试多种 id 字段名
+                const sidRaw = s?.id ?? s?.shop_id ?? s?.pk ?? s?.ID ?? s?.Id;
+                const sid = Number(sidRaw);
+                if (!Number.isFinite(sid)) {
+                    invalidCount++;
+                    // 调试：在控制台看到是哪条数据有问题
+                    console.warn('[shops] skip invalid id item:', s);
+                    continue; // 跳过没有有效 id 的项
+                }
+
+                // 名称字段也容错
+                const sname = s?.name ?? s?.shop_name ?? s?.display_name ?? String(sid);
+
+                // 用 DOM API 安全构建（避免 innerHTML 把 undefined 拼进去）
+                const label = document.createElement('label');
+                label.title = sname;
+
+                const input = document.createElement('input');
+                input.type = 'checkbox';
+                input.value = String(sid);
+                input.dataset.name = sname;
+                input.dataset.shopId = String(sid);        // ★ 关键：标记有效门店
+                input.id = `shop_${sid}`;
+
+                const span = document.createElement('span');
+                span.textContent = sname;
+
+                label.appendChild(input);
+                label.appendChild(span);
+                box.appendChild(label);
+
+                SHOPS_INDEX.set(sid, sname);
+            }
+
+            if (items.length === 0) {
+                $('err').textContent = '店舗リストが空です（API 応答を確認してください）';
+            }
+            if (invalidCount > 0) {
+                // 仅提示，不阻断
+                console.warn(`[shops] skipped ${invalidCount} invalid entries (missing id)`);
+            }
         } catch (e) {
-            $('iphone-hint').textContent = 'iPhone の読み込みに失敗しました（CORSまたはネットワーク）';
+            console.error(e);
+            $('err').textContent = '店舗の読み込みに失敗しました（CORS / 認証 / 応答形式を確認）';
         }
     }
 
+    // —— 仅选/清 有效门店（带 data-shop-id） —— //
     $('select-all').addEventListener('click', () => {
-        document.querySelectorAll('#shops input[type=checkbox]').forEach(cb => cb.checked = true);
+        document.querySelectorAll('#shops input[type=checkbox][data-shop-id]').forEach(cb => cb.checked = true);
     });
     $('clear-all').addEventListener('click', () => {
-        document.querySelectorAll('#shops input[type=checkbox]').forEach(cb => cb.checked = false);
+        document.querySelectorAll('#shops input[type=checkbox][data-shop-id]').forEach(cb => cb.checked = false);
     });
 
     // ---- 取数（带埋点 & 可选鉴权） ----
@@ -412,34 +464,41 @@
         const resp = await fetch(url, {headers});
         let rawText = '';
         if (!resp.ok) {
-            try { rawText = await resp.text(); } catch(_) {}
-            throw new Error(`HTTP ${resp.status} ${resp.statusText} | ${rawText.slice(0,200)}`);
+            try {
+                rawText = await resp.text();
+            } catch (_) {
+            }
+            throw new Error(`HTTP ${resp.status} ${resp.statusText} | ${rawText.slice(0, 200)}`);
         }
 
         // 兼容包裹层
         let payload = await resp.json();
         const data = Array.isArray(payload) ? payload
-                   : Array.isArray(payload?.results) ? payload.results
-                   : Array.isArray(payload?.items) ? payload.items
-                   : [];
+            : Array.isArray(payload?.results) ? payload.results
+                : Array.isArray(payload?.items) ? payload.items
+                    : [];
 
         // 字段名兜底（驼峰/蛇形/别名）
         const pick = (r, kList) => kList.find(k => k in r) ?? kList[0];
-        const tKey  = data[0] ? pick(data[0], ["Timestamp_Time","timestamp_time","timestamp","ts","t"]) : "Timestamp_Time";
-        const pKey  = data[0] ? pick(data[0], ["New_Product_Price","new_product_price","price","value"]) : "New_Product_Price";
-        const pnKey = data[0] ? pick(data[0], ["iphone","iphone__part_number","part_number"]) : "iphone";
+        const tKey = data[0] ? pick(data[0], ["Timestamp_Time", "timestamp_time", "timestamp", "ts", "t"]) : "Timestamp_Time";
+        const pKey = data[0] ? pick(data[0], ["New_Product_Price", "new_product_price", "price", "value"]) : "New_Product_Price";
+        const pnKey = data[0] ? pick(data[0], ["iphone", "iphone__part_number", "part_number"]) : "iphone";
 
         const rows = data.filter(r => !r[pnKey] || r[pnKey] === partNumber);
 
         const seriesData = rows
-            .map(r => [ new Date(r[tKey]).valueOf(), Number(r[pKey]) ])
+            .map(r => [new Date(r[tKey]).valueOf(), Number(r[pKey])])
             .filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]))
             .sort((a, b) => a[0] - b[0]);
 
         const firstT = seriesData[0]?.[0];
-        const lastT  = seriesData[seriesData.length - 1]?.[0];
+        const lastT = seriesData[seriesData.length - 1]?.[0];
 
-        return {name: shopName, data: seriesData, stat: {shopId, shopName, returned: data.length, filtered: rows.length, firstT, lastT, url}};
+        return {
+            name: shopName,
+            data: seriesData,
+            stat: {shopId, shopName, returned: data.length, filtered: rows.length, firstT, lastT, url}
+        };
     }
 
     // ---- 影子点：把最后一个点拉到最近整数分钟 ----
@@ -453,7 +512,13 @@
                 (seriesData[seriesData.length - 1]?.value?.[0] === nowMin)
             );
             if (!hasNow) {
-                seriesData.push({ value: [nowMin, last[1]], symbol:'emptyCircle', symbolSize:6, shadow:true, src_ts: last[0] });
+                seriesData.push({
+                    value: [nowMin, last[1]],
+                    symbol: 'emptyCircle',
+                    symbolSize: 6,
+                    shadow: true,
+                    src_ts: last[0]
+                });
             }
         }
         return seriesData;
@@ -461,7 +526,10 @@
 
     // ---- SSE：实时增量 ----
     function connectLive() {
-        if (liveES) try { liveES.close(); } catch(_) {}
+        if (liveES) try {
+            liveES.close();
+        } catch (_) {
+        }
         try {
             liveES = new EventSource(BROADCAST_URL, {withCredentials: true});
             liveES.onmessage = ev => {
@@ -500,15 +568,15 @@
         const color = fixedColorFor(name, arr.length);
         arr.push({
             id, name,
-            type:'line',
-            showSymbol:false,
-            smooth:0.15,
-            emphasis:{focus:'series'},
-            lineStyle:{width:2, color},
-            itemStyle:{color},
-            data:[]
+            type: 'line',
+            showSymbol: false,
+            smooth: 0.15,
+            emphasis: {focus: 'series'},
+            lineStyle: {width: 2, color},
+            itemStyle: {color},
+            data: []
         });
-        chart.setOption({ series: arr, legend: {data: arr.map(s => s.name)} });
+        chart.setOption({series: arr, legend: {data: arr.map(s => s.name)}});
         return id;
     }
 
@@ -551,26 +619,40 @@
                 const curAtT = indexByTs.get(t);
                 if (p.shadow) {
                     if (curAtT && !curAtT.isShadow) continue; // 有真实点就忽略影子
-                    const item = { value:[t, y], symbol:'emptyCircle', symbolSize:6, shadow:true, src_ts: p.src_t || null };
-                    if (curAtT) patch[curAtT.idx] = item; else { indexByTs.set(t, {idx: patch.length, isShadow:true}); patch.push(item); }
+                    const item = {
+                        value: [t, y],
+                        symbol: 'emptyCircle',
+                        symbolSize: 6,
+                        shadow: true,
+                        src_ts: p.src_t || null
+                    };
+                    if (curAtT) patch[curAtT.idx] = item; else {
+                        indexByTs.set(t, {idx: patch.length, isShadow: true});
+                        patch.push(item);
+                    }
                 } else {
                     const item = [t, y]; // 真实点用数组，渲染更快
-                    if (curAtT) { patch[curAtT.idx] = item; indexByTs.set(t, {idx: curAtT.idx, isShadow:false}); }
-                    else { indexByTs.set(t, {idx: patch.length, isShadow:false}); patch.push(item); }
+                    if (curAtT) {
+                        patch[curAtT.idx] = item;
+                        indexByTs.set(t, {idx: curAtT.idx, isShadow: false});
+                    } else {
+                        indexByTs.set(t, {idx: patch.length, isShadow: false});
+                        patch.push(item);
+                    }
                     // 确保把同刻影子移掉（如果有）
                     const shadowIdx = patch.findIndex(x => !Array.isArray(x) && x?.shadow === true && x?.value?.[0] === t);
                     if (shadowIdx >= 0) patch.splice(shadowIdx, 1);
                 }
             }
 
-            patch.sort((a,b) => {
+            patch.sort((a, b) => {
                 const va = Array.isArray(a) ? a : a.value;
                 const vb = Array.isArray(b) ? b : b.value;
                 return va[0] - vb[0];
             });
             if (patch.length > MAX_POINTS_PER_SERIES) patch.splice(0, patch.length - MAX_POINTS_PER_SERIES);
 
-            chart.setOption({ series: [{ id, data: patch }] }, { notMerge:false, lazyUpdate:true });
+            chart.setOption({series: [{id, data: patch}]}, {notMerge: false, lazyUpdate: true});
             touched.push(id);
         }
     }
@@ -593,7 +675,7 @@
         const base = SERIES_API_BASE; // ★ 不再依赖 $('base')，固定你的序列 API
         const part = $('iphone').value.trim();
         const startIso = toIsoLocal($('start').value);
-        const endIso   = toIsoLocal($('end').value);
+        const endIso = toIsoLocal($('end').value);
 
         if (!base || !startIso || !endIso) {
             $('err').textContent = 'ベースURLと時間範囲を入力してください';
@@ -606,7 +688,9 @@
             return;
         }
 
-        const shopCbs = [...document.querySelectorAll('#shops input[type=checkbox]:checked')];
+        const shopCbs = Array.from(
+            document.querySelectorAll('#shops input[type=checkbox][data-shop-id]:checked')
+        ).filter(cb => /^\d+$/.test(String(cb.value)));
         if (shopCbs.length === 0) {
             $('err').textContent = '少なくとも1店舗を選択してください';
             $('status').textContent = '';
@@ -676,7 +760,7 @@
             chart.setOption({
                 tooltip: {
                     trigger: 'axis',
-                    axisPointer: { type: 'cross' },
+                    axisPointer: {type: 'cross'},
                     formatter: function (params) {
                         if (!params || !params.length) return '';
                         const head = new Date(params[0].axisValue).toLocaleString('ja-JP', {hour12: false});
@@ -694,12 +778,12 @@
                         return lines.join('<br>');
                     }
                 },
-                toolbox: { show: true, feature: { saveAsImage: {} } },
-                legend: { data: series.map(s => s.name) },
+                toolbox: {show: true, feature: {saveAsImage: {}}},
+                legend: {data: series.map(s => s.name)},
                 xAxis: {
                     type: 'time',
-                    axisLabel: { formatter: verticalTickFormatter, lineHeight: 16, margin: 18 },
-                    axisTick: { alignWithLabel: true }
+                    axisLabel: {formatter: verticalTickFormatter, lineHeight: 16, margin: 18},
+                    axisTick: {alignWithLabel: true}
                 },
                 yAxis: {
                     type: 'value',
@@ -722,7 +806,7 @@
 
     (function initDefaults() {
         $('start').value = "2025-10-11T09:00";
-        $('end').value   = "2025-10-11T20:00";
+        $('end').value = "2025-10-11T20:00";
         loadShops();
         loadIphones();
         $('iphone').placeholder = "例：MG864J/A";
