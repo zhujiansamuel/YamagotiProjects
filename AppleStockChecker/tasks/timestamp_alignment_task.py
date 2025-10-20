@@ -217,25 +217,29 @@ def psta_finalize_buckets(
     job_id: str,
     ts_iso: str
 ) -> Dict[str, Any]:
-    """汇总所有分钟桶的错误直方图 + 打包本次入库的图表增量，并推送最终 done。"""
+    """
+    汇总所有分钟桶的错误直方图 + 打包本次入库的图表增量，并推送最终 done。
+    新增：为每个 (iphone_id, shop_id) 在标的 ts_iso 处补一个“影子点”，用于前端展示。
+    """
+    from collections import defaultdict, Counter
+    # === 汇总计数 ===
     total_buckets = len(results or [])
     total_ok = sum(int(r.get("ok", 0)) for r in results or [])
     total_failed = sum(int(r.get("failed", 0)) for r in results or [])
 
-    # 汇总错误直方图
+    # === 错误直方图 ===
     agg_err = Counter()
     for r in results or []:
         for k, v in (r.get("error_hist") or {}).items():
             agg_err[k] += v
 
-    # === 聚合图表增量：分组为 (iphone_id, shop_id) 的独立序列 ===
-    series_map = defaultdict(list)  # key: (iphone_id, shop_id) -> List[point]
+    # === 聚合真实点 ===
+    # key: (iphone_id, shop_id) -> List[point]
+    series_map = defaultdict(list)
     total_points = 0
-
     for r in results or []:
         for p in (r.get("chart_points") or []):
             key = (p.get("iphone_id"), p.get("shop_id"))
-            # 仅保留必要字段，减小 payload
             series_map[key].append({
                 "id": p.get("id"),
                 "t": p.get("t"),
@@ -244,48 +248,87 @@ def psta_finalize_buckets(
             })
             total_points += 1
 
-    # 按时间排序，并做全局裁剪（保留最近 MAX_PUSH_POINTS 条）
-    # 思路：先合并后排序，再裁剪；时间为 ISO 字符串，可直接字典序
-    # 同时把结果转成前端友好的 list 结构
-    # 统计全量点数，必要时截断
+    # === 计算每个序列在 ts_iso 之前（含）的最后一个真实点（last-known），以及是否在 ts_iso 有真实点 ===
+    # 为避免歧义，这里以 ISO 字符串的时间比较为准（你们上下文里 t 和 ts_iso 的格式一致）。
+    # 若担心跨时区 ISO 文本比较的稳定性，可改为 _to_aware 做 datetime 比较。
+    last_known = {}        # key -> dict(point)
+    has_real_at_ts = {}    # key -> bool
+    for key, pts in series_map.items():
+        # 找 <= ts_iso 的最大 t
+        latest = None
+        latest_t = None
+        at_ts = False
+        for item in pts:
+            t_iso = item["t"]
+            if t_iso == ts_iso:
+                at_ts = True
+            # 选择 <= ts_iso 中最大的 t
+            if t_iso <= ts_iso and (latest_t is None or t_iso > latest_t):
+                latest = item
+                latest_t = t_iso
+        if latest:
+            last_known[key] = latest
+        has_real_at_ts[key] = at_ts
+
+    # === 全局截断（仅对真实点生效；影子点不受 MAX_PUSH_POINTS 限制） ===
     clipped = False
     if total_points > MAX_PUSH_POINTS:
         clipped = True
-        # 计算需要保留的最近点的全局阈值：先把所有点扁平化排序，再筛回各组
         flat = []
         for (iphone_id, shop_id), pts in series_map.items():
             for item in pts:
                 flat.append((item["t"], iphone_id, shop_id, item))
-        flat.sort(key=lambda x: x[0])  # 按时间升序
-        flat = flat[-MAX_PUSH_POINTS:]  # 仅保留最近 N 条
+        flat.sort(key=lambda x: x[0])      # 升序
+        flat = flat[-MAX_PUSH_POINTS:]     # 保留最近 N 条
 
-        # 重建 series_map（仅保留被截断后的点）
         series_map = defaultdict(list)
         for _, iphone_id, shop_id, item in flat:
             series_map[(iphone_id, shop_id)].append(item)
 
-    # 每个序列内再做一次排序，以免截断后顺序被打乱
+    # === 生成最终增量：真实点 +（必要时）影子点 ===
     series_delta = []
-    for (iphone_id, shop_id), pts in series_map.items():
+    shadow_points_added = 0
+    # 注意：用所有出现过的 key（包括被截断后的空系列，保证影子点也能出现）
+    all_keys = set(last_known.keys()) | set(series_map.keys())
+
+    for (iphone_id, shop_id) in all_keys:
+        pts = series_map.get((iphone_id, shop_id), [])
+        # 保证时间有序
         pts.sort(key=lambda x: x["t"])
+
+        # 若该序列在 ts_iso 没有真实点，但有 last-known，则补影子点
+        if not has_real_at_ts.get((iphone_id, shop_id), False) and (iphone_id, shop_id) in last_known:
+            src = last_known[(iphone_id, shop_id)]
+            # 避免与真实点重复（理论上 has_real_at_ts 已排除）
+            if not any(p["t"] == ts_iso for p in pts):
+                shadow_points_added += 1
+                pts.append({
+                    "id": None,                 # 影子点不落库，无 id
+                    "t": ts_iso,                # 影子点放在标的时间戳
+                    "price": src["price"],      # 以最近真实点的价格填充
+                    "recorded_at": src.get("recorded_at"),
+                    "shadow": True,             # ✅ 标识影子点
+                    "src_t": src["t"],          # 影子来源时间（便于前端 tooltip/样式）
+                })
+
         series_delta.append({
             "iphone_id": iphone_id,
             "shop_id": shop_id,
-            "points": pts,  # [{id, t, price, recorded_at}, ...]
+            "points": pts,  # [{id,t,price,recorded_at,shadow?,src_t?}, ...]
         })
 
-    # 构建 summary
+    # === 构建汇总与广播 payload ===
     summary = {
         "timestamp": ts_iso,
         "job_id": job_id,
         "total_buckets": total_buckets,
         "ok": total_ok,
         "failed": total_failed,
-        "error_hist": dict(agg_err),      # 全局错误直方图
+        "error_hist": dict(agg_err),
         "by_bucket": [
             {k: r.get(k) for k in ("ts_iso", "ok", "failed", "total", "error_hist")}
             for r in (results or [])
-        ][:100],  # 明细最多 100 桶
+        ][:100],
     }
 
     payload = {
@@ -293,27 +336,24 @@ def psta_finalize_buckets(
         "step": "finalize",
         "progress": 100,
         "summary": summary,
-        # ✅ 前端图表直接应用的增量
         "chart_delta": {
             "job_id": job_id,
             "timestamp": ts_iso,
             "series_delta": series_delta,
             "meta": {
-                "total_points": min(total_points, MAX_PUSH_POINTS),
+                "total_points": min(total_points, MAX_PUSH_POINTS),  # 仅真实点计数
+                "shadow_points": shadow_points_added,                # 本次补的影子点数
                 "clipped": clipped,
             }
         }
     }
 
-    # 广播
     try:
         notify_progress_all(data=payload)
     except Exception:
         pass
 
-    # 任务返回值也带上（便于后端排查）
     return payload
-
 
 # -----------------------------------------------
 # 父任务：chord 并行 + 回调（保持你已有写法）

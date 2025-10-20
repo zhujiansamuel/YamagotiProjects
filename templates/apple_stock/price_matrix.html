@@ -371,7 +371,7 @@
                 <th class="col-num">定価</th>
                 <th class="col-num">最高</th>
                 <th class="col-num">差額</th>
-                <th class="col-num">買取率</th>
+                <th class="col-num">利益</th>
                 <th class="col-num">前日比</th>
                 <th class="col-num">平均値</th>
                 <th class="col-color">カラー</th>
@@ -1558,25 +1558,6 @@
   const isMappingEnabled = () => localStorage.getItem(LS_KEY) === 'true';
   const setMappingEnabled = v => localStorage.setItem(LS_KEY, v ? 'true' : 'false');
 
-  // ===== 放在工具函数区域 =====
-const fmtJa = new Intl.DateTimeFormat('ja-JP', {
-  timeZone: 'Asia/Tokyo',
-  year: 'numeric', month: '2-digit', day: '2-digit',
-  hour: '2-digit', minute: '2-digit', hour12: false
-});
-function formatJstYMDHM(d) {
-  // 2025/10/06 13時00分
-  const s = fmtJa.format(d);          // "2025/10/06 13:00"
-  const [ymd, hm] = s.split(' ');
-  const [H, M] = hm.split(':');
-  return `${ymd} ${H}時${M}分`;
-}
-function setUpdatedAt(endDate) {
-  const el = document.getElementById('updated-at');
-  if (el) el.textContent = `更新日時：${formatJstYMDHM(endDate)}`;
-}
-
-
   function injectToggle() {
     const fieldset = document.querySelector('fieldset legend')?.parentElement || document.body;
     const container = document.createElement('div');
@@ -1814,7 +1795,6 @@ function setUpdatedAt(endDate) {
 
       // 再算“行级区间” B/C/D/E
       recalcRangeCells(map);
-      setUpdatedAt(end);
 
       // 诊断示例
       const sample = [...document.querySelectorAll('td[data-shop-id][data-iphen-id]')].slice(0, 20).map(td => {
