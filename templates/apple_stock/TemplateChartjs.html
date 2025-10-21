@@ -367,6 +367,137 @@
     const ENDPOINT_SHOPS = `${API_BASE}/secondhand-shops/`;
     const ENDPOINT_IPHONES = `${API_BASE}/iphones/`;
 
+
+    /* ========== 影子点/UI工具 ========== */
+
+    // 取点的时间戳（ms）
+    function _pointTs(item) {
+        const v = Array.isArray(item) ? item : item?.value;
+        return Array.isArray(v) ? v[0] : null;
+    }
+
+    // 是否为影子点
+    function _isShadow(item) {
+        return !Array.isArray(item) && item?.shadow === true;
+    }
+
+    // 确保顶部有一个摘要栏
+    function _ensureShadowSummaryHost() {
+        if (document.getElementById('shadow-summary')) return;
+        const wrap = document.querySelector('.wrap');
+        const bar = document.createElement('div');
+        bar.id = 'shadow-summary';
+        Object.assign(bar.style, {
+            margin: '8px 0 6px',
+            fontSize: '12px',
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: '6px',
+            alignItems: 'center'
+        });
+        const title = document.createElement('span');
+        title.textContent = '最新影子値：';
+        title.style.cssText = 'color:#6b7280;margin-right:6px;';
+        bar.appendChild(title);
+        wrap.insertBefore(bar, document.getElementById('chart'));
+    }
+
+    // 渲染“最新一分钟影子值”摘要（只看已勾选门店）
+    function renderShadowSummary(targetMs) {
+        _ensureShadowSummaryHost();
+        const host = document.getElementById('shadow-summary');
+        // 清空除标题外的节点
+        [...host.childNodes].slice(1).forEach(n => host.removeChild(n));
+
+        const opt = chart.getOption();
+        const seriesArr = (opt.series || []).filter(s => {
+            // 只看已勾选门店的系列（id: s:<shopId>）
+            const m = String(s?.id || '').match(/^s:(\d+)$/);
+            return m && SELECTED_SHOP_IDS.has(Number(m[1]));
+        });
+
+        // 收集当前分钟的影子值
+        const items = [];
+        for (const s of seriesArr) {
+            const data = s.data || [];
+            const item = data.find(pt => _pointTs(pt) === targetMs && _isShadow(pt));
+            if (!item) continue;
+            const v = item.value?.[1];
+            const name = s.name || s.id;
+            if (Number.isFinite(v)) items.push({name, v});
+        }
+        if (!items.length) {
+            const span = document.createElement('span');
+            span.textContent = '—（対象の影子点なし）';
+            span.style.cssText = 'color:#9ca3af;';
+            host.appendChild(span);
+            return;
+        }
+
+        // 计算最大/最小
+        let maxV = -Infinity, minV = Infinity;
+        for (const it of items) {
+            if (it.v > maxV) maxV = it.v;
+            if (it.v < minV) minV = it.v;
+        }
+
+        // 逐项渲染
+        for (const it of items) {
+            const chip = document.createElement('span');
+            chip.textContent = `${it.name}: ${fmtJPY(it.v)}`;
+            const isMax = it.v === maxV, isMin = it.v === minV;
+            Object.assign(chip.style, {
+                padding: '2px 8px',
+                borderRadius: '8px',
+                background: isMax ? '#d93025' : (isMin ? '#0f9d58' : '#f3f4f6'),
+                color: isMax || isMin ? '#fff' : '#111827',
+                border: isMax || isMin ? '0' : '1px solid #e5e7eb'
+            });
+            host.appendChild(chip);
+        }
+
+        // 在右侧附上时间
+        const timeLabel = document.createElement('span');
+        timeLabel.textContent = ` @ ${new Date(targetMs).toLocaleTimeString('ja-JP', {hour12: false})}`;
+        timeLabel.style.cssText = 'margin-left:8px;color:#6b7280;';
+        host.appendChild(timeLabel);
+    }
+
+    /* ========== 工作时段背景（10:00-19:00 卡其色） ========== */
+    function buildBusinessHoursMarkArea10to19(startMs, endMs) {
+        const oneDay = 24 * 3600 * 1000;
+        const data = [];
+        let d0 = new Date(startMs);
+        d0.setHours(0, 0, 0, 0);
+        for (let t = d0.valueOf(); t <= endMs + oneDay; t += oneDay) {
+            const s10 = new Date(t);
+            s10.setHours(10, 0, 0, 0);
+            const e19 = new Date(t);
+            e19.setHours(19, 0, 0, 0);
+            const left = Math.max(s10.valueOf(), startMs);
+            const right = Math.min(e19.valueOf(), endMs);
+            if (left < right) data.push([{xAxis: left}, {xAxis: right}]);
+        }
+        return {silent: true, itemStyle: {color: '#f0e68c', opacity: 0.35}, data};
+    }
+
+    // 叠加一个专用“背景系列”
+    function applyWorkHoursOverlay(startMs, endMs) {
+        if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs >= endMs) return;
+        const markArea = buildBusinessHoursMarkArea10to19(startMs, endMs);
+        chart.setOption({
+            series: [{
+                id: '__workhours__',
+                type: 'line',
+                data: [],
+                markArea,
+                silent: true,
+                z: -10
+            }]
+        }, {notMerge: false, lazyUpdate: true});
+    }
+
+
     // —— 更健壮的 loadShops —— //
     async function loadShops() {
         const box = $('shops');
@@ -561,64 +692,55 @@
 
         const opt = chart.getOption();
         const seriesArr = (opt.series || []).filter(s => {
-            const sid = _seriesShopId(s);
-            return sid != null && SELECTED_SHOP_IDS.has(sid);
+            const m = String(s?.id || '').match(/^s:(\d+)$/);
+            return m && SELECTED_SHOP_IDS.has(Number(m[1]));
         });
 
         const patches = [];
         for (const s of seriesArr) {
-            const data = (s.data || []).slice();
+            let data = (s.data || []).slice();
 
-            // 已有该分钟的点就不再追加
-            const hasAt = data.some(item => {
-                const v = Array.isArray(item) ? item : item?.value;
-                return Array.isArray(v) && v[0] === targetMs;
-            });
-            if (hasAt) continue;
+            // 若该分钟已有点（真实或影子），跳过
+            if (data.some(item => _pointTs(item) === targetMs)) continue;
 
-            // 找 <= targetMs 的最近历史点
+            // 找 <= targetMs 的最近历史真实值/已有值
             let lastTs = null, lastPrice = null;
             for (let i = data.length - 1; i >= 0; i--) {
-                const v = Array.isArray(data[i]) ? data[i] : data[i]?.value;
-                const t = Array.isArray(v) ? v[0] : null;
-                const y = Array.isArray(v) ? v[1] : null;
+                const vv = Array.isArray(data[i]) ? data[i] : data[i]?.value;
+                const t = Array.isArray(vv) ? vv[0] : null, y = Array.isArray(vv) ? vv[1] : null;
                 if (t != null && y != null && t <= targetMs) {
                     lastTs = t;
                     lastPrice = y;
                     break;
                 }
             }
-            if (lastPrice == null) continue; // 没历史值就不补这条线
+            if (lastPrice == null) continue;
 
-            // 追加“强制影子点”（仅前端）
+            // ① 先清理“旧的影子点”
+            data = data.filter(item => !(_isShadow(item) && _pointTs(item) < targetMs));
+
+            // ② 追加“本分钟影子点”
             data.push({
-                value: [targetMs, lastPrice],
-                shadow: true,
-                forced: true,
-                src_ts: lastTs,
-                symbol: 'emptyCircle',
-                symbolSize: 6,
+                value: [targetMs, lastPrice], shadow: true, forced: true, src_ts: lastTs,
+                symbol: 'emptyCircle', symbolSize: 6
             });
-            // 时间排序（防乱序）
-            data.sort((a, b) => {
-                const va = Array.isArray(a) ? a : a.value;
-                const vb = Array.isArray(b) ? b : b.value;
-                return va[0] - vb[0];
-            });
+
+            // 排序
+            data.sort((a, b) => (_pointTs(a) - _pointTs(b)));
 
             patches.push({id: s.id, data});
         }
 
         if (patches.length) {
-            // 推进 X 轴右界
+            // 推进 X 轴右界到 targetMs
             const xa = (opt.xAxis && opt.xAxis[0]) || {};
             const newMax = Math.max(Number(xa.max || 0) || 0, targetMs);
-            chart.setOption({
-                xAxis: [{max: newMax}],
-                series: patches
-            }, {notMerge: false, lazyUpdate: true});
+            chart.setOption({xAxis: [{max: newMax}], series: patches}, {notMerge: false, lazyUpdate: true});
+            // 刷新摘要
+            renderShadowSummary(targetMs);
         }
     }
+
 
     /** 定时检查是否进入新分钟：满足以下条件则强制增长
      *  - 现在整分 > LAST_FORCED_MINUTE_MS
@@ -704,6 +826,7 @@
 
                         if (msg?.status === 'done' && msg?.chart_delta?.series_delta) {
                             applyChartDelta(msg.chart_delta);
+
                         } else if (msg?.type === 'chart_update' && msg?.series_delta) {
                             applyChartDelta(msg);
                         }
@@ -734,6 +857,7 @@
         if (msg?.status === 'done' && msg?.chart_delta?.series_delta) {
             applyChartDelta(msg.chart_delta);
             ensureEdgePointForSelectedShops(msg.chart_delta.timestamp || null);
+
             const tIso = msg.chart_delta.timestamp || null;
             if (tIso) forceGrowAtMinute(new Date(tIso).getTime());
             return;
@@ -983,7 +1107,10 @@
                 },
                 series
             }, true);
-
+// 叠加工作时段背景（10:00–19:00）
+applyWorkHoursOverlay(SELECTED_START_MS, SELECTED_END_MS);
+// 首屏也渲染一次“最新影子摘要”（用当前最近整分）
+renderShadowSummary(nearestPastMinuteMs());
             $('status').textContent = `完了：${series.length} 店舗${failed.length ? `／失敗：${failed.join(', ')}` : ''}`;
         } catch (e) {
             $('err').textContent = '読み込みに失敗しました：' + e.message;
@@ -1313,65 +1440,55 @@
         if (!SELECTED_SHOP_IDS || SELECTED_SHOP_IDS.size === 0) return;
 
         const targetMs = targetIso ? new Date(targetIso).getTime() : nearestPastMinuteMs();
-        const effEnd = _effectiveEndMs();
-        const now = Date.now();
-
-        // 只在“实际结束时间”距现在 <= 2 分钟时生效
-        if (Math.abs(now - effEnd) > 2 * 60 * 1000) return;
+        const effEnd = (function () {
+            const nowMin = nearestPastMinuteMs();
+            return Math.min(SELECTED_END_MS ?? nowMin, nowMin);
+        })();
+        if (Math.abs(Date.now() - effEnd) > 2 * 60 * 1000) return;
 
         const opt = chart.getOption();
         const seriesArr = (opt.series || []).filter(s => {
-            const sid = seriesShopId(s);
-            return sid != null && SELECTED_SHOP_IDS.has(sid);
+            const m = String(s?.id || '').match(/^s:(\d+)$/);
+            return m && SELECTED_SHOP_IDS.has(Number(m[1]));
         });
 
         const patches = [];
         for (const s of seriesArr) {
-            const data = (s.data || []).slice();
+            let data = (s.data || []).slice();
 
-            // 已有该分钟就跳过
-            const hasAt = data.some(item => {
-                const v = Array.isArray(item) ? item : item?.value;
-                return Array.isArray(v) && v[0] === targetMs;
-            });
-            if (hasAt) continue;
+            // 若该分钟已有点（真实或影子），跳过
+            if (data.some(item => _pointTs(item) === targetMs)) continue;
 
-            // 找 <= targetMs 的最近历史点
+            // 找 <= targetMs 的最近历史值
             let lastTs = null, lastPrice = null;
             for (let i = data.length - 1; i >= 0; i--) {
-                const v = Array.isArray(data[i]) ? data[i] : data[i]?.value;
-                const t = Array.isArray(v) ? v[0] : null;
-                const y = Array.isArray(v) ? v[1] : null;
+                const vv = Array.isArray(data[i]) ? data[i] : data[i]?.value;
+                const t = Array.isArray(vv) ? vv[0] : null, y = Array.isArray(vv) ? vv[1] : null;
                 if (t != null && y != null && t <= targetMs) {
                     lastTs = t;
                     lastPrice = y;
                     break;
                 }
             }
-            if (lastPrice == null) continue; // 没历史值就不补
+            if (lastPrice == null) continue;
 
-            // 追加影子点（仅前端渲染，不落库）
+            // ① 清理旧影子
+            data = data.filter(item => !(_isShadow(item) && _pointTs(item) < targetMs));
+            // ② 追加本分钟影子
             data.push({
-                value: [targetMs, lastPrice],
-                shadow: true,
-                src_ts: lastTs,
-                symbol: 'emptyCircle',
-                symbolSize: 6
-            });
-            data.sort((a, b) => {
-                const va = Array.isArray(a) ? a : a.value;
-                const vb = Array.isArray(b) ? b : b.value;
-                return va[0] - vb[0];
+                value: [targetMs, lastPrice], shadow: true, src_ts: lastTs,
+                symbol: 'emptyCircle', symbolSize: 6
             });
 
+            data.sort((a, b) => (_pointTs(a) - _pointTs(b)));
             patches.push({id: s.id, data});
         }
 
         if (patches.length) {
             chart.setOption({series: patches}, {notMerge: false, lazyUpdate: true});
+            renderShadowSummary(targetMs);
         }
     }
-
 
     (function initDefaults() {
         $('start').value = "2025-10-01T10:00";
