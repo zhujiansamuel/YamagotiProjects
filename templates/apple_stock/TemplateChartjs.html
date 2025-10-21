@@ -203,6 +203,22 @@
 
 <script>
     /* ===================== 1) 固定颜色方案 ===================== */
+    const FIXED_MODELS = [
+        {id: "iphone-17-pro-max-256", model: "iPhone 17 Pro Max", cap: 256, iphone_id: [20, 21, 22]},
+        {id: "iphone-17-pro-max-512", model: "iPhone 17 Pro Max", cap: 512, iphone_id: [23, 24, 25]},
+        {id: "iphone-17-pro-max-1024", model: "iPhone 17 Pro Max", cap: 1024, iphone_id: [26, 27, 28]},
+        {id: "iphone-17-pro-max-2048", model: "iPhone 17 Pro Max", cap: 2048, iphone_id: [29, 30, 31]},
+        {id: "iphone-17-pro-256", model: "iPhone 17 Pro", cap: 256, iphone_id: [11, 12, 13]},
+        {id: "iphone-17-pro-512", model: "iPhone 17 Pro", cap: 512, iphone_id: [14, 15, 16]},
+        {id: "iphone-17-pro-1024", model: "iPhone 17 Pro", cap: 1024, iphone_id: [17, 18, 19]},
+        {id: "iphone-Air-256", model: "iPhone Air", cap: 256, iphone_id: [32, 33, 34, 35]},
+        {id: "iphone-Air-512", model: "iPhone Air", cap: 512, iphone_id: [36, 37, 38, 39]},
+        {id: "iphone-Air-1024", model: "iPhone Air", cap: 1024, iphone_id: [40, 41, 42, 43]},
+        {id: "iphone-17-256", model: "iPhone 17", cap: 256, iphone_id: [1, 2, 3, 4, 5]},
+        {id: "iphone-17-512", model: "iPhone 17", cap: 512, iphone_id: [6, 7, 8, 9, 10]},
+    ];
+
+
     const LINE_PALETTE = [
         "#DD1133", /* 買取商店 */
         "#478CD8", /* 海峡通信 */
@@ -222,32 +238,57 @@
         "#0049A8", /* 携帯空間-shop16 */
         "#34C6F6", /* ゲストモバイル-shop17 */
         "#033F68", /* 買取オク-shop18 */
-        /* #84cc16, 基础-19（保留空位） */
         "#C30D23", /* 毎日買取-shop20 */
     ];
 
-    // 名称→固定色（模糊匹配），其余回退到调色板序号
+
     const SHOP_COLOR_RULES = [
-        {match: /アキモバ/, color: "#20AECC"},
-        {match: /トゥインクル/, color: "#0EC7D9"},
-        {match: /モバイルミックス/, color: "#DD1133"},
-        {match: /森森買取/, color: "#278C46"},
-        {match: /ルデヤ/, color: "#2DA9E8"},
-        {match: /ホムラ/, color: "#F27474"},
-        {match: /ドラゴンモバイル/, color: "#3952A6"},
-        {match: /モバステ/, color: "#E60012"},
-        {match: /家電市場/, color: "#FFF100"},
-        {match: /買取楽園/, color: "#DA7C66"},
-        {match: /買取当番/, color: "#1C4473"},
-        {match: /携帯空間/, color: "#0049A8"},
-        {match: /ゲストモバイル/, color: "#34C6F6"},
-        {match: /買取オク/, color: "#033F68"},
-        {match: /毎日買取/, color: "#C30D23"},
-        {match: /海峡通信/, color: "#478CD8"},
-        {match: /買取１丁目/, color: "#B41524"},
-        {match: /買取商店/, color: "#DD1133"},
-        {match: /買取Wiki/, color: "#E71534"},
+        {match: /買取商店/, color: "#DD1133", shop_id: 14, order: 1},
+        {match: /海峡通信/, color: "#478CD8", shop_id: 1, order: 2},
+        {match: /買取一丁目/, color: "#B41524", shop_id: 8, order: 3},
+        {match: /モバイルミックス/, color: "#DD1133", shop_id: 13, order: 4},
+        {match: /森森買取/, color: "#278C46", shop_id: 7, order: 5},
+        {match: /買取ルデヤ/, color: "#2DA9E8", shop_id: 9, order: 6},
+        {match: /買取wiki/, color: "#E71534", shop_id: 10, order: 7},
+        {match: /買取ホムラ/, color: "#F27474", shop_id: 19, order: 8},
+        {match: /ドラゴンモバイル/, color: "#3952A6", shop_id: 16, order: 9},
+        {match: /モバステ/, color: "#E60012", shop_id: 18, order: 10},
+        {match: /アキモバ/, color: "#20AECC", shop_id: 12, order: 11},
+        {match: /トゥインクル/, color: "#0EC7D9", shop_id: 17, order: 12},
+        {match: /家電市場/, color: "#FFF100", shop_id: 3, order: 13},
+        {match: /買取楽園/, color: "#DA7C66", shop_id: 4, order: 14},
+        {match: /買取当番/, color: "#1C4473", shop_id: 2, order: 15},
+        {match: /携帯空間/, color: "#0049A8", shop_id: 5, order: 16},
+        {match: /ゲストモバイル/, color: "#34C6F6", shop_id: 11, order: 17},
+        {match: /買取オク/, color: "#033F68", shop_id: 6, order: 18},
+        {match: /毎日買取/, color: "#C30D23", shop_id: 15, order: 19},
+        {match: /Mobile Zone/, color: "#f50620", shop_id: 20, order: 20},
     ];
+    // === 规则助手：根据名字/ID 找到规则的 order 与 color ===
+    const RULE_BY_ID = new Map();
+    for (const r of SHOP_COLOR_RULES) {
+        if (typeof r.shop_id === 'number') RULE_BY_ID.set(r.shop_id, r);
+    }
+
+    function getRuleForShop({name, id}) {
+        // 先按 id 命中（最稳定）
+        if (id != null && RULE_BY_ID.has(Number(id))) return RULE_BY_ID.get(Number(id));
+        // 再按名称正则匹配（从上到下第一条）
+        for (const r of SHOP_COLOR_RULES) {
+            if (r.match?.test?.(name)) return r;
+        }
+        return null;
+    }
+
+    function getOrderForShop({name, id}) {
+        const r = getRuleForShop({name, id});
+        return (r && typeof r.order === 'number') ? r.order : Number.POSITIVE_INFINITY;
+    }
+
+    function getColorForShop({name, id}, indexFallback = 0) {
+        const r = getRuleForShop({name, id});
+        return r?.color || LINE_PALETTE[indexFallback % LINE_PALETTE.length];
+    }
 
     function fixedColorFor(seriesName, indexFallback) {
         for (const rule of SHOP_COLOR_RULES) {
@@ -402,30 +443,38 @@
         wrap.insertBefore(bar, document.getElementById('chart'));
     }
 
-    // 渲染“最新一分钟影子值”摘要（只看已勾选门店）
     function renderShadowSummary(targetMs) {
         _ensureShadowSummaryHost();
         const host = document.getElementById('shadow-summary');
-        // 清空除标题外的节点
+        // 保留左侧标题，其余清空
         [...host.childNodes].slice(1).forEach(n => host.removeChild(n));
 
         const opt = chart.getOption();
         const seriesArr = (opt.series || []).filter(s => {
-            // 只看已勾选门店的系列（id: s:<shopId>）
             const m = String(s?.id || '').match(/^s:(\d+)$/);
             return m && SELECTED_SHOP_IDS.has(Number(m[1]));
         });
 
-        // 收集当前分钟的影子值
+        // 收集当前分钟影子值 + 规则信息
         const items = [];
         for (const s of seriesArr) {
-            const data = s.data || [];
-            const item = data.find(pt => _pointTs(pt) === targetMs && _isShadow(pt));
-            if (!item) continue;
-            const v = item.value?.[1];
+            const m = String(s?.id || '').match(/^s:(\d+)$/);
+            const sid = m ? Number(m[1]) : null;
             const name = s.name || s.id;
-            if (Number.isFinite(v)) items.push({name, v});
+            const data = s.data || [];
+            const pt = data.find(it => {
+                const v = Array.isArray(it) ? it : it?.value;
+                return Array.isArray(v) && v[0] === targetMs && (!Array.isArray(it) && it.shadow === true);
+            });
+            if (!pt) continue;
+            const val = pt.value?.[1];
+            if (!Number.isFinite(val)) continue;
+
+            const ord = getOrderForShop({name, id: sid});
+            const color = getColorForShop({name, id: sid});
+            items.push({name, val, ord, color});
         }
+
         if (!items.length) {
             const span = document.createElement('span');
             span.textContent = '—（対象の影子点なし）';
@@ -434,29 +483,53 @@
             return;
         }
 
-        // 计算最大/最小
-        let maxV = -Infinity, minV = Infinity;
-        for (const it of items) {
-            if (it.v > maxV) maxV = it.v;
-            if (it.v < minV) minV = it.v;
-        }
+        // 按 order 排序
+        items.sort((a, b) => (a.ord - b.ord) || a.name.localeCompare(b.name, 'ja'));
 
-        // 逐项渲染
+        // 极值
+        const maxV = Math.max(...items.map(i => i.val));
+        const minV = Math.min(...items.map(i => i.val));
+
+        // 渲染：两行布局（店名在上，价格在下）
         for (const it of items) {
-            const chip = document.createElement('span');
-            chip.textContent = `${it.name}: ${fmtJPY(it.v)}`;
-            const isMax = it.v === maxV, isMin = it.v === minV;
-            Object.assign(chip.style, {
-                padding: '2px 8px',
-                borderRadius: '8px',
+            const isMax = it.val === maxV;
+            const isMin = it.val === minV;
+
+            const box = document.createElement('div');
+            Object.assign(box.style, {
+                display: 'inline-flex',
+                flexDirection: 'column',
+                alignItems: 'flex-start',
+                gap: '2px',
+                padding: '6px 10px',
+                borderRadius: '10px',
+                marginRight: '6px',
                 background: isMax ? '#d93025' : (isMin ? '#0f9d58' : '#f3f4f6'),
-                color: isMax || isMin ? '#fff' : '#111827',
-                border: isMax || isMin ? '0' : '1px solid #e5e7eb'
+                color: (isMax || isMin) ? '#fff' : '#111827',
+                border: (isMax || isMin) ? '0' : `1px solid ${it.color}66`,
+                minWidth: '120px'
             });
-            host.appendChild(chip);
+
+            // 店名（上）— 用门店色；极值时用白字保持对比
+            const nameEl = document.createElement('div');
+            nameEl.textContent = it.name;
+            nameEl.style.cssText = `font-weight:600; font-size:12px; line-height:1.2; ${
+                (isMax || isMin) ? 'color:#fff;' : `color:${it.color};`
+            }`;
+
+            // 价格（下）
+            const priceEl = document.createElement('div');
+            priceEl.textContent = fmtJPY(it.val);
+            priceEl.style.cssText = `font-size:13px; line-height:1.2; ${
+                (isMax || isMin) ? 'color:#fff;' : 'color:#111827;'
+            }`;
+
+            box.appendChild(nameEl);
+            box.appendChild(priceEl);
+            host.appendChild(box);
         }
 
-        // 在右侧附上时间
+        // 右侧时间
         const timeLabel = document.createElement('span');
         timeLabel.textContent = ` @ ${new Date(targetMs).toLocaleTimeString('ja-JP', {hour12: false})}`;
         timeLabel.style.cssText = 'margin-left:8px;color:#6b7280;';
@@ -478,8 +551,9 @@
             const right = Math.min(e19.valueOf(), endMs);
             if (left < right) data.push([{xAxis: left}, {xAxis: right}]);
         }
-        return {silent: true, itemStyle: {color: '#f0e68c', opacity: 0.35}, data};
+        return {silent: true, itemStyle: {color: '#fffef8', opacity: 0.35}, data};
     }
+
 
     // 叠加一个专用“背景系列”
     function applyWorkHoursOverlay(startMs, endMs) {
@@ -498,7 +572,6 @@
     }
 
 
-    // —— 更健壮的 loadShops —— //
     async function loadShops() {
         const box = $('shops');
         box.innerHTML = '';
@@ -511,56 +584,46 @@
                 throw new Error(`HTTP ${resp.status} ${resp.statusText} ${txt.slice(0, 200)}`);
             }
             const payload = await resp.json();
-
-            // 兼容数组 / results / items
             const items = Array.isArray(payload) ? payload
                 : Array.isArray(payload?.results) ? payload.results
-                    : Array.isArray(payload?.items) ? payload.items
-                        : [];
+                    : Array.isArray(payload?.items) ? payload.items : [];
 
-            let invalidCount = 0;
-
+            // 规范化：取 id/name，按 order 排序（其次按名称）
+            const normalized = [];
             for (const s of items) {
-                // 尝试多种 id 字段名
                 const sidRaw = s?.id ?? s?.shop_id ?? s?.pk ?? s?.ID ?? s?.Id;
                 const sid = Number(sidRaw);
                 if (!Number.isFinite(sid)) {
-                    invalidCount++;
-                    // 调试：在控制台看到是哪条数据有问题
                     console.warn('[shops] skip invalid id item:', s);
-                    continue; // 跳过没有有效 id 的项
+                    continue;
                 }
+                const name = s?.name ?? s?.shop_name ?? s?.display_name ?? String(sid);
+                const order = getOrderForShop({name, id: sid});
+                const color = getColorForShop({name, id: sid}, normalized.length);
+                normalized.push({id: sid, name, order, color});
+            }
+            normalized.sort((a, b) => (a.order - b.order) || a.name.localeCompare(b.name, 'ja'));
 
-                // 名称字段也容错
-                const sname = s?.name ?? s?.shop_name ?? s?.display_name ?? String(sid);
-
-                // 用 DOM API 安全构建（避免 innerHTML 把 undefined 拼进去）
+            // 渲染：名字着店铺色
+            for (const s of normalized) {
                 const label = document.createElement('label');
-                label.title = sname;
-
+                label.title = s.name;
                 const input = document.createElement('input');
                 input.type = 'checkbox';
-                input.value = String(sid);
-                input.dataset.name = sname;
-                input.dataset.shopId = String(sid);        // ★ 关键：标记有效门店
-                input.id = `shop_${sid}`;
+                input.value = String(s.id);
+                input.dataset.name = s.name;
+                input.dataset.shopId = String(s.id);
+                input.dataset.order = String(s.order);
 
                 const span = document.createElement('span');
-                span.textContent = sname;
+                span.textContent = s.name;
+                span.style.color = s.color; // 着色
 
                 label.appendChild(input);
                 label.appendChild(span);
                 box.appendChild(label);
 
-                SHOPS_INDEX.set(sid, sname);
-            }
-
-            if (items.length === 0) {
-                $('err').textContent = '店舗リストが空です（API 応答を確認してください）';
-            }
-            if (invalidCount > 0) {
-                // 仅提示，不阻断
-                console.warn(`[shops] skipped ${invalidCount} invalid entries (missing id)`);
+                SHOPS_INDEX.set(s.id, s.name);
             }
         } catch (e) {
             console.error(e);
@@ -873,7 +936,7 @@
         const arr = opt.series || [];
         if (arr.findIndex(s => s.id === id) >= 0) return id;
 
-        const color = fixedColorFor(name, arr.length);
+        const color = getColorForShop({name, id: shopId}, arr.length);
         arr.push({
             id, name,
             type: 'line',
@@ -886,6 +949,10 @@
         });
         chart.setOption({series: arr, legend: {data: arr.map(s => s.name)}});
         return id;
+    }
+
+    function ensureSeriesByShopOrder(shopId, name) {
+
     }
 
     function applyChartDelta(delta) {
@@ -902,6 +969,7 @@
 
             const shopName = SHOPS_INDEX.get(shopId) || `#${shopId}`;
             const id = ensureSeriesByShop(shopId, shopName);
+            const order = ensureSeriesByShopOrder(shopId, shopName)
 
             const opt = chart.getOption();
             const seriesArr = opt.series || [];
@@ -1036,7 +1104,7 @@
                     stats.push(it.r.stat);
                     const shopIdNum = Number(it.r.stat.shopId);
                     const name = it.r.name;
-                    const color = fixedColorFor(name, idxFallback++);
+                    const color = getColorForShop({name, id: shopIdNum}, idxFallback++);
 
                     // ★ 首屏：若最后点早于最近整数分钟，补一个影子点（patch 3/3）
                     const data = appendShadowToNowIfNeeded(it.r.data.slice());
@@ -1108,9 +1176,9 @@
                 series
             }, true);
 // 叠加工作时段背景（10:00–19:00）
-applyWorkHoursOverlay(SELECTED_START_MS, SELECTED_END_MS);
+            applyWorkHoursOverlay(SELECTED_START_MS, SELECTED_END_MS);
 // 首屏也渲染一次“最新影子摘要”（用当前最近整分）
-renderShadowSummary(nearestPastMinuteMs());
+            renderShadowSummary(nearestPastMinuteMs());
             $('status').textContent = `完了：${series.length} 店舗${failed.length ? `／失敗：${failed.join(', ')}` : ''}`;
         } catch (e) {
             $('err').textContent = '読み込みに失敗しました：' + e.message;
