@@ -329,7 +329,7 @@
         for (let t = d.valueOf(); t <= endMs + oneDay; t += oneDay) {
             const s = new Date(t);
             const s9 = new Date(s);
-            s9.setHours(9, 0, 0, 0);
+            s9.setHours(10, 0, 0, 0);
             const e20 = new Date(s);
             e20.setHours(20, 0, 0, 0);
             const s9ms = s9.valueOf(), e20ms = e20.valueOf();
@@ -337,7 +337,7 @@
             const right = Math.min(e20ms, endMs);
             if (left < right) data.push([{xAxis: left}, {xAxis: right}]);
         }
-        return {silent: true, itemStyle: {color: '#faebd7', opacity: 0.35}, data};
+        return {silent: true, itemStyle: {color: 'rgba(255,231,231,0.4)', opacity: 0.35}, data};
     }
 
     // --- ECharts ---
@@ -1416,9 +1416,7 @@ renderShadowSummary(nearestPastMinuteMs());
             }
         };
     })();
-    // --- 若没这两个全局，请在 loadAndPlot 里赋值（见下方调用处） ---
-    {#let SELECTED_END_MS = null;        // new Date(endIso).getTime()#}
-    {#let SELECTED_SHOP_IDS = new Set(); // 你已有#}
+
 
     // 从系列 id "s:<shopId>" 提取数字 shopId
     function seriesShopId(series) {
