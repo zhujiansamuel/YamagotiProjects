@@ -1857,59 +1857,61 @@
 
         // helper: 从 tr 中找定価（扫描到第一组店铺列前的最后一个数字单元格）
 // 返回 Number 或 NaN
-function findBasePriceInRow(tr) {
-    if (!tr) return NaN;
-    const tds = Array.from(tr.querySelectorAll('td'));
-    let lastNum = NaN;
-    for (const td of tds) {
-        // 遇到第一个店铺列就停止（后续是各店铺数据）
-        if (td.hasAttribute('data-shop-id')) break;
-        const v = parseNumText(td.textContent);
-        if (Number.isFinite(v)) lastNum = v;
-    }
-    return Number.isFinite(lastNum) ? lastNum : NaN;
-}
+        function findBasePriceInRow(tr) {
+            if (!tr) return NaN;
+            const tds = Array.from(tr.querySelectorAll('td'));
+            let lastNum = NaN;
+            for (const td of tds) {
+                // 遇到第一个店铺列就停止（后续是各店铺数据）
+                if (td.hasAttribute('data-shop-id')) break;
+                const v = parseNumText(td.textContent);
+                if (Number.isFinite(v)) lastNum = v;
+            }
+            return Number.isFinite(lastNum) ? lastNum : NaN;
+        }
+
 // 根据规则（< 50% 定価）过滤 closest Map：
 // - 会返回一个新的 Map（没有被过滤的 entries）
 // - 并把对应的 DOM 单元格也标为 nodata / 显示 "※要問"（方便视觉）
-function filterOutBelowHalf(closest) {
-    const res = new Map();
-    for (const [key, val] of closest.entries()) {
-        // key 形式为 "sKey-iKey"（使用的是 match ID，即 serverToMatch... 的结果）
-        const [sKeyStr, iKeyStr] = String(key).split('-');
-        const sKey = Number(sKeyStr), iKey = Number(iKeyStr);
-        if (!Number.isFinite(sKey) || !Number.isFinite(iKey)) continue;
+        function filterOutBelowHalf(closest) {
+            const res = new Map();
+            for (const [key, val] of closest.entries()) {
+                // key 形式为 "sKey-iKey"（使用的是 match ID，即 serverToMatch... 的结果）
+                const [sKeyStr, iKeyStr] = String(key).split('-');
+                const sKey = Number(sKeyStr), iKey = Number(iKeyStr);
+                if (!Number.isFinite(sKey) || !Number.isFinite(iKey)) continue;
 
-        // 在 DOM 中找到与之对应的任一 td（用服务器ID -> matchID 的匹配关系来找）
-        // 因为 DOM 存的是服务器ID，我们用 serverToMatchShop(serverId) === sKey 来匹配
-        const candidateTd = Array.from(document.querySelectorAll('td[data-shop-id][data-iphen-id]'))
-            .find(td => {
-                const srv = Number(td.getAttribute('data-shop-id'));
-                const iph = Number(td.getAttribute('data-iphen-id'));
-                return Number.isFinite(srv) && Number.isFinite(iph) &&
-                    serverToMatchShop(srv) === sKey && serverToMatchIphen(iph) === iKey;
-            });
+                // 在 DOM 中找到与之对应的任一 td（用服务器ID -> matchID 的匹配关系来找）
+                // 因为 DOM 存的是服务器ID，我们用 serverToMatchShop(serverId) === sKey 来匹配
+                const candidateTd = Array.from(document.querySelectorAll('td[data-shop-id][data-iphen-id]'))
+                    .find(td => {
+                        const srv = Number(td.getAttribute('data-shop-id'));
+                        const iph = Number(td.getAttribute('data-iphen-id'));
+                        return Number.isFinite(srv) && Number.isFinite(iph) &&
+                            serverToMatchShop(srv) === sKey && serverToMatchIphen(iph) === iKey;
+                    });
 
-        // 如果能找到对应的 tr，就从 tr 中解析定価并判定是否低于 50%
-        if (candidateTd) {
-            const tr = candidateTd.parentElement;
-            const basePrice = findBasePriceInRow(tr);
-            if (Number.isFinite(basePrice)) {
-                if (Number(val.price) < basePrice * 0.5) {
-                    // 判定为异常，标为 nodata：清 dataset.v，显示 ※要問
-                    candidateTd.dataset.v = '';
-                    candidateTd.textContent = '※要問';
-                    candidateTd.classList.add('nodata');
-                    // 不把此 entry 放入 res（即从参与计算的数据中剔除）
-                    continue;
+                // 如果能找到对应的 tr，就从 tr 中解析定価并判定是否低于 50%
+                if (candidateTd) {
+                    const tr = candidateTd.parentElement;
+                    const basePrice = findBasePriceInRow(tr);
+                    if (Number.isFinite(basePrice)) {
+                        if (Number(val.price) < basePrice * 0.5) {
+                            // 判定为异常，标为 nodata：清 dataset.v，显示 ※要問
+                            candidateTd.dataset.v = '';
+                            candidateTd.textContent = '※要問';
+                            candidateTd.classList.add('nodata');
+                            // 不把此 entry 放入 res（即从参与计算的数据中剔除）
+                            continue;
+                        }
+                    }
                 }
+                // 否则保留 entry（包括没找到 DOM 对应或没有 basePrice 的情况）
+                res.set(key, val);
             }
+            return res;
         }
-        // 否则保留 entry（包括没找到 DOM 对应或没有 basePrice 的情况）
-        res.set(key, val);
-    }
-    return res;
-}
+
         // 根据 endBase（通常是你这次运算的 end 时间）计算“昨日18:00~20:10(JST)”
         // 然后对页面所有 [data-change-from-crevious-day] 单元格写入前日比
         async function fillChangeFromPreviousDay(endBase) {
@@ -2462,14 +2464,14 @@ function filterOutBelowHalf(closest) {
                 caption && (caption.textContent = `${tag}（start=${toIsoTZ(start)} / end=${toIsoTZ(end)}）`);
 
                 // 第一次：25 分钟窗口
-const rows1 = await fetchRows(start, end);
-const map1 = buildClosestByRef(rows1, end.getTime());
-const filtered1 = filterOutBelowHalf(map1); // <-- 过滤掉 <50% 的项并在 DOM 上标记 nodata
+                const rows1 = await fetchRows(start, end);
+                const map1 = buildClosestByRef(rows1, end.getTime());
+                const filtered1 = filterOutBelowHalf(map1); // <-- 过滤掉 <50% 的项并在 DOM 上标记 nodata
 
-fillSingles(filtered1);
-fillAverages(filtered1);
-recalcRangeCells(filtered1);
-highlightRowExtremes();
+                fillSingles(filtered1);
+                fillAverages(filtered1);
+                recalcRangeCells(filtered1);
+                highlightRowExtremes();
 
                 // 2 天回填（仅对没有任何数据的店铺）
                 const missingShops = getShopsWithNoAnyData();
@@ -2479,15 +2481,15 @@ highlightRowExtremes();
                     console.log(`[PSTA] backfill: ${missingShops.size} shop(s) have no data, searching last 2 days...`);
                     const rows2 = await fetchRows(start2d, end);
                     rows2Len = rows2.length;
-const map2 = buildClosestByRef(rows2, end.getTime());
-const filtered2 = filterOutBelowHalf(map2);
+                    const map2 = buildClosestByRef(rows2, end.getTime());
+                    const filtered2 = filterOutBelowHalf(map2);
 
-fillSinglesSelective(filtered2, missingShops);
+                    fillSinglesSelective(filtered2, missingShops);
 
-const merged = mergeClosestMaps(filtered1, filtered2); // or mergeClosestMaps(filtered1, filtered2);
-fillAverages(merged);
-recalcRangeCells(merged);
-highlightRowExtremes();
+                    const merged = mergeClosestMaps(filtered1, filtered2); // or mergeClosestMaps(filtered1, filtered2);
+                    fillAverages(merged);
+                    recalcRangeCells(merged);
+                    highlightRowExtremes();
 
                     // 仍然没有数据的店铺，显示为 “--”
                     for (const sSrv of missingShops) {
