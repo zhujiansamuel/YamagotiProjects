@@ -121,64 +121,46 @@ zoomAll(factor)、panAll(frac)、resetAllZoom() 对所有图统一操作，仅�
 
 +818010186780
 
-    const LINE_PALETTE = [
-        {#"#DD1133",　　/* ========= 買取商店 ========= */#}
-        {#"#DD1133",　　/* ========= 海峡通信 ========= */#}
-        "#B41524",　　/* ========= 買取１丁目ーshop3 ========= */
-        {#"#DD1133",　/* ========= モバイルミックス ========= */#}
-        "#278C46",　　/* ========= 森森買取-shop5 ========= */
-        "#2DA9E8",　　/* ========= 買取ルデヤ-shop6 ========= */
-        "#E71534",　　/* ========= 買取Wiki-shop7 ========= */
-        "#F27474",　　/* ========= 買取ホムラ=shop8 ========= */
-        "#3952A6",　　/* ========= ドラゴンモバイル-shop9 ========= */
-        "#E60012",　　/* ========= モバステ-shop10 ========= */
-        "#20AECC",　　/* ========= アキモバ-shop11 ========= */
-        "#0EC7D9",　　/* ========= トゥインクル-shop12 ========= */
-        "#FFF100",　　/* ========= 家電市場-shop13 ========= */
-        "#DA7C66",　　/* ========= 買取楽園-shop14 ========= */
-        "#1C4473",　　/* ========= 買取当番-shop15 ========= */
-        "#0049A8",　　/* ========= 携帯空間-shop16 ========= */
-        "#34C6F6",　　/* ========= ゲストモバイル-shop17 ========= */
-        "#033F68",　　/* ========= 買取オク-shop18 ========= */
-        {#"#84cc16",　　/* ========= 基础-shop19 ========= */#}
-        "#C30D23",　　/* ========= 毎日買取-shop20 ========= */
-        {#"#84cc16",　　/* ========= 基础-shop21 ========= */#}
-        {#"#84cc16",　　/* ========= 基础-shop22 ========= */#}
-        {#"#84cc16",　　/* ========= 基础-shop23 ========= */#}
-        {#"#84cc16",　　/* ========= 基础-shop24 ========= */#}
-        {#"#84cc16",　　/* ========= 基础-shop25 ========= */#}
-    ];
 
 
 
-    SHOP_DISPLAY_ORDER = [
+SHOP_DISPLAY_ORDER = [
+  {match:/買取商店/,color:"#DD1133",shop_id:14,order:1},
+  {match:/海峡通信/,color:"#478CD8",shop_id:1,order:2},
+  {match:/買取一丁目/,color:"#B41524",shop_id:8,order:3},
+  {match:/モバイルミックス/,color:"#DD1133",shop_id:13,order:4},
+  {match:/森森買取/,color:"#278C46",shop_id:7,order:5},
+  {match:/買取ルデヤ/,color:"#2DA9E8",shop_id:9,order:6},
+  {match:/買取wiki/,color:"#E71534",shop_id:10,order:7},
+  {match:/買取ホムラ/,color:"#F27474",shop_id:19,order:8},
+  {match:/ドラゴンモバイル/,color:"#3952A6",shop_id:16,order:9},
+  {match:/モバステ/,color:"#E60012",shop_id:18,order:10},
+  {match:/アキモバ/,color:"#20AECC",shop_id:12,order:11},
+  {match:/トゥインクル/,color:"#0EC7D9",shop_id:17,order:12},
+  {match:/家電市場/,color:"#FFF100",shop_id:3,order:13},
+  {match:/買取楽園/,color:"#DA7C66",shop_id:4,order:14},
+  {match:/買取当番/,color:"#1C4473",shop_id:2,order:15},
+  {match:/携帯空間/,color:"#0049A8",shop_id:5,order:16},
+  {match:/ゲストモバイル/,color:"#34C6F6",shop_id:11,order:17},
+  {match:/買取オク/,color:"#033F68",shop_id:6,order:18},
+  {match:/毎日買取/,color:"#C30D23",shop_id:15,order:19},
+  {match:/Mobile Zone/,color:"#f50620",shop_id:20,order:20},
+];
 
-    "海峡通信",  # shop2　　　      ２
-    "買取一丁目",  # shop3         ３
-    "モバイルミックス",  # shop4         4
-    "森森買取",  # shop5           ５
-    "買取ルデヤ",  # shop6         ６
-    "買取wiki",  # shop8          ７
-    "買取ホムラ",  # shop7         ８
-    "ドラゴンモバイル",  # shop10　　９
-    "モバステ",  # shop11　         10
-    "アキモバ",  # shop9           11
-    "トゥインクル", # shop12        12
-    "家電市場", # shop13           13
-    "買取楽園", # shop14           14
-    "買取当番", # shop15           15
-    "携帯空間", # shop16           16
-    # "",  # shop17               17
-    # "",  # shop18               18
-    # "",  # shop19               19
-    "毎日買取", # shop20           20
-    # "",  # shop21
-    # "",  # shop22
-    # "",  # shop23
-    # "",  # shop24
-    # "",  # shop25
-]
 
+
+{id: "iphone-17-pro-max-256", model: "iPhone 17 Pro Max", cap: 256,iphone_id:[20,21,22]},
+{id: "iphone-17-pro-max-512", model: "iPhone 17 Pro Max", cap: 512,iphone_id:[23,24,25]},
+{id: "iphone-17-pro-max-1024", model: "iPhone 17 Pro Max", cap: 1024,iphone_id:},
+{id: "iphone-17-pro-max-2048", model: "iPhone 17 Pro Max", cap: 2048,iphone_id:},
+{id: "iphone-17-pro-256", model: "iPhone 17 Pro", cap: 256,iphone_id:[11,12,13]},
+{id: "iphone-17-pro-512", model: "iPhone 17 Pro", cap: 512,iphone_id:[14,15,16]},
+{id: "iphone-17-pro-1024", model: "iPhone 17 Pro", cap: 1024,iphone_id:[17,18,19]},
+{id: "iphone-Air-256", model: "iPhone Air", cap: 256,iphone_id:[32,33,34,35]},
+{id: "iphone-Air-512", model: "iPhone Air", cap: 512,iphone_id:[36,37,38,39]},
+{id: "iphone-Air-1024", model: "iPhone Air", cap: 1024,iphone_id:[40,41,42,43]},
+{id: "iphone-17-256", model: "iPhone 17", cap: 256,iphone_id:[1,2,3,4,5]},
+{id: "iphone-17-512", model: "iPhone 17", cap: 512,iphone_id:[6,7,8,9,10]},
 
 
 git fetch --all --prune
@@ -194,6 +176,11 @@ docker compose logs -f celery
 docker compose logs -f nginx
 
 docker compose up -d --scale worker=6
+
+localStorage.setItem('iphone:token', ' ;
+
+localStorage.setItem('iphone:token', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwOTUyNDYzLCJpYXQiOjE3NjA5NTA2NjQsImp0aSI6ImMwYjJiMmI3YTM1OTRiNDJhYWM2YWFhYmVjMjhhNTkxIiwidXNlcl9pZCI6IjEifQ.MFVyUl1IYMOVILX2nAYyKPWs4R3Sr9FYaoIznAOC2GA');
+
 
 
 brew services start redis
@@ -215,7 +202,7 @@ celery -A YamagotiProjects worker -l info -P eventlet --concurrency=15
 daphne -b 0.0.0.0 -p 8000 YamagotiProjects.asgi:application
 
 --------------------------------------------
-ACCESS="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwOTQ1MDQwLCJpYXQiOjE3NjA5NDMyNDAsImp0aSI6IjU1YTFiYmI1NThmODRhMmE5NWQxYWNhN2E4Mjk1MmMzIiwidXNlcl9pZCI6IjEifQ.vt3NyU_pE9V-HWuL9Z6fu8aKbw9zoYGzZ1SPglzEq94"
+ACCESS="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwOTU0Njk5LCJpYXQiOjE3NjA5NTI4OTksImp0aSI6IjgyOThjMDE3Zjk0NDQyMGU4YzliZWQ4ZjVhNzY0M2Y2IiwidXNlcl9pZCI6IjEifQ.R_V82ZJAx_d7YuNKoWP3K8XQZ7apLx81GiTNIdu0XYs"
 noglob websocat -t \
   -H='Origin: https://yamaguti.ngrok.io' \
   -H="Authorization: Bearer $ACCESS" \
@@ -434,3 +421,53 @@ curl -v --max-time 600 \
 curl -I http://yamaguti.ngrok.io/AppleStockChecker/static/admin/simplepro/images/bg.svg
 
 curl -i https://yamaguti.ngrok.io/AppleStockChecker/static/admin/simplepro/images/bg.svg
+
+
+
+
+https://yamaguti.ngrok.io/AppleStockChecker/purchasing-time-analyses/psta-compact/?start=2025-10-01T10%3A00%3A00%2B09%3A00&end=2025-10-20T10%3A00%3A00%2B09%3A00&shop=13&iphone__part_number=MG854J%2FA
+
+<!-- ================= iPhone 17 Pro Max ================= -->
+
+....
+
+<tr data-color="blue">....
+<tr data-color="silver">....
+<!-- 512GB -->
+<tr>...
+<tr class="avg-row" data-color="all">....
+<tr data-color="orange">....
+<tr data-color="blue">....
+<tr data-color="silver">....
+<!-- 1TB -->
+<tr>...
+<tr class="avg-row" data-color="all">....
+<tr data-color="orange">....
+<tr data-color="blue">....
+<tr data-color="silver">....
+<!-- 2TB -->
+<tr>...
+<tr class="avg-row" data-color="all">....
+<tr data-color="orange">....
+<tr data-color="blue">....
+<tr data-color="silver">....
+
+....
+<!-- ================= iPhone 17 Pro ================= -->
+....
+<tr data-color="blue">....
+<tr data-color="silver">....
+<!-- 512GB -->
+<tr>...
+<tr class="avg-row" data-color="all">....
+<tr data-color="orange">....
+<tr data-color="blue">....
+<tr data-color="silver">....
+<!-- 1TB -->
+<tr>...
+<tr class="avg-row" data-color="all">....
+<tr data-color="orange">....
+<tr data-color="blue">....
+<tr data-color="silver">....
+
+
