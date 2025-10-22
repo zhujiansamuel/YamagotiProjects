@@ -109,9 +109,13 @@
             font-weight: 700;
 
         }
-        .all-price{
-	        font-weight: 700;
-	        font-size: var(--all-cell-font);
+
+
+
+
+        .all-price {
+            font-weight: 700;
+            font-size: var(--all-cell-font);
         }
 
         .marge {
@@ -326,6 +330,11 @@
         .is-hidden {
             display: none !important;
         }
+        
+        .c{
+        height: 2px !important;
+        padding: 0 !important;
+        }
 
         /* thead 高さ0指定 */
         table thead.thead-zero,
@@ -351,6 +360,11 @@
             height: 0;
         }
 
+        @media (max-width: 600px) {
+            tr.group-gap td {
+                height: 8px;
+            }
+        }
 
     </style>
 </head>
@@ -529,7 +543,7 @@
             <tbody>
             <!-- 256GB -->
             <tr>
-                <td rowspan="20" style="text-align:left;">iPhone 17 Pro Max</td>
+                <td rowspan="25" style="text-align:left;">iPhone 17 Pro Max</td>
                 <td rowspan="5" style="text-align:left;">256GB</td>
                 <td rowspan="5" data-issue-pricing>194,800</td>
                 <td rowspan="5"
@@ -552,8 +566,6 @@
                     -
                 </td>
             </tr>
-
-
             <tr data-color="all">
                 <td style="text-align:left;">ALL</td>
                 <td class="nodata all-price" data-shop-id="14" data-iphen-average-id="21 22 20">※要問</td>
@@ -577,7 +589,6 @@
                 <td class="nodata all-price" data-shop-id="15" data-iphen-average-id="21 22 20">※要問</td>
                 <td class="nodata all-price" data-shop-id="20" data-iphen-average-id="21 22 20">※要問</td>
             </tr>
-
             <tr data-color="orange">
                 <td style="background:#f68a44;text-align:left;">Orange</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="21" data-to-marge-iphone-id="21 22 20">※要問</td>
@@ -651,6 +662,12 @@
                 <td class="nodata" data-shop-id="15" data-iphen-id="20">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="20">※要問</td>
             </tr>
+            
+            <tr>
+               <td class="c"></td>
+ 
+            </tr>
+
 
             <!-- 512GB -->
             <tr>
@@ -661,7 +678,7 @@
                     data-range-iphen-id="23 24 25"
                     data-highest>
                     -
-                </td>
+
                 <td rowspan="5" data-diff>-</td>
                 <td rowspan="5" data-rate>-</td>
                 <td rowspan="5"
@@ -676,7 +693,7 @@
                     -
                 </td>
 
-
+            </tr>
             <tr class="avg-row" data-color="all">
                 <td colspan="1" style="text-align:left;">ALL</td>
                 <td class="nodata all-price" data-shop-id="14" data-iphen-average-id="24 25 23">※要問</td>
@@ -700,7 +717,6 @@
                 <td class="nodata all-price" data-shop-id="15" data-iphen-average-id="24 25 23">※要問</td>
                 <td class="nodata all-price" data-shop-id="20" data-iphen-average-id="24 25 23">※要問</td>
             </tr>
-
             <tr data-color="orange">
                 <td style="background:#f68a44;text-align:left;">Orange</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="24" data-to-marge-iphone-id="24 25 23">※要問</td>
@@ -728,7 +744,6 @@
                 <td class="nodata" data-shop-id="15" data-iphen-id="24" data-to-marge-iphone-id="24 25 23">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="24" data-to-marge-iphone-id="24 25 23">※要問</td>
             </tr>
-
             <tr data-color="blue">
                 <td style="background:#4b5780;text-align:left;">Blue</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="25">※要問</td>
@@ -752,7 +767,6 @@
                 <td class="nodata" data-shop-id="15" data-iphen-id="25">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="25">※要問</td>
             </tr>
-
             <tr data-color="silver">
                 <td style="background:#e6e6e6;text-align:left;">Silver</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="23">※要問</td>
@@ -776,8 +790,10 @@
                 <td class="nodata" data-shop-id="15" data-iphen-id="23">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="23">※要問</td>
             </tr>
-
-
+                        <tr>
+               <td class="c"></td>
+ 
+            </tr>
             <!-- 1TB -->
             <tr>
                 <td rowspan="5" style="text-align:left;">1TB</td>
@@ -802,7 +818,6 @@
                     -
                 </td>
             </tr>
-
             <tr class="avg-row" data-color="ALL">
                 <td colspan="1" style="text-align:left;">ALL</td>
                 <td class="nodata all-price" data-shop-id="14" iphen-average-id="27 28 26">※要問</td>
@@ -898,6 +913,10 @@
                 <td class="nodata is-hidden" data-shop-id="6" data-iphen-id="26">※要問</td>
                 <td class="nodata" data-shop-id="15" data-iphen-id="26">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="26">※要問</td>
+            </tr>
+                        <tr>
+               <td class="c"></td>
+ 
             </tr>
             <!-- 2TB -->
             <tr>
@@ -1020,7 +1039,6 @@
                 <td class="nodata" data-shop-id="20" data-iphen-id="29">※要問</td>
             </tr>
 
-
             </tbody>
         </table>
     </div>
@@ -1032,7 +1050,7 @@
         <!--       <div class="model-header">iPhone 17 Pro</div> -->
         <table>
             <thead class="thead-zero">
-            <tr>
+            <tr class="">
                 <th class="col-model">機種</th>
                 <th class="col-capacity">容量</th>
                 <th class="col-num">定価</th>
@@ -1069,7 +1087,7 @@
             <tbody>
             <!-- 256GB -->
             <tr>
-                <td rowspan="15" style="text-align:left;">iPhone 17 Pro</td>
+                <td rowspan="18" style="text-align:left;">iPhone 17 Pro</td>
                 <td rowspan="5" style="text-align:left;">256GB</td>
                 <td rowspan="5" data-issue-pricing>179,800</td>
                 <td rowspan="5"
@@ -1092,8 +1110,6 @@
                     -
                 </td>
             </tr>
-
-
             <tr class="avg-row" data-color="All">
                 <td colspan="1" style="text-align:left;">ALL</td>
                 <td class="nodata all-price" data-shop-id="14" data-iphen-average-id="12 13 11">※要問</td>
@@ -1117,7 +1133,6 @@
                 <td class="nodata all-price" data-shop-id="15" data-iphen-average-id="12 13 11">※要問</td>
                 <td class="nodata all-price" data-shop-id="20" data-iphen-average-id="12 13 11">※要問</td>
             </tr>
-
             <tr data-color="orange">
                 <td style="background:#f68a44;text-align:left;">Orange</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="12" data-to-marge-iphone-id="12 13 11">※要問</td>
@@ -1168,7 +1183,6 @@
                 <td class="nodata" data-shop-id="15" data-iphen-id="13">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="13">※要問</td>
             </tr>
-
             <tr data-color="silver">
                 <td style="background:#e6e6e6;text-align:left;">Silver</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="11">※要問</td>
@@ -1192,7 +1206,10 @@
                 <td class="nodata" data-shop-id="15" data-iphen-id="11">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="11">※要問</td>
             </tr>
-
+                        <tr>
+               <td class="c"></td>
+ 
+            </tr>
             <!-- 512GB -->
             <tr>
                 <td rowspan="5" style="text-align:left;">512GB</td>
@@ -1217,7 +1234,6 @@
                     -
                 </td>
             </tr>
-
             <tr class="avg-row" data-color="All">
                 <td colspan="1" style="text-align:left;">ALL</td>
                 <td class="nodata all-price" data-shop-id="14" data-iphen-average-id="15 16 14">※要問</td>
@@ -1268,8 +1284,6 @@
                 <td class="nodata" data-shop-id="15" data-iphen-id="15" data-to-marge-iphone-id="15 16 14">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="15" data-to-marge-iphone-id="15 16 14">※要問</td>
             </tr>
-
-
             <tr data-color="blue">
                 <td style="background:#4b5780;text-align:left;">Blue</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="16">※要問</td>
@@ -1315,6 +1329,10 @@
                 <td class="nodata is-hidden" data-shop-id="6" data-iphen-id="14">※要問</td>
                 <td class="nodata" data-shop-id="15" data-iphen-id="14">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="14">※要問</td>
+            </tr>
+                        <tr>
+               <td class="c"></td>
+ 
             </tr>
             <!-- 1TB -->
             <tr>
@@ -1363,7 +1381,6 @@
                 <td class="nodata all-price" data-shop-id="15" data-iphen-average-id="18 19 17">※要問</td>
                 <td class="nodata all-price" data-shop-id="20" data-iphen-average-id="18 19 17">※要問</td>
             </tr>
-
             <tr data-color="orange">
                 <td style="background:#f68a44;text-align:left;">Orange</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="18" data-to-marge-iphone-id="18 19 17">※要問</td>
@@ -1391,7 +1408,6 @@
                 <td class="nodata" data-shop-id="15" data-iphen-id="18" data-to-marge-iphone-id="18 19 17">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="18" data-to-marge-iphone-id="18 19 17">※要問</td>
             </tr>
-
             <tr data-color="blue">
                 <td style="background:#4b5780;text-align:left;">Blue</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="19">※要問</td>
@@ -1415,7 +1431,6 @@
                 <td class="nodata" data-shop-id="15" data-iphen-id="19">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="19">※要問</td>
             </tr>
-
             <tr data-color="silver">
                 <td style="background:#e6e6e6;text-align:left;">Silver</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="17">※要問</td>
@@ -1439,8 +1454,6 @@
                 <td class="nodata" data-shop-id="15" data-iphen-id="17">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="17">※要問</td>
             </tr>
-
-
             </tbody>
         </table>
     </div>
@@ -1452,7 +1465,7 @@
     <div class="model-section">
         <!--       <div class="model-header">iPhone Air</div> -->
         <table>
-            <thead style='height:0'>
+            <thead class="thead-zero">
             <tr>
                 <th class="col-model">機種</th>
                 <th class="col-capacity">容量</th>
@@ -1839,6 +1852,171 @@
         };
 
 
+
+// ---------- 页面初始格式快照与恢复（插入到脚本） ----------
+        (function () {
+            const SNAP_KEY = '__psta_initial_snapshot__';
+            // 需要快照/恢复的选择器：所有可能被修改的单元格与表头
+            const SNAP_SEL = [
+                'td[data-shop-id][data-iphen-id]',
+                'td[data-shop-id][data-iphen-average-id]',
+                'td[data-highest][data-range-shop-id][data-range-iphen-id]',
+                'td[data-average][data-range-shop-id][data-range-iphen-id]',
+                'td[data-change-from-crevious-day]',
+                'th.shop-col',
+                '#shops label' // 店铺列表 label（名称颜色等）
+            ].join(',');
+
+            // 将初始状态保存在 window 上（内存），避免污染 localStorage / DOM
+            function captureInitialFormat() {
+                if (window[SNAP_KEY]) return; // 已经快照过了就跳过
+                const nodes = Array.from(document.querySelectorAll(SNAP_SEL));
+                const snap = [];
+                for (const n of nodes) {
+                    snap.push({
+                        // 使用 dataset.__psta_snap_id__ 作为回溯索引（可选）
+                        selector: computeSelectorForNode(n),
+                        outerHTML: n.outerHTML,        // 完整快照（恢复最保守）
+                        innerHTML: n.innerHTML,
+                        textContent: n.textContent,
+                        className: n.className,
+                        rowSpan: n.getAttribute && n.getAttribute('rowspan'),
+                        dataset: Object.assign({}, n.dataset)
+                    });
+                }
+                // 也快照 shops 面板（checkbox 状态除外，仅文本/样式）
+                const shops = Array.from(document.querySelectorAll('#shops label'));
+                snap.push({_shops: shops.map(l => ({outerHTML: l.outerHTML, text: l.textContent, html: l.innerHTML}))});
+
+                window[SNAP_KEY] = snap;
+                console.log('[PSTA] initial format snapshot captured:', snap.length, 'nodes');
+            }
+
+            // 计算一个可用于查找该节点的简单选择器（尽量稳定）
+            function computeSelectorForNode(n) {
+                if (!(n instanceof Element)) return null;
+                // 优先使用 id
+                if (n.id) return `#${n.id}`;
+                // 使用 data-shop-id + data-iphen-id 这种组合（本脚本常用）
+                if (n.hasAttribute && n.hasAttribute('data-shop-id') && (n.hasAttribute('data-iphen-id') || n.hasAttribute('data-iphone-id'))) {
+                    const sid = n.getAttribute('data-shop-id');
+                    const ip = n.getAttribute('data-iphen-id') || n.getAttribute('data-iphone-id');
+                    return `td[data-shop-id="${sid}"][data-iphen-id="${ip}"], td[data-shop-id="${sid}"][data-iphone-id="${ip}"]`;
+                }
+                // 表头
+                if (n.className && n.className.includes('shop-col') && n.textContent) {
+                    return `th.shop-col:contains(${CSS.escape ? CSS.escape(n.textContent.trim()) : n.textContent.trim()})`;
+                }
+                // 兜底：用 tagName + index
+                const idx = Array.prototype.indexOf.call(n.parentElement ? n.parentElement.children : [], n);
+                return `${n.tagName.toLowerCase()}:nth-child(${idx + 1})`;
+            }
+
+            // 恢复：尽量还原 outerHTML -> 但不完全 replace，以免断开事件绑定（尽量保守恢复属性/内容/类）
+            function restoreInitialFormat() {
+                const snap = window[SNAP_KEY];
+                if (!snap) {
+                    console.warn('[PSTA] no initial snapshot found; captureInitialFormat() should be called at load.');
+                    return;
+                }
+
+                // 恢复 shops panel（如果存在）
+                const shopsSnap = snap.find(s => s._shops);
+                if (shopsSnap && document.getElementById('shops')) {
+                    const box = document.getElementById('shops');
+                    // 直接重写 innerHTML 为初始快照中的 outerHTML 集合（safe since we captured at load)
+                    box.innerHTML = shopsSnap._shops.map(s => s.outerHTML).join('');
+                }
+
+                // 恢复各个单元格
+                for (const entry of snap) {
+                    if (entry._shops) continue;
+                    const sel = entry.selector;
+                    if (!sel) continue;
+                    // 使用 querySelectorAll 以兼容多个匹配（例如含 or 的选择器）
+                    let nodes;
+                    try {
+                        nodes = Array.from(document.querySelectorAll(sel));
+                    } catch (e) {
+                        // 如果 selector 不是标准 CSS（例如 :contains），则使用备选匹配策略
+                        nodes = [];
+                    }
+                    if (!nodes.length) {
+                        // 兜底：尝试按 dataset 比对恢复（若 snapshot 包含 dataset）
+                        const maybe = Array.from(document.querySelectorAll('td[data-shop-id]')).filter(n => {
+                            // 比对 dataset 中的关键字段是否一致
+                            const ds = entry.dataset || {};
+                            if (ds.shopId && n.dataset.shopId !== ds.shopId) return false;
+                            if ((ds.iphenId || ds.iphoneId) && (n.dataset.iphenId !== (ds.iphenId || ds.iphoneId)) && n.dataset.iphoneId !== (ds.iphenId || ds.iphoneId)) return false;
+                            return true;
+                        });
+                        nodes = maybe;
+                    }
+
+                    for (const n of nodes) {
+                        try {
+                            // 最保守的恢复：还原 className / innerHTML / textContent / rowspan / dataset v
+                            n.className = entry.className || '';
+                            if (entry.rowSpan != null) {
+                                if (entry.rowSpan === null) n.removeAttribute('rowspan'); else n.setAttribute('rowspan', entry.rowSpan);
+                            }
+                            // 恢复 dataset 原始键（谨慎覆盖运行时产生的 dataset.*）
+                            if (entry.dataset) {
+                                for (const k of Object.keys(entry.dataset)) {
+                                    try {
+                                        n.dataset[k] = entry.dataset[k];
+                                    } catch {
+                                    }
+                                }
+                            }
+                            // 恢复内容（优先 innerHTML）
+                            if (entry.innerHTML != null) n.innerHTML = entry.innerHTML;
+                            else if (entry.textContent != null) n.textContent = entry.textContent;
+                            // 移除运行时标记
+                            n.classList.remove('is-hidden', 'psta-max', 'psta-min', 'psta-close', 'nodata');
+                            delete n.dataset.merged;
+                            // 若有 data-orig-text 恢复它并删除
+                            if (n.dataset.origText != null) {
+                                n.textContent = n.dataset.origText;
+                                delete n.dataset.origText;
+                            }
+                        } catch (err) {
+                            console.warn('[PSTA] restore node failed for selector', sel, err);
+                        }
+                    }
+                }
+
+                // 额外恢复：移除全局可能添加的样式改变（如果你动态添加 style id）
+                const injected = document.getElementById('psta-row-styles');
+                if (injected) {
+                    // 不移除样式表（你可能想保留它），但如果确实要回到页面初始样式，可注释掉下一行
+                    // injected.remove();
+                }
+
+                console.log('[PSTA] initial formatting restored.');
+            }
+
+            // 暴露给全局（方便调试）
+            window.captureInitialFormat = captureInitialFormat;
+            window.restoreInitialFormat = restoreInitialFormat;
+
+            // 自动在 DOMContentLoaded 时快照一次（只做一次）
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', () => {
+                    try {
+                        captureInitialFormat();
+                    } catch (e) {
+                        console.warn(e);
+                    }
+                });
+            } else {
+                try {
+                    captureInitialFormat();
+                } catch (e) {
+                    console.warn(e);
+                }
+            }
+        })();
         // rows: fetchRows(start, end) 的返回数组（服务器ID）
 // 返回：Map key="shopKey-iphoneKey" -> 该时间窗内的最高价
         function buildMaxInWindow(rows) {
@@ -2088,14 +2266,14 @@
                     const basePrice = BASE_LINE_PRICE;
                     if (Number.isFinite(basePrice)) {
                         const price = Number(val.price);
-                        console.log("price:",price)
+                        console.log("price:", price)
                         if (Number.isFinite(price) && price < basePrice) {
                             belowHalf = true;
                             // 标记 DOM：清 dataset.v，显示※要問，并加 nodata class
                             candidateTd.dataset.v = '';
                             candidateTd.textContent = '※要問';
                             candidateTd.classList.add('nodata');
-                            console.log("price:",price,";basePrice:",basePrice)
+                            console.log("price:", price, ";basePrice:", basePrice)
                         }
                     }
                 }
@@ -2258,19 +2436,19 @@
                 }
 
                 // 買取率（D）= highest / 定価
-const rateCell = tr.querySelector('td[data-rate]');
-      if (rateCell) {
-        if (highest != null && Number.isFinite(basePrice) && basePrice > 0) {
-          const ratio = highest / basePrice;
-          rateCell.dataset.v = String((ratio * 100).toFixed(2));
-          rateCell.textContent = nfPct.format(ratio);
-          rateCell.style.color = ratio >= 1 ? '#2727ff' : '#b42318';
-        } else {
-          rateCell.dataset.v = '';
-          rateCell.textContent = '-';
-          rateCell.style.color = '';
-        }
-      }
+                const rateCell = tr.querySelector('td[data-rate]');
+                if (rateCell) {
+                    if (highest != null && Number.isFinite(basePrice) && basePrice > 0) {
+                        const ratio = highest / basePrice;
+                        rateCell.dataset.v = String((ratio * 100).toFixed(2));
+                        rateCell.textContent = nfPct.format(ratio);
+                        rateCell.style.color = ratio >= 1 ? '#2727ff' : '#b42318';
+                    } else {
+                        rateCell.dataset.v = '';
+                        rateCell.textContent = '-';
+                        rateCell.style.color = '';
+                    }
+                }
 
                 // 平均（E）
                 const avgCell = tr.querySelector('td[data-average][data-range-shop-id][data-range-iphen-id]') ||
@@ -2921,6 +3099,9 @@ const rateCell = tr.querySelector('td[data-rate]');
         // ---------- 主流程（两按钮各自参照自己的 end） ----------
         async function runWithEnd(endBase, tag, btn) {
             try {
+                //if (typeof window.restoreInitialFormat === 'function') {
+                // window.restoreInitialFormat();
+                //}
                 if (btn) {
                     btn.disabled = true;
                     btn.dataset.t = btn.textContent;
@@ -3190,5 +3371,102 @@ const rateCell = tr.querySelector('td[data-rate]');
         });
     })();
 </script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script>
+    (() => {
+        const btn = document.getElementById('clear-'); // 文件中图片保存按钮
+        if (!btn) return console.warn('按钮 #clear- 未找到');
+
+        // helper: 下载 blob 为文件
+        function downloadBlob(blob, filename) {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        }
+
+        // 隐藏选择器：clone 的时候我们会隐藏这些不想导出的节点（按钮等）
+        const HIDE_SELECTOR_INSIDE_CARD = 'button, input, select, textarea, .btns, .ghost';
+
+        btn.addEventListener('click', async () => {
+            try {
+                const orig = document.querySelector('.card');
+                if (!orig) return alert('未找到 .card 区块');
+
+                // 等 webfont 加载（若无则立即返回）
+                if (document.fonts && document.fonts.ready) {
+                    await document.fonts.ready;
+                }
+
+                // 克隆 .card 到一个离屏容器，确保样式从 <head> 生效且原节点不被影响
+                const wrapper = document.createElement('div');
+                Object.assign(wrapper.style, {
+                    position: 'fixed',
+                    left: '-9999px',
+                    top: '0',
+                    // 确保宽度足够（使用原始元素 scrollWidth）
+                    width: orig.scrollWidth + 'px',
+                    height: 'auto',
+                    overflow: 'visible',
+                    background: 'transparent',
+                    zIndex: 99999
+                });
+                const clone = orig.cloneNode(true);
+                // 隐藏不想出现在图片里的控件（克隆内部）
+                clone.querySelectorAll(HIDE_SELECTOR_INSIDE_CARD).forEach(el => {
+                    // 不能直接 remove，使用 visibility/opacity 保留布局（若想完全去除可使用 el.remove()）
+                    el.style.visibility = 'hidden';
+                });
+
+                wrapper.appendChild(clone);
+                document.body.appendChild(wrapper);
+
+                // 计算正确宽高（包含克隆后的实际渲染尺寸）
+                const rect = clone.getBoundingClientRect();
+                const outputWidth = Math.ceil(rect.width);
+                const outputHeight = Math.ceil(rect.height);
+
+                // html2canvas 配置：提高 scale 获得更清晰的图片
+                // 使用 devicePixelRatio * 1.5 或 2 以兼顾清晰度与性能
+                const DPR = window.devicePixelRatio || 1;
+                const scale = Math.max(6, Math.min(3, DPR * 1.5));
+
+                const canvas = await html2canvas(clone, {
+                    backgroundColor: null, // 保持透明背景时设为 null；若要白底改为 '#fff'
+                    useCORS: true,         // 尝试加载跨域图片（图片服务器需允许 CORS）
+                    scale: scale,
+                    width: outputWidth,
+                    height: outputHeight,
+                    windowWidth: document.documentElement.clientWidth,
+                    windowHeight: document.documentElement.clientHeight,
+                    scrollX: -window.scrollX,
+                    scrollY: -window.scrollY,
+                    allowTaint: false,
+                    imageTimeout: 20000
+                });
+
+                // 导出为 PNG（可改为 'image/jpeg'）
+                canvas.toBlob(blob => {
+                    downloadBlob(blob, 'price_matrix_card.png');
+                }, 'image/png');
+
+                // 清理临时 DOM（稍微延迟，确保下载已启动）
+                setTimeout(() => {
+                    wrapper.remove();
+                }, 1000);
+
+            } catch (err) {
+                console.error('画像保存 エラー:', err);
+                alert('画像保存に失敗しました。コンソールを確認してください。');
+            }
+        });
+    })();
+</script>
+
+
 </body>
 </html>
