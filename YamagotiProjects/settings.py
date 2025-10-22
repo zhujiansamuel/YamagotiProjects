@@ -52,14 +52,14 @@ INSTALLED_APPS = [
     "rest_framework",
     "drf_spectacular",
     # 'easyaudit',
-    "django_celery_beat",     # 定时任务(可在Admin里改间隔/暂停)
+    "django_celery_beat",  # 定时任务(可在Admin里改间隔/暂停)
     "django_celery_results",  # 可选：任务结果持久化到DB
     "django_filters",
 
 ]
 
 MIDDLEWARE = [
-    'django.middleware.locale.LocaleMiddleware',       # 可选
+    'django.middleware.locale.LocaleMiddleware',  # 可选
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     'django.middleware.security.SecurityMiddleware',
@@ -160,7 +160,6 @@ TEMPLATES = [
 WHITENOISE_MAX_AGE = 60 * 60 * 24 * 7
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
-
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 MEDIA_URL = '/media/'
 
@@ -178,11 +177,10 @@ DATABASES = {
         "PASSWORD": "Xdb73008762",
         "HOST": "127.0.0.1",
         "PORT": "5432",
-        "CONN_MAX_AGE": 60,        # 连接复用
+        "CONN_MAX_AGE": 60,  # 连接复用
         "OPTIONS": {"sslmode": "prefer"},  # 按需
     }
 }
-
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
@@ -218,9 +216,9 @@ USE_TZ = True
 
 
 STATIC_URL = "/static/"
-STATIC_ROOT = BASE_DIR / "staticfiles"        # collectstatic 产物目录（生产/统一对外）
+STATIC_ROOT = BASE_DIR / "staticfiles"  # collectstatic 产物目录（生产/统一对外）
 STATICFILES_DIRS = [
-    BASE_DIR / "static",                      # 你自己的前端静态目录（可选）
+    BASE_DIR / "static",  # 你自己的前端静态目录（可选）
 ]
 STATICFILES_FINDERS = [
     "django.contrib.staticfiles.finders.FileSystemFinder",
@@ -324,10 +322,9 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "Asia/Tokyo"
 CELERY_ENABLE_UTC = False
-CELERY_TASK_ACKS_LATE = True                         # 任务跑完才确认，异常能重派
-CELERY_TASK_REJECT_ON_WORKER_LOST = True             # WorkerLost 也回到队列
+CELERY_TASK_ACKS_LATE = True  # 任务跑完才确认，异常能重派
+CELERY_TASK_REJECT_ON_WORKER_LOST = True  # WorkerLost 也回到队列
 CELERY_TASK_TRACK_STARTED = True
-
 
 USE_X_FORWARDED_HOST = True
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
@@ -445,9 +442,9 @@ SIMPLEUI_CONFIG = {
                             'icon': 'fa-solid fa-chart-line',
                             'url': '/AppleStockChecker/analysis-dashboard/',
                             },
-                           {'name': '価格推移(Model別)',
-                            'icon': 'fa-solid fa-chart-line',
-                            'url': '/AppleStockChecker/resale-trend-colors-merged/',
+                           {'name': '实时图表',
+                            'icon': 'fa-solid fa-store',
+                            'url': '/AppleStockChecker/template-chartjs/',
                             },
                            {'name': '中古店価格ボード',
                             'icon': 'fa-solid fa-table-columns',
@@ -472,11 +469,10 @@ SIMPLEUI_CONFIG = {
                                         'icon': 'fa-solid fa-money-check-dollar',
                                         'url': '/admin/AppleStockChecker/purchasingshoppricerecord/'
                                         },
-                                        {'name': '价格整形记录',
+                                       {'name': '价格整形记录',
                                         'icon': 'fa-solid fa-money-check-dollar',
                                         'url': '/admin/AppleStockChecker/purchasingshoptimeanalysis/'
                                         },
-
 
                                        ]
                             },
@@ -494,11 +490,12 @@ SIMPLEUI_CONFIG = {
                             },
                            {'name': '临时页面',
                             'icon': 'fa-solid fa-file-contract',
-                            'models': [{'name': '实时图表',
-                                        'icon': 'fa-solid fa-store',
-                                        'url': '/AppleStockChecker/template-chartjs/',
-                                        },
-                                       ]
+                            'models': [
+                                {'name': '価格推移(Model別)',
+                                 'icon': 'fa-solid fa-chart-line',
+                                 'url': '/AppleStockChecker/resale-trend-colors-merged/',
+                                 },
+                            ]
                             },
                            ]
             },
@@ -557,13 +554,8 @@ SHOP_DISPLAY_ORDER = [
     "携帯空間",  # shop16           16
     "ゲストモバイル",  # shop17               17
     "買取オク",  # shop18               18
-    # "",  # shop19               19
     "毎日買取",  # shop20           20
-    # "",  # shop21
-    # "",  # shop22
-    # "",  # shop23
-    # "",  # shop24
-    # "",  # shop25
+
 ]
 
 FX_API_KEYS = {
@@ -592,14 +584,12 @@ LIST_ORDER = [
     "iphone-17-512"
 ]
 
-
 LOGIN_EXEMPT_URLS = [
     r'^AppleStockChecker/purchasing-price-records/ingest-json/?$',  # ← 新接口
     # 如还有 path-token 版/webhook 版，也一并加上
     r'^AppleStockChecker/purchasing-price-records/ingest-webscraper/?$',
     r'^AppleStockChecker/purchasing-price-records/ingest-webscraper/[-A-Za-z0-9_]+/?$',
 ]
-
 
 CHANNEL_LAYERS = {
     "default": {
@@ -609,6 +599,3 @@ CHANNEL_LAYERS = {
 }
 
 ASGI_APPLICATION = "config.asgi.application"
-
-
-
