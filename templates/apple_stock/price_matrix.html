@@ -2068,6 +2068,7 @@
             // 把所有店铺单元的查询缓存一下，减少 DOM 扫描成本
             const shopCells = Array.from(document.querySelectorAll('td[data-shop-id][data-iphen-id]'));
             for (const [key, val] of closest.entries()) {
+                console.log([key, val])
                 const [sKeyStr, iKeyStr] = String(key).split('-');
                 const sKey = Number(sKeyStr), iKey = Number(iKeyStr);
                 if (!Number.isFinite(sKey) || !Number.isFinite(iKey)) continue;
@@ -2082,18 +2083,19 @@
 
                 let belowHalf = false;
                 if (candidateTd) {
-                    // tr 上找定価：优先用 data-issue-pricing
                     const tr = candidateTd.parentElement;
                     {#const basePrice = findBasePriceInRow(tr);#}
                     const basePrice = BASE_LINE_PRICE;
                     if (Number.isFinite(basePrice)) {
                         const price = Number(val.price);
+                        console.log("price:",price)
                         if (Number.isFinite(price) && price < basePrice) {
                             belowHalf = true;
                             // 标记 DOM：清 dataset.v，显示※要問，并加 nodata class
                             candidateTd.dataset.v = '';
                             candidateTd.textContent = '※要問';
                             candidateTd.classList.add('nodata');
+                            console.log("price:",price,";basePrice:",basePrice)
                         }
                     }
                 }
@@ -2933,9 +2935,9 @@ const rateCell = tr.querySelector('td[data-rate]');
                 const rows1 = await fetchRows(start, end);
                 let map1 = buildClosestByRef(rows1, end.getTime());
                 const filtered1 = filterOutBelowHalf(map1); // <-- 过滤掉 <50% 的项并在 DOM 上标记 nodata
-                if (typeof filterOutBelowHalf === 'function') {
-                    map1 = filterOutBelowHalf(map1);
-                }
+                //if (typeof filterOutBelowHalf === 'function') {
+                //    map1 = filterOutBelowHalf(map1);
+                //}
                 fillSingles(filtered1);
                 fillAverages(filtered1);
                 recalcRangeCells(filtered1);
