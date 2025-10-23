@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
-{#    <script src="https://cdn.jsdelivr.net/npm/twitter-api-v1@1.3.0/lib/index.min.js"></script>#}
-<script src="https://cdn.jsdelivr.net/npm/twitter-v1-oauth@1.0.15/lib/helpers.min.js"></script>
+    {#    <script src="https://cdn.jsdelivr.net/npm/twitter-api-v1@1.3.0/lib/index.min.js"></script>#}
+    <script src="https://cdn.jsdelivr.net/npm/twitter-v1-oauth@1.0.15/lib/helpers.min.js"></script>
     <title>iPhone17 買取相場 – 統合テンプレート（店舗列付き）</title>
     <style>
         .nodata {
@@ -39,7 +39,7 @@
 
         }
 
-        .front-num{
+        .front-num {
             font-size: var(--table-font-front);
         }
 
@@ -2836,18 +2836,28 @@
         }
 
         function updateMainTitleDate(end) {
+            // 格式化日期为 YYYYMMDD
             const ymd = formatYmdJST(end);
-            const el =
-                document.getElementById('main-title') ||
+            // 格式化时间为 HHMM（例如 18時56分 -> 1856）
+            const time = end.toLocaleTimeString('ja-JP', {
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false
+            }).replace(':', '');
+
+            // 查找标题元素
+            const el = document.getElementById('main-title') ||
                 Array.from(document.querySelectorAll('h4')).find(h => /買取相場/.test(h.textContent));
             if (!el) return;
 
-            // 替换末尾的 8 位日期；如果原本没有，就直接在末尾追加
+            // 获取当前标题并去除首尾空格
             const txt = el.textContent.trim();
+
+            // 替换末尾的 8 位日期，或追加日期+时间
             if (/\d{8}(?!.*\d)/.test(txt)) {
-                el.textContent = txt.replace(/\d{8}(?!.*\d)/, ymd);
+                el.textContent = txt.replace(/\d{8}(?!.*\d)/, ymd + time);
             } else {
-                el.textContent = `${txt}${ymd}`;
+                el.textContent = `${txt}${ymd}${time}`;
             }
         }
 
@@ -3656,8 +3666,6 @@
                     mergeColorRows();
                     //injectMergeStyles();
 
-
-                    // 仍然没有数据的店铺，显示为 “--”
                     for (const sSrv of missingShops) {
                         const tds = document.querySelectorAll(`td[data-shop-id="${sSrv}"][data-iphen-id]`);
                         for (const td of tds) {
@@ -4006,7 +4014,7 @@
 
                 // html2canvas configuration
                 const DPR = window.devicePixelRatio || 1;
-                const scale = Math.max(6, Math.min(3, DPR * 1.5));
+                const scale = Math.max(1, Math.min(1, DPR * 1.5));
                 const canvas = await html2canvas(clone, {
                     backgroundColor: null,
                     useCORS: true,
@@ -4033,170 +4041,171 @@
                 throw err;
             }
         }
-    // X API Credentials (REPLACE WITH YOUR ACTUAL VALUES FOR LOCAL TESTING ONLY)
-    const API_KEY = 'f6TZcRNfbrSzOJBNwP9IUzRXm'; // Consumer Key
-    const API_SECRET = 'JuGx8QPYfm15OEQW6u1GmmNCHL7jYaSyB5YhZyF6yQDzk6GUXq'; // Consumer Secret
-    const ACCESS_TOKEN = '729569330145304577-U166soQlEk9mvDoL3O1LgdbV7VE6Qr9'; // Access Token
-    const ACCESS_SECRET = 'kRDM9icdYKzbsT2BPCdJDkGOr3efjTNaxX4IFR35X6g2D'; // Access Token Secret
+
+        // X API Credentials (REPLACE WITH YOUR ACTUAL VALUES FOR LOCAL TESTING ONLY)
+        const API_KEY = 'f6TZcRNfbrSzOJBNwP9IUzRXm'; // Consumer Key
+        const API_SECRET = 'JuGx8QPYfm15OEQW6u1GmmNCHL7jYaSyB5YhZyF6yQDzk6GUXq'; // Consumer Secret
+        const ACCESS_TOKEN = '729569330145304577-U166soQlEk9mvDoL3O1LgdbV7VE6Qr9'; // Access Token
+        const ACCESS_SECRET = 'kRDM9icdYKzbsT2BPCdJDkGOr3efjTNaxX4IFR35X6g2D'; // Access Token Secret
 // OAuth 1.0a Helper Functions
-    function generateNonce() {
-        return Math.random().toString(36).substring(2, 15);
-    }
-
-    function generateTimestamp() {
-        return Math.floor(Date.now() / 1000).toString();
-    }
-
-    function encodeRFC3986(str) {
-        return encodeURIComponent(str).replace(/[!'()*]/g, c => {
-            return '%' + c.charCodeAt(0).toString(16).toUpperCase();
-        });
-    }
-
-    function getSignatureBaseString(method, url, params, oauthParams) {
-        const allParams = { ...oauthParams, ...params };
-        const sortedParams = Object.keys(allParams)
-            .sort()
-            .map(key => `${encodeRFC3986(key)}=${encodeRFC3986(allParams[key])}`)
-            .join('&');
-        return `${method.toUpperCase()}&${encodeRFC3986(url)}&${encodeRFC3986(sortedParams)}`;
-    }
-
-    function hmacSHA1(key, data) {
-        const crypto = window.crypto || window.msCrypto;
-        if (!crypto.subtle) throw new Error('Crypto API not supported');
-        return crypto.subtle.importKey('raw', new TextEncoder().encode(key), { name: 'HMAC', hash: 'SHA-1' }, false, ['sign'])
-            .then(keyObj => crypto.subtle.sign('HMAC', keyObj, new TextEncoder().encode(data)))
-            .then(signature => btoa(String.fromCharCode(...new Uint8Array(signature)))
-                .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, ''));
-    }
-
-    async function generateOAuthHeader(method, url, params = {}) {
-        const oauthParams = {
-            oauth_consumer_key: API_KEY,
-            oauth_nonce: generateNonce(),
-            oauth_signature_method: 'HMAC-SHA1',
-            oauth_timestamp: generateTimestamp(),
-            oauth_token: ACCESS_TOKEN,
-            oauth_version: '1.0'
-        };
-
-        const signingKey = `${encodeRFC3986(API_SECRET)}&${encodeRFC3986(ACCESS_SECRET)}`;
-        const baseString = getSignatureBaseString(method, url, params, oauthParams);
-
-        const signature = await hmacSHA1(signingKey, baseString);
-        oauthParams.oauth_signature = signature;
-
-        const headerParts = Object.keys(oauthParams)
-            .sort()
-            .map(key => `${encodeRFC3986(key)}="${encodeRFC3986(oauthParams[key])}"`)
-            .join(', ');
-        return `OAuth ${headerParts}`;
-    }
-
-    // Helper: Make authenticated X API request
-    async function xApiRequest(method, endpoint, bodyParams = {}, headers = {}) {
-        if (!API_KEY || API_KEY === 'YOUR_API_KEY') {
-            throw new Error('Please replace API credentials with your actual values');
+        function generateNonce() {
+            return Math.random().toString(36).substring(2, 15);
         }
 
-        const url = `https://api.twitter.com/1.1/${endpoint}`;
-        const authHeader = await generateOAuthHeader(method, url, bodyParams);
-
-        const formData = new URLSearchParams(bodyParams).toString();
-        const response = await fetch(url, {
-            method,
-            headers: {
-                'Authorization': authHeader,
-                'Content-Type': 'application/x-www-form-urlencoded',
-                ...headers
-            },
-            body: method !== 'GET' ? formData : undefined
-        });
-
-        if (!response.ok) {
-            const errText = await response.text();
-            throw new Error(`X API Error ${response.status}: ${errText}`);
+        function generateTimestamp() {
+            return Math.floor(Date.now() / 1000).toString();
         }
 
-        return response.json();
-    }
+        function encodeRFC3986(str) {
+            return encodeURIComponent(str).replace(/[!'()*]/g, c => {
+                return '%' + c.charCodeAt(0).toString(16).toUpperCase();
+            });
+        }
 
-    // Save image button
-    const saveBtn = document.getElementById('clear-');
-    if (saveBtn) {
-        saveBtn.addEventListener('click', async () => {
-            try {
-                const canvas = await generateImage();
-                canvas.toBlob(blob => {
-                    downloadBlob(blob, 'price_matrix_card.png');
-                }, 'image/png');
-            } catch (err) {
-                // Error handled in generateImage
+        function getSignatureBaseString(method, url, params, oauthParams) {
+            const allParams = {...oauthParams, ...params};
+            const sortedParams = Object.keys(allParams)
+                .sort()
+                .map(key => `${encodeRFC3986(key)}=${encodeRFC3986(allParams[key])}`)
+                .join('&');
+            return `${method.toUpperCase()}&${encodeRFC3986(url)}&${encodeRFC3986(sortedParams)}`;
+        }
+
+        function hmacSHA1(key, data) {
+            const crypto = window.crypto || window.msCrypto;
+            if (!crypto.subtle) throw new Error('Crypto API not supported');
+            return crypto.subtle.importKey('raw', new TextEncoder().encode(key), {
+                name: 'HMAC',
+                hash: 'SHA-1'
+            }, false, ['sign'])
+                .then(keyObj => crypto.subtle.sign('HMAC', keyObj, new TextEncoder().encode(data)))
+                .then(signature => btoa(String.fromCharCode(...new Uint8Array(signature)))
+                    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, ''));
+        }
+
+        async function generateOAuthHeader(method, url, params = {}) {
+            const oauthParams = {
+                oauth_consumer_key: API_KEY,
+                oauth_nonce: generateNonce(),
+                oauth_signature_method: 'HMAC-SHA1',
+                oauth_timestamp: generateTimestamp(),
+                oauth_token: ACCESS_TOKEN,
+                oauth_version: '1.0'
+            };
+
+            const signingKey = `${encodeRFC3986(API_SECRET)}&${encodeRFC3986(ACCESS_SECRET)}`;
+            const baseString = getSignatureBaseString(method, url, params, oauthParams);
+
+            const signature = await hmacSHA1(signingKey, baseString);
+            oauthParams.oauth_signature = signature;
+
+            const headerParts = Object.keys(oauthParams)
+                .sort()
+                .map(key => `${encodeRFC3986(key)}="${encodeRFC3986(oauthParams[key])}"`)
+                .join(', ');
+            return `OAuth ${headerParts}`;
+        }
+
+        // Helper: Make authenticated X API request
+        async function xApiRequest(method, endpoint, bodyParams = {}, headers = {}) {
+            if (!API_KEY || API_KEY === 'YOUR_API_KEY') {
+                throw new Error('Please replace API credentials with your actual values');
             }
-        });
-    } else {
-        console.warn('按钮 #clear- 未找到');
-    }
 
-    // Post to X button
-    const postBtn = document.getElementById('clear-a');
-    if (postBtn) {
-        postBtn.addEventListener('click', async () => {
-            try {
-                const canvas = await generateImage();
-                canvas.toBlob(async (blob) => {
-                    // Convert blob to base64 (remove data URL prefix)
-                    const reader = new FileReader();
-                    reader.readAsDataURL(blob);
-                    reader.onloadend = async () => {
-                        const base64Image = reader.result.split(',')[1];
+            const url = `https://api.twitter.com/1.1/${endpoint}`;
+            const authHeader = await generateOAuthHeader(method, url, bodyParams);
 
-                        try {
-                            // Step 1: Upload media (INIT, APPEND, FINALIZE)
-                            // INIT
-                            const initRes = await xApiRequest('POST', 'media/upload.json', {
-                                command: 'INIT',
-                                total_bytes: base64Image.length * 1.5, // Approximate (base64 is ~1.33x binary)
-                                media_type: 'image/png'
-                            });
-                            const mediaId = initRes.media_id_string;
+            const formData = new URLSearchParams(bodyParams).toString();
+            const response = await fetch(url, {
+                method,
+                headers: {
+                    'Authorization': authHeader,
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    ...headers
+                },
+                body: method !== 'GET' ? formData : undefined
+            });
 
-                            // APPEND (for small images; chunk if >5MB)
-                            await xApiRequest('POST', 'media/upload.json', {
-                                command: 'APPEND',
-                                media_id: mediaId,
-                                media_data: base64Image,
-                                segment_index: '0'
-                            });
-
-                            // FINALIZE
-                            const finalizeRes = await xApiRequest('POST', 'media/upload.json', {
-                                command: 'FINALIZE',
-                                media_id: mediaId
-                            });
-
-                            // Step 2: Post tweet with media
-                            await xApiRequest('POST', 'statuses/update.json', {
-                                status: 'My data analysis visualization #Research',
-                                media_ids: mediaId
-                            });
-
-                            alert('画像がXに公開されました！');
-                            console.log('Post successful:', finalizeRes);
-                        } catch (apiErr) {
-                            console.error('Xへの公開 エラー:', apiErr);
-                            alert('Xへの公開に失敗しました。詳細: ' + apiErr.message);
-                        }
-                    };
-                }, 'image/png');
-            } catch (err) {
-                // Error handled in generateImage
+            if (!response.ok) {
+                const errText = await response.text();
+                throw new Error(`X API Error ${response.status}: ${errText}`);
             }
-        });
-    } else {
-        console.warn('按钮 #clear-a 未找到');
-    }
+
+            return response.json();
+        }
+
+        // Save image button
+        const saveBtn = document.getElementById('clear-');
+        if (saveBtn) {
+            saveBtn.addEventListener('click', async () => {
+                try {
+                    const canvas = await generateImage();
+                    canvas.toBlob(blob => {
+                        downloadBlob(blob, 'price_matrix_card.png');
+                    }, 'image/png');
+                } catch (err) {
+                    // Error handled in generateImage
+                }
+            });
+        } else {
+            console.warn('按钮 #clear- 未找到');
+        }
+
+// Post to X button
+
+        function getCsrfToken() {
+            console.log("csrftoken", document.cookie.split('; ').find(row => row.startsWith('csrftoken'))?.split('=')[1])
+            return document.cookie.split('; ').find(row => row.startsWith('csrftoken'))?.split('=')[1];
+
+        }
+
+        // Post to X button
+        const postBtn = document.getElementById('clear-a');
+        if (postBtn) {
+            postBtn.addEventListener('click', async () => {
+                try {
+                    const canvas = await generateImage();
+                    canvas.toBlob(async (blob) => {
+                        // Convert blob to base64
+                        const reader = new FileReader();
+                        reader.readAsDataURL(blob);
+                        reader.onloadend = async () => {
+                            const base64Image = reader.result.split(',')[1]; // Remove "data:image/png;base64," prefix
+
+                            try {
+                                // Send to Django backend
+                                const response = await fetch('/AppleStockChecker/post-to-x/', {
+                                    method: 'POST',
+                                    credentials: 'same-origin',
+                                    headers: {
+                                        'X-CSRFToken': getCsrfToken() // Remove if @csrf_exempt is used
+                                    },
+                                    body: JSON.stringify({
+                                        base64Image,
+                                        caption: '我的数据分析可视化 #Research'
+                                    })
+                                });
+
+                                const result = await response.json();
+                                if (!response.ok) {
+                                    throw new Error(result.error || '发布到 X 失败');
+                                }
+
+                                alert('图片已发布到 X！');
+                                console.log('发布成功:', result);
+                            } catch (apiErr) {
+                                console.error('X发布错误:', apiErr);
+                                alert('发布到 X 失败。详细: ' + apiErr.message);
+                            }
+                        };
+                    }, 'image/png');
+                } catch (err) {
+                    // Error handled in generateImage
+                }
+            });
+        } else {
+            console.warn('按钮 #clear-a 未找到');
+        }
 
 
     })();

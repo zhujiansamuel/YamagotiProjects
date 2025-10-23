@@ -177,6 +177,16 @@ docker compose logs -f nginx
 
 docker compose up -d --scale worker=6
 
+
+docker ps -a
+docker logs -f apple-web-1 --tail 200
+
+docker logs -f apple-nginx-1 --tail 200
+
+https://api.webscraper.io/api/v1/scraping-jobs?sitemap_id=1367906&api_token=
+
+
+
 localStorage.setItem('iphone:token', ' ;
 
 localStorage.setItem('iphone:token', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzYwOTUyNDYzLCJpYXQiOjE3NjA5NTA2NjQsImp0aSI6ImMwYjJiMmI3YTM1OTRiNDJhYWM2YWFhYmVjMjhhNTkxIiwidXNlcl9pZCI6IjEifQ.MFVyUl1IYMOVILX2nAYyKPWs4R3Sr9FYaoIznAOC2GA');

@@ -64,6 +64,17 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from AppleStockChecker.utils.external_ingest.registry import get_cleaner, run_cleaner
 from AppleStockChecker.models import SecondHandShop, Iphone, PurchasingShopPriceRecord
 
+import tweepy
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
+import base64
+import tempfile
+import os
+from django.conf import settings
+import os
+from dotenv import load_dotenv
+
 # 复用你先前实现过的入库主流程（此处假设已存在；若文件不同模块，请调整导入）
 from AppleStockChecker.services.external_ingest_service import ingest_external_dataframe
 
@@ -1864,3 +1875,194 @@ class PurchasingShopTimeAnalysisPSTACompactViewSet(
         "Update_Count",
     ]
     ordering = ["-Timestamp_Time"]
+
+
+load_dotenv()
+
+import os
+import json
+import base64
+import tempfile
+import time
+import logging
+
+from django.http import JsonResponse
+from django.views.decorators.http import require_http_methods
+from django.views.decorators.csrf import csrf_exempt
+from requests_oauthlib import OAuth2Session
+import requests
+
+logger = logging.getLogger(__name__)
+
+# v2 endpoints
+MEDIA_ENDPOINT_URL = 'https://api.x.com/2/media/upload'
+POST_TO_X_URL = 'https://api.x.com/2/tweets'
+
+# chunk size for APPEND (4 MB)
+CHUNK_SIZE = 4 * 1024 * 1024
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def post_to_x(request):
+    # scopes = ["media.write", "users.read", "tweet.read", "tweet.write", "offline.access"]
+    # client_id = os.environ.get("CLIENT_ID")
+    # redirect_uri = "https://www.example.com"
+    # oauth = OAuth2Session(client_id, redirect_uri=redirect_uri, scope=scopes)
+    # auth_url = "https://x.com/i/oauth2/authorize"
+    # authorization_url, state = oauth.authorization_url(
+    #     auth_url, code_challenge=code_challenge, code_challenge_method="S256"
+    # )
+    #
+
+    try:
+        # Parse JSON
+        try:
+            data = json.loads(request.body.decode('utf-8'))
+        except Exception as e:
+            logger.exception("JSON 解析失败")
+            return JsonResponse({'error': 'invalid_json', 'details': str(e)}, status=400)
+
+        base64_image = data.get('base64Image')
+        caption = data.get('caption', '')
+
+        if not base64_image:
+            return JsonResponse({'error': 'missing_base64Image'}, status=400)
+
+        # Bearer token (OAuth2 user token) — must have media.write & tweet.write
+        bearer = os.getenv('X_OAUTH2_USER_BEARER')
+        if not bearer:
+            logger.error("X_OAUTH2_USER_BEARER env missing")
+            return JsonResponse({'error': 'server_misconfig', 'details': 'missing X_OAUTH2_USER_BEARER'}, status=500)
+
+        headers = {
+            'Authorization': f'Bearer {bearer}',
+            'User-Agent': 'DjangoMediaUpload/1.0'
+        }
+
+        # Accept data: URI or raw base64
+        if base64_image.startswith('data:'):
+            try:
+                base64_image = base64_image.split(',', 1)[1]
+            except Exception:
+                return JsonResponse({'error': 'invalid_data_uri'}, status=400)
+
+        # decode and write to temp file
+        try:
+            image_bytes = base64.b64decode(base64_image)
+        except Exception as e:
+            logger.exception("base64 解码失败")
+            return JsonResponse({'error': 'invalid_base64', 'details': str(e)}, status=400)
+
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as f:
+                f.write(image_bytes)
+                f.flush()
+                tmp_path = f.name
+
+            total_bytes = os.path.getsize(tmp_path)
+            logger.info("临时图片写入: %s (%.1f KB)", tmp_path, total_bytes / 1024.0)
+
+            # ---- 1) INIT ----
+            init_payload = {
+                'command': 'INIT',
+                'media_type': 'image/png',
+                'total_bytes': str(total_bytes),
+                'media_category': 'tweet_image'
+            }
+            r_init = requests.post(MEDIA_ENDPOINT_URL, headers=headers, data=init_payload, timeout=60)
+            logger.info("INIT status=%s body=%s", r_init.status_code, _safe_json_or_text(r_init))
+            if r_init.status_code != 200:
+                return JsonResponse({'error': 'init_failed', 'status': r_init.status_code, 'body': _safe_json_or_text(r_init)}, status=502)
+
+            init_json = r_init.json()
+            # v2 response shape: data.id or data.media_id? sample uses data.id
+            media_id = init_json.get('data', {}).get('id') or init_json.get('data', {}).get('media_id') or init_json.get('media_id') or init_json.get('id')
+            if not media_id:
+                logger.error("INIT 未返回 media_id: %s", init_json)
+                return JsonResponse({'error': 'init_no_media_id', 'body': init_json}, status=502)
+
+            # ---- 2) APPEND (分片上传) ----
+            segment_index = 0
+            with open(tmp_path, 'rb') as fh:
+                while True:
+                    chunk = fh.read(CHUNK_SIZE)
+                    if not chunk:
+                        break
+
+                    files = {'media': ('chunk', chunk, 'application/octet-stream')}
+                    append_payload = {
+                        'command': 'APPEND',
+                        'media_id': media_id,
+                        'segment_index': str(segment_index)
+                    }
+                    r_append = requests.post(MEDIA_ENDPOINT_URL, headers=headers, data=append_payload, files=files, timeout=120)
+                    logger.info("APPEND idx=%s status=%s", segment_index, r_append.status_code)
+                    if r_append.status_code < 200 or r_append.status_code > 299:
+                        # return detailed append error
+                        return JsonResponse({'error': 'append_failed', 'segment': segment_index, 'status': r_append.status_code, 'body': _safe_json_or_text(r_append)}, status=502)
+                    segment_index += 1
+
+            # ---- 3) FINALIZE ----
+            finalize_payload = {'command': 'FINALIZE', 'media_id': media_id}
+            r_final = requests.post(MEDIA_ENDPOINT_URL, headers=headers, data=finalize_payload, timeout=60)
+            logger.info("FINALIZE status=%s body=%s", r_final.status_code, _safe_json_or_text(r_final))
+            if r_final.status_code < 200 or r_final.status_code > 299:
+                return JsonResponse({'error': 'finalize_failed', 'status': r_final.status_code, 'body': _safe_json_or_text(r_final)}, status=502)
+
+            final_json = r_final.json()
+            processing_info = final_json.get('data', {}).get('processing_info') or final_json.get('processing_info')
+
+            # If processing_info exists, poll until succeeded or failed
+            if processing_info:
+                state = processing_info.get('state')
+                # loop with check_after_secs
+                while state and state.lower() in ('pending', 'in_progress'):
+                    check_after = processing_info.get('check_after_secs', 5)
+                    logger.info("processing_info state=%s, sleep %s", state, check_after)
+                    time.sleep(check_after)
+                    status_params = {'command': 'STATUS', 'media_id': media_id}
+                    r_status = requests.get(MEDIA_ENDPOINT_URL, headers=headers, params=status_params, timeout=30)
+                    logger.info("STATUS status=%s body=%s", r_status.status_code, _safe_json_or_text(r_status))
+                    if r_status.status_code < 200 or r_status.status_code > 299:
+                        return JsonResponse({'error': 'status_check_failed', 'status': r_status.status_code, 'body': _safe_json_or_text(r_status)}, status=502)
+                    status_json = r_status.json()
+                    processing_info = status_json.get('data', {}).get('processing_info') or status_json.get('processing_info')
+                    if not processing_info:
+                        break
+                    state = processing_info.get('state')
+                    if state and state.lower() == 'failed':
+                        return JsonResponse({'error': 'processing_failed', 'processing_info': processing_info}, status=502)
+
+            # ---- 4) create tweet with media ----
+            tweet_payload = {
+                'text': caption or '',
+                'media': {
+                    'media_ids': [media_id]
+                }
+            }
+            r_tweet = requests.post(POST_TO_X_URL, headers={**headers, 'Content-Type': 'application/json'}, json=tweet_payload, timeout=30)
+            logger.info("create_tweet status=%s body=%s", r_tweet.status_code, _safe_json_or_text(r_tweet))
+            if r_tweet.status_code < 200 or r_tweet.status_code > 299:
+                return JsonResponse({'error': 'create_tweet_failed', 'status': r_tweet.status_code, 'body': _safe_json_or_text(r_tweet)}, status=502)
+
+            return JsonResponse({'success': True, 'media_id': media_id, 'tweet': r_tweet.json()})
+
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
+
+    except Exception as e:
+        logger.exception("post_to_x 未知错误")
+        return JsonResponse({'error': 'server_error', 'details': str(e)}, status=500)
+
+
+# Helpers
+def _safe_json_or_text(resp):
+    try:
+        return resp.json()
+    except Exception:
+        return resp.text or ''

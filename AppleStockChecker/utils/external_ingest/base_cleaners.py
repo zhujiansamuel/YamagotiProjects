@@ -837,6 +837,7 @@ def clean_shop2(shop2_df: pd.DataFrame) -> pd.DataFrame:
     out_rows = []
 
     for _, row in df.iterrows():
+        recorded_at = parse_dt_aware(row.get("time-scraped"))
         raw_modelcap = _norm(row.get("data2-1"))
         if not raw_modelcap:
             continue
@@ -871,6 +872,7 @@ def clean_shop2(shop2_df: pd.DataFrame) -> pd.DataFrame:
         try:
             rec_dt = pd.to_datetime(rec_raw, utc=True, errors="coerce")
             recorded_at = rec_dt.isoformat() if pd.notnull(rec_dt) else None
+            recorded_at = parse_dt_aware(row.get("time-scraped"))
         except Exception:
             recorded_at = None
 

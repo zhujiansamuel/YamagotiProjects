@@ -7,7 +7,7 @@ from rest_framework_simplejwt.views import (
 from .views import ApiRoot, HealthView, MeView
 
 from rest_framework.routers import DefaultRouter
-from .views import IphoneViewSet, OfficialStoreViewSet, InventoryRecordViewSet
+from .views import IphoneViewSet, OfficialStoreViewSet, InventoryRecordViewSet,post_to_x
 from .views import SecondHandShopViewSet, PurchasingShopPriceRecordViewSet
 from .views import PurchasingShopTimeAnalysisViewSet,PurchasingShopTimeAnalysisPSTACompactViewSet
 from .views_frontend import StockDashboardView
@@ -67,6 +67,7 @@ urlpatterns = [
 
                   path("analysis-dashboard/", AnalysisDashboardView.as_view(), name="analysis-dashboard/"),#二手店价格分析（前端只显示 · 后端做分析）
                   path("purchasing-time-analyses/dispatch_ts/", dispatch_psta_batch_same_ts),
+                  path('post-to-x/', post_to_x, name='post_to_x'),
 
               ] + urlpatterns
 
