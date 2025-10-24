@@ -91,36 +91,6 @@ const AVG_LINES_DEFAULTS = [
 ];
 
 
-分桶：bucketMinutes 支持 30/60/600/1440（UI 可改；代码里也能填任意分钟值）。
-
-线宽/颜色/线型：lineWidth/color/dash（dash 可选 solid|dash|dot|dashdot）。
-
-默认参与的店铺集合：shops 可设 'ALL' 或 ['店铺A','店铺B']（将与当前勾选求交集）。
-
-右侧标注（需求4）：自定义插件 rightLabels / rightLabelsMerged 会在图最右侧绘制“每条线的最新值”。
-如需只给平均线加标注，把 chart.data.datasets.forEach 改成只筛选平均线即可。
-
-纵轴在右（需求3）：所有图 y.position='right'。
-
-横轴标注（需求5）：ticks.callback = tickMidnightLabel 仅返回每日 00:00 的日期，其余时间返回空字符串不显示。
-
-缩放/平移：
-zoomAll(factor)、panAll(frac)、resetAllZoom() 对所有图统一操作，仅修改 x 轴 min/max，并使用 initFixedYDomain() 固定 y 轴为全域范围（+5% padding），不随缩放抖动。
-
-绝大部份的修改是相当不错的，有一些细致的地方请进一步调整。
-1，新加入的图标高度过高，请与其他图标保持一致。
-2，最右端显示重合或显示遮蔽
-3，新加入的颜色平均值似乎发生曲线首位相连的现象，检查计算时时间戳是否正确，同一店铺同一机型的不同颜色机型的价格大体在同一时间取得，试着缩小颜色平均时的时间窗口大小，看能不能防止首尾相连或者错误链接的情况的发生。
-
-在做如下修改：
-1，平均值计算使用移动平均值的逻辑，根据某个点位之前的N个点位做平均值
-2，平均值计算的时间间隔（即根据N个之前的点位中的这个变量N）使用手动输入的整数。
-3，增加单独的纵轴方向的缩放和上下移动。
-
-黑色的平均值使用原本的计算方法，其他平均值基于黑色曲线计算。
-
-+818010186780
-
 
 
 
@@ -169,7 +139,7 @@ git pull origin master
 docker compose build
 docker compose up -d web nginx
 
-docker compose up -d --scale worker=12
+docker compose up -d --scale worker=5
 
 docker compose logs -f web
 docker compose logs -f celery
@@ -434,6 +404,10 @@ curl -i https://yamaguti.ngrok.io/AppleStockChecker/static/admin/simplepro/image
 
 
 
+recorded_after
+recorded_before
+
+https://yamaguti.ngrok.io/AppleStockChecker/purchasing-price-records/?recorded_after= & recorded_before=
 
 https://yamaguti.ngrok.io/AppleStockChecker/purchasing-time-analyses/psta-compact/?start=2025-10-01T10%3A00%3A00%2B09%3A00&end=2025-10-20T10%3A00%3A00%2B09%3A00&shop=13&iphone__part_number=MG854J%2FA
 
@@ -480,4 +454,22 @@ https://yamaguti.ngrok.io/AppleStockChecker/purchasing-time-analyses/psta-compac
 <tr data-color="blue">....
 <tr data-color="silver">....
 
+
+curl -X POST https://verbless-sadistically-jayceon.ngrok-free.dev/AppleStockChecker/post-to-x/ \
+     -H "Content-Type: application/json" \
+     -d '{"base64Image": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI5gAAAABJRU5ErkJggg==", "caption": "Test post"}'
+
+
+
+
+スマホ、ゲーム機等の買取価格を監視しています。毎日10:30〜18:30頃に配信します。対象店舗は固定ポストをご参照ください。 #iPhone17買取相場 / #iPhone16買取相場 / #iPhone15買取相場 / #Android買取相場 / #Pixel買取相場 / #Game買取相場
+
+#iPhone17買取相場
+#iPhone17買取相場20251024
+最終更新日時：2025/10/24（金）12時00分
+
+curl "https://docs.google.com/spreadsheets/d/e/2PACX-1vTHgVMpH0FnvdAmk2sqEUVkexuuo5oA5XNZTaTbCMGMpy8HSK3TImgQviU99UX-STS4B4IuNrnYG7Sz/pubhtml?gid=1011791912&single=true&range=A1:B152&widget=false&headers=false&chrome=false"
+
+
+https://docs.google.com/spreadsheets/d/e/2PACX-1vTHgVMpH0FnvdAmk2sqEUVkexuuo5oA5XNZTaTbCMGMpy8HSK3TImgQviU99UX-STS4B4IuNrnYG7Sz/pubhtml?gid=1011791912&single=true&range=A1:B152&widget=false&headers=false&chrome=false
 

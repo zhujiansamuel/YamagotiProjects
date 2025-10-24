@@ -625,7 +625,7 @@
                 <td class="nodata" data-shop-id="20" data-iphen-id="21" data-to-marge-iphone-id="21 22 20">※要問</td>
             </tr>
             <tr data-color="blue">
-                <td style="background:#351c75;text-align:left;">Blue</td>
+                <td style="background:#4b5780;text-align:left;">Blue</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="22">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="22">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="22">※要問</td>
@@ -759,7 +759,7 @@
                 <td class="nodata" data-shop-id="20" data-iphen-id="24" data-to-marge-iphone-id="24 25 23">※要問</td>
             </tr>
             <tr data-color="blue">
-                <td style="background:#351c75;text-align:left;">Blue</td>
+                <td style="background:#4b5780;text-align:left;">Blue</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="25">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="25">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="25">※要問</td>
@@ -889,7 +889,7 @@
                 <td class="nodata" data-shop-id="20" data-iphen-id="27" data-to-marge-iphone-id="27 28 26">※要問</td>
             </tr>
             <tr data-color="blue">
-                <td style="background:#351c75;text-align:left;">Blue</td>
+                <td style="background:#4b5780;text-align:left;">Blue</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="28">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="28">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="28">※要問</td>
@@ -1019,7 +1019,7 @@
                 <td class="nodata" data-shop-id="20" data-iphen-id="30" data-to-marge-iphone-id="30 31 29">※要問</td>
             </tr>
             <tr data-color="blue">
-                <td style="background:#351c75;text-align:left;">Blue</td>
+                <td style="background:#4b5780;text-align:left;">Blue</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="31">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="31">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="31">※要問</td>
@@ -1193,7 +1193,7 @@
                 <td class="nodata" data-shop-id="20" data-iphen-id="12" data-to-marge-iphone-id="12 13 11">※要問</td>
             </tr>
             <tr data-color="blue">
-                <td style="background:#351c75;text-align:left;">Blue</td>
+                <td style="background:#4b5780;text-align:left;">Blue</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="13">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="13">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="13">※要問</td>
@@ -1323,7 +1323,7 @@
                 <td class="nodata" data-shop-id="20" data-iphen-id="15" data-to-marge-iphone-id="15 16 14">※要問</td>
             </tr>
             <tr data-color="blue">
-                <td style="background:#351c75;text-align:left;">Blue</td>
+                <td style="background:#4b5780;text-align:left;">Blue</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="16">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="16">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="16">※要問</td>
@@ -1453,7 +1453,7 @@
                 <td class="nodata" data-shop-id="20" data-iphen-id="18" data-to-marge-iphone-id="18 19 17">※要問</td>
             </tr>
             <tr data-color="blue">
-                <td style="background:#351c75;text-align:left;">Blue</td>
+                <td style="background:#4b5780;text-align:left;">Blue</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="19">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="19">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="19">※要問</td>
@@ -1889,9 +1889,9 @@
         (function injectStyles() {
             if ($id('psta-row-styles')) return;
             const css = `
-      .psta-max   { background:#d9fbe5 !important; color:#b42318 !important; } /* 最高：绿底+红字 */
+      .psta-max   { background:#00ff00 !important; color:#b42318 !important; } /* 最高：绿底+红字 */
       .psta-min   { color:#b42318 !important; }                                 /* 最低：红字 */
-      .psta-close { background:#d9fbe5 !important; }                             /* 最接近平均：绿底 */
+      .psta-close { background:#00ff00 !important; }                             /* 最接近平均：绿底 */
       .is-hidden  { display:none !important; }                                   /* 列隐藏 */
     `;
             const style = document.createElement('style');
@@ -2852,13 +2852,14 @@
 
             // 获取当前标题并去除首尾空格
             const txt = el.textContent.trim();
+            el.textContent = `iPhone17 買取相場${ymd}${time}`;
 
             // 替换末尾的 8 位日期，或追加日期+时间
-            if (/\d{8}(?!.*\d)/.test(txt)) {
-                el.textContent = txt.replace(/\d{8}(?!.*\d)/, ymd + time);
-            } else {
-                el.textContent = `${txt}${ymd}${time}`;
-            }
+            // if (/\d{8}(?!.*\d)/.test(txt)) {
+
+            // } else {
+            //     el.textContent = `${txt}${ymd}${time}`;
+            // }
         }
 
         async function fillChangeFromPreviousDay(endBase) {
