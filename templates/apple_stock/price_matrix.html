@@ -2308,7 +2308,7 @@
 
         function highlightRowExtremes() {
             // 兼容 data-iphone-id 与 data-iphen-id
-            const ROW_SHOP_CELL_SEL = 'td[data-shop-id][data-iphen-average-id]';
+            const ROW_SHOP_CELL_SEL = 'td[data-shop-id][data-iphen-average-id],td[data-shop-id][iphen-average-id]';
             let affected = 0;
 
             // 将单元格解析为数值（去掉逗号/货币等；※要問/nodata/隐藏替换 一律跳过）
@@ -2361,13 +2361,17 @@
                     if (d < bestDiff) bestDiff = d;
                 }
 
-                // 打标（你的样式里 psta-max/psta-min/psta-close 需已定义）
+                // 使用 epsilon 来处理浮点微差或类型问题
+                const EPS = 1e-6;
+
+                // 打标（并列也都会被标）
                 for (const it of items) {
-                    if (it.v === maxVal) it.td.classList.add('psta-max'); // 最高
-                    {#if (it.v === minVal) it.td.classList.add('psta-min'); // 最低#}
-                    // 若需要标“最接近平均”的格，取消注释下一行
-                    // if (Math.abs(it.v - avgVal) === bestDiff) it.td.classList.add('psta-close');
+                  if (Math.abs(it.v - maxVal) <= EPS) it.td.classList.add('psta-max');
+                  if (Math.abs(it.v - minVal) <= EPS) it.td.classList.add('psta-min');
+                  // 若需要标“最接近平均”的格，取消下一行注释：
+                  // if (Math.abs(it.v - avgVal) <= bestDiff + EPS) it.td.classList.add('psta-close');
                 }
+
 
                 affected++;
             });
