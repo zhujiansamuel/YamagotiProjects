@@ -344,7 +344,7 @@
         }
 
         .dc {
-            border:0 !important;
+            border: 0 !important;
         }
 
         /* thead 高さ0指定 */
@@ -1844,29 +1844,29 @@
                 <td class="nodata all-price" data-shop-id="20" data-iphen-average-id="6 7 8 9 10">※要問</td>
             </tr>
 
-           <tr>
-               <td class="dc"></td>
-               <td class="dc"></td>
-               <td class="dc"></td>
-               <td class="dc"></td>
-               <td class="dc"></td>
-               <td class="dc"></td>
-               <td class="dc"></td>
-               <td class="dc"></td>
-               <td class="dc"></td>
-               <td class="dc"></td>
-               <td class="dc"></td>
-               <td class="dc"></td>
-               <td class="dc"></td>
-               <td class="dc"></td>
-               <td class="dc"></td>
-               <td class="dc"></td>
-               <td class="dc"></td>
-               <td class="dc"></td>
-               <td class="dc"></td>
-               <td class="dc"></td>
-               <td class="dc"></td>
-               <td class="dc" colspan="5">※データの正確性、および完全性は保証致しません。</td>
+            <tr>
+                <td class="dc"></td>
+                <td class="dc"></td>
+                <td class="dc"></td>
+                <td class="dc"></td>
+                <td class="dc"></td>
+                <td class="dc"></td>
+                <td class="dc"></td>
+                <td class="dc"></td>
+                <td class="dc"></td>
+                <td class="dc"></td>
+                <td class="dc"></td>
+                <td class="dc"></td>
+                <td class="dc"></td>
+                <td class="dc"></td>
+                <td class="dc"></td>
+                <td class="dc"></td>
+                <td class="dc"></td>
+                <td class="dc"></td>
+                <td class="dc"></td>
+                <td class="dc"></td>
+                <td class="dc"></td>
+                <td class="dc" colspan="5">※データの正確性、および完全性は保証致しません。</td>
 
             </tr>
 
@@ -1875,8 +1875,6 @@
     </div>
 
     <div class="model-gap"></div>
-
-
 
 
 </div>
@@ -2313,14 +2311,35 @@
 
             // 将单元格解析为数值（去掉逗号/货币等；※要問/nodata/隐藏替换 一律跳过）
             const parseCellNumber = (td) => {
-                if (!td || !(td instanceof HTMLElement)) return null;
-                if (td.classList.contains('nodata')) return null;
-                if (td.dataset.hidden === '1' || td.dataset.replaced === '1') return null;
-                const raw = td.dataset?.v ?? td.textContent ?? '';
-                const s = String(raw).trim();
-                if (!s || s === '※要問' || s === '—' || s === '-' || s.toLowerCase() === 'n/a') return null;
-                const n = Number(s.replace(/[,\s¥円]/g, ''));
-                return Number.isFinite(n) ? n : null;
+                try {
+                    if (!td || !(td instanceof HTMLElement)) return null;
+
+                    // 跳过显式隐藏（包括 inline style "display: none !important"）
+                    const cs = window.getComputedStyle ? getComputedStyle(td) : null;
+                    if (cs && (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0')) return null;
+
+                    // 传统 class / dataset 标记的“无数据 / 被隐藏 / 被替换”的情况
+                    if (td.classList.contains('nodata')) return null;
+                    if (td.dataset.hidden === '1' || td.dataset.replaced === '1') return null;
+
+                    // 取值（优先 dataset.v，再用文本）
+                    const raw = td.dataset?.v ?? td.textContent ?? '';
+                    const s = String(raw).trim();
+
+                    // 跳过各种特殊文本
+                    if (!s) return null;
+                    const low = s.toLowerCase();
+                    if (s === '※要問' || s === '要問' || s === '—' || s === '-' || low === 'n/a' || low === '要確認') return null;
+
+                    // 清理货币符号、逗号、空白后转数值（兼容全角符号）
+                    const norm = s.replace(/[,\s\u3000¥￥円]/g, '').replace(/（.*?）/g, '');
+                    const n = Number(norm);
+
+                    return Number.isFinite(n) ? n : null;
+                } catch (e) {
+                    // 容错：若任何异常都视为不可用
+                    return null;
+                }
             };
 
             document.querySelectorAll('tr').forEach(tr => {
@@ -2353,7 +2372,7 @@
                 const nums = items.map(x => x.v);
                 const maxVal = Math.max(...nums); // 行内最大
                 const minVal = Math.min(...nums); // 行内最小
-                console.log("maxVal----------------------------------",maxVal)
+                console.log("maxVal----------------------------------", maxVal)
 
                 // 距平均最近的差值（允许并列）
                 let bestDiff = Infinity;
@@ -2367,11 +2386,11 @@
 
                 // 打标（并列也都会被标）
                 for (const it of items) {
-                  if (Math.abs(it.v - maxVal) <= EPS) it.td.classList.add('psta-max');
-                  console.log("it.v:",it.v,"<------>maxVal:",maxVal)
-                  {#if (Math.abs(it.v - minVal) <= EPS) it.td.classList.add('psta-min');#}
-                  // 若需要标“最接近平均”的格，取消下一行注释：
-                  // if (Math.abs(it.v - avgVal) <= bestDiff + EPS) it.td.classList.add('psta-close');
+                    if (Math.abs(it.v - maxVal) <= EPS) it.td.classList.add('psta-max');
+                    console.log("it.v:", it.v, "<------>maxVal:", maxVal)
+                    {#if (Math.abs(it.v - minVal) <= EPS) it.td.classList.add('psta-min');#}
+                    // 若需要标“最接近平均”的格，取消下一行注释：
+                    // if (Math.abs(it.v - avgVal) <= bestDiff + EPS) it.td.classList.add('psta-close');
                 }
 
 
