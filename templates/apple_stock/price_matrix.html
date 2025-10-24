@@ -2367,7 +2367,7 @@
                 // 打标（并列也都会被标）
                 for (const it of items) {
                   if (Math.abs(it.v - maxVal) <= EPS) it.td.classList.add('psta-max');
-                  if (Math.abs(it.v - minVal) <= EPS) it.td.classList.add('psta-min');
+                  {#if (Math.abs(it.v - minVal) <= EPS) it.td.classList.add('psta-min');#}
                   // 若需要标“最接近平均”的格，取消下一行注释：
                   // if (Math.abs(it.v - avgVal) <= bestDiff + EPS) it.td.classList.add('psta-close');
                 }
