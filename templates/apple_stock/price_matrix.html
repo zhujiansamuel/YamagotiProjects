@@ -2026,7 +2026,7 @@
                     }
                 }
 
-                console.log('[PSTA] page reset to initial state.');
+                {#console.log('[PSTA] page reset to initial state.');#}
             } catch (err) {
                 console.warn('[PSTA] resetPageToInitialState error:', err);
             }
@@ -2093,7 +2093,7 @@
                     delete td.dataset.merged;
                 });
 
-                console.log('[PSTA] restoreMergedColorRows: restored merged rows/hidden cells.');
+                {#console.log('[PSTA] restoreMergedColorRows: restored merged rows/hidden cells.');#}
             } catch (err) {
                 console.warn('[PSTA] restoreMergedColorRows error:', err);
             }
@@ -2140,7 +2140,7 @@
                 snap.push({_shops: shops.map(l => ({outerHTML: l.outerHTML, text: l.textContent, html: l.innerHTML}))});
 
                 window[SNAP_KEY] = snap;
-                console.log('[PSTA] initial format snapshot captured:', snap.length, 'nodes');
+                {#console.log('[PSTA] initial format snapshot captured:', snap.length, 'nodes');#}
             }
 
             // 计算一个可用于查找该节点的简单选择器（尽量稳定）
@@ -2244,7 +2244,7 @@
                     // injected.remove();
                 }
 
-                console.log('[PSTA] initial formatting restored.');
+                {#console.log('[PSTA] initial formatting restored.');#}
             }
 
             // 暴露给全局（方便调试）
@@ -2353,6 +2353,7 @@
                 const nums = items.map(x => x.v);
                 const maxVal = Math.max(...nums); // 行内最大
                 const minVal = Math.min(...nums); // 行内最小
+                console.log("maxVal----------------------------------",maxVal)
 
                 // 距平均最近的差值（允许并列）
                 let bestDiff = Infinity;
@@ -2367,6 +2368,7 @@
                 // 打标（并列也都会被标）
                 for (const it of items) {
                   if (Math.abs(it.v - maxVal) <= EPS) it.td.classList.add('psta-max');
+                  console.log("it.v:",it.v,"<------>maxVal:",maxVal)
                   {#if (Math.abs(it.v - minVal) <= EPS) it.td.classList.add('psta-min');#}
                   // 若需要标“最接近平均”的格，取消下一行注释：
                   // if (Math.abs(it.v - avgVal) <= bestDiff + EPS) it.td.classList.add('psta-close');
@@ -2376,7 +2378,7 @@
                 affected++;
             });
 
-            console.log(`[PSTA] row extremes highlighted on ${affected} row(s).`);
+            {#console.log(`[PSTA] row extremes highlighted on ${affected} row(s).`);#}
         }
 
         const LS_KEY = 'useLocalIdMap';
@@ -2415,7 +2417,7 @@
 
             cb.addEventListener('change', () => {
                 setMappingEnabled(cb.checked);
-                console.log('[PSTA] Local ID Mapping =', cb.checked);
+                {#console.log('[PSTA] Local ID Mapping =', cb.checked);#}
             });
         }
 
@@ -2494,7 +2496,7 @@
             // 把所有店铺单元的查询缓存一下，减少 DOM 扫描成本
             const shopCells = Array.from(document.querySelectorAll('td[data-shop-id][data-iphen-id]'));
             for (const [key, val] of closest.entries()) {
-                console.log([key, val])
+                {#console.log([key, val])#}
                 const [sKeyStr, iKeyStr] = String(key).split('-');
                 const sKey = Number(sKeyStr), iKey = Number(iKeyStr);
                 if (!Number.isFinite(sKey) || !Number.isFinite(iKey)) continue;
@@ -2514,14 +2516,14 @@
                     const basePrice = BASE_LINE_PRICE;
                     if (Number.isFinite(basePrice)) {
                         const price = Number(val.price);
-                        console.log("price:", price)
+                        {#console.log("price:", price)#}
                         if (Number.isFinite(price) && price < basePrice) {
                             belowHalf = true;
                             // 标记 DOM：清 dataset.v，显示※要問，并加 nodata class
                             candidateTd.dataset.v = '';
                             candidateTd.textContent = '※要問';
                             candidateTd.classList.add('nodata');
-                            console.log("price:", price, ";basePrice:", basePrice)
+                            {#console.log("price:", price, ";basePrice:", basePrice)#}
                         }
                     }
                 }
@@ -2571,7 +2573,7 @@
 
                 }
             }
-            console.log(`[PSTA] singles filled: ${ok}/${cells.length} (map=${isMappingEnabled()})`);
+            {#console.log(`[PSTA] singles filled: ${ok}/${cells.length} (map=${isMappingEnabled()})`);#}
         }
 
         function fillSinglesSelective(closest, shopIdSet) {
@@ -2592,7 +2594,7 @@
                     ok++;
                 }
             }
-            console.log(`[PSTA] singles backfilled for ${ok} cell(s) across ${shopIdSet.size} shop(s).`);
+            {#console.log(`[PSTA] singles backfilled for ${ok} cell(s) across ${shopIdSet.size} shop(s).`);#}
         }
 
         const toHundredsRound = v => Math.round(v / 100) * 100; // 百位以下四舍五入
@@ -2672,7 +2674,7 @@
                     td.classList.add('nodata');
                 }
             }
-            console.log(`[PSTA] averages (now extremes) filled: ${ok}/${cells.length} (map=${isMappingEnabled()})`);
+            {#console.log(`[PSTA] averages (now extremes) filled: ${ok}/${cells.length} (map=${isMappingEnabled()})`);#}
         }
 
         function recalcRangeCells(closest) {
@@ -2757,7 +2759,7 @@
                 rowsDone++;
             });
 
-            console.log(`[PSTA] range highest/diff/rate/average recalculated for ${rowsDone} row(s).`);
+            {#console.log(`[PSTA] range highest/diff/rate/average recalculated for ${rowsDone} row(s).`);#}
         }
 
         function getShopsWithNoAnyData() {
@@ -2809,7 +2811,7 @@
                     const sid = Number(sidRaw);
                     if (!Number.isFinite(sid)) {
                         invalidCount++;
-                        console.warn('[shops] skip invalid id:', s);
+                        {#console.warn('[shops] skip invalid id:', s);#}
                         continue;
                     }
 
@@ -3015,7 +3017,7 @@
                 }
             }
 
-            console.log(`[PSTA] change-from-previous-day (using current-window max vs prev-day max) filled for ${done}/${changeCells.length} cell(s).`);
+            {#console.log(`[PSTA] change-from-previous-day (using current-window max vs prev-day max) filled for ${done}/${changeCells.length} cell(s).`);#}
         }
 
         // ---------- 合并相同价格的 iphone 行格（基于 data-to-marge-iphone-id） ----------
@@ -3252,7 +3254,7 @@
                     }
                 }
             });
-            console.log('[PSTA] mergeColorRows: merge pass completed.');
+            {#console.log('[PSTA] mergeColorRows: merge pass completed.');#}
         }
 
         function mergeColorRowsByValue() {
@@ -3350,7 +3352,7 @@
                 }
             }
 
-            console.log(`[PSTA] mergeColorRowsByValue: merged ${totalMergedGroups} group(s).`);
+            {#console.log(`[PSTA] mergeColorRowsByValue: merged ${totalMergedGroups} group(s).`);#}
         }
 
         {#function parseCellPriceForMerge(td) {#}
@@ -3466,7 +3468,7 @@
                 copied++;
             }
 
-            console.log(`[PSTA] copyShopColumn: copied ${copied} cells from shop ${sourceId} -> ${targetId}`);
+            {#console.log(`[PSTA] copyShopColumn: copied ${copied} cells from shop ${sourceId} -> ${targetId}`);#}
             return copied;
         }
 
@@ -3640,7 +3642,7 @@
                 }
             }
 
-            console.log('[PSTA] mergeColorRows completed.');
+            {#console.log('[PSTA] mergeColorRows completed.');#}
         }
 
         // ---------- 主流程----------
@@ -3685,7 +3687,7 @@
                 let rows2Len = 0;
                 if (missingShops.size > 0) {
                     const start2d = new Date(end.getTime() - 12 * 60 * 60 * 1000);
-                    console.log(`[PSTA] backfill: ${missingShops.size} shop(s) have no data, searching last 2 days...`);
+                    {#console.log(`[PSTA] backfill: ${missingShops.size} shop(s) have no data, searching last 2 days...`);#}
                     const rows2 = await fetchRows(start2d, end);
                     rows2Len = rows2.length;
                     let map2 = buildClosestByRef(rows2, end.getTime());
@@ -3724,8 +3726,8 @@
                         const sKey = serverToMatchShop(sSrv), iKey = serverToMatchIphen(iSrv);
                         return `${sSrv}-${iSrv}  (srv→match: ${sKey}-${iKey})`;
                     });
-                console.log('[PSTA] key map sample:\n' + cellsDiag.join('\n'));
-                console.log(`[PSTA] ${tag}: rows25m=${rows1.length}${rows2Len ? `, rows2d=${rows2Len}` : ''} (map=${isMappingEnabled()})`);
+                {#console.log('[PSTA] key map sample:\n' + cellsDiag.join('\n'));#}
+                {#console.log(`[PSTA] ${tag}: rows25m=${rows1.length}${rows2Len ? `, rows2d=${rows2Len}` : ''} (map=${isMappingEnabled()})`);#}
             } catch (e) {
                 console.error(e);
                 alert(e.message || 'データ取得に失敗しました');
@@ -3884,7 +3886,7 @@
                 return;
             }
             btn.addEventListener('click', () => {
-                console.log(`[PSTA] #${id} clicked`);
+                {#console.log(`[PSTA] #${id} clicked`);#}
                 if (typeof getSelectedShopIds !== 'function') {
                     console.error('[PSTA] getSelectedShopIds() not found');
                     return;
@@ -4229,7 +4231,7 @@
                                 }
 
                                 alert('图片已发布到 X！');
-                                console.log('发布成功:', result);
+                                {#console.log('发布成功:', result);#}
                             } catch (apiErr) {
                                 console.error('X发布错误:', apiErr);
                                 alert('发布到 X 失败。详细: ' + apiErr.message);
