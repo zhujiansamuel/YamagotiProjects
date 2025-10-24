@@ -3999,7 +3999,7 @@
                 // html2canvas 配置：提高 scale 获得更清晰的图片
                 // 使用 devicePixelRatio * 1.5 或 2 以兼顾清晰度与性能
                 const DPR = window.devicePixelRatio || 1;
-                const scale = Math.max(6, Math.min(3, DPR * 1.5));
+                const scale = Math.max(12, Math.min(1.5, DPR * 1.5));
 
                 const canvas = await html2canvas(clone, {
                     backgroundColor: null, // 保持透明背景时设为 null；若要白底改为 '#fff'
