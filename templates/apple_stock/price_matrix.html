@@ -25,9 +25,7 @@
             --positive: #0f9d58;
             --negative: #d93025;
             --gap: -1px;
-            --table-font-front: 14px; /* 表格字体大小 */
-            --table-font: 12px; /* 表格小字 */
-            --all-cell-font: 14px;
+
             --row-h: 22px; /* 行高（包含内容区高度） */
             --cell-px: 8px; /* 水平内边距 */
             --cell-py: 4px; /* 垂直内边距；若想严格固定行高，可设为 0 */
@@ -36,11 +34,19 @@
             --col-color-w: 120px;
             --col-num-w: 120px;
             --col-shop-w: 120px;
-
+            --all-cell-font: 15px;/* ALL行字体大小 */
+            --table-font-front: 16px; /* 表格大字字体大小 */
+            --table-font: 12px; /* 表格小字 */
+            --table-font-name:20px ;
+            --num-head-font-size: 15px;
         }
 
         .front-num {
             font-size: var(--table-font-front);
+        }
+
+        .front-name{
+            font-size: var(--table-font-name);
         }
 
 
@@ -52,7 +58,7 @@
         .wrap {
             margin: 3px 3px;
             margin-inline: auto; /* 等价于左右 auto，现代语法 */
-            box-sizing: border-box; /* 防止内边距撑破宽度 */
+            box-sizing: border-box;
 
         }
 
@@ -91,7 +97,7 @@
         }
 
         .model-section {
-            margin-bottom: -19px;
+            margin-bottom: -15px;
         }
 
         .model-header {
@@ -134,6 +140,8 @@
             text-align: center;
             height: var(--row-h);
             line-height: calc(var(--row-h) - 1px);
+            vertical-align: middle; /* 垂直居中 */
+            align-items: center; /* 垂直居中 */
         }
 
         .row3 {
@@ -197,7 +205,7 @@
         }
 
         .col-capacity {
-            width: 58px;
+            width: 65px;
             text-align: center;
         }
 
@@ -207,13 +215,15 @@
         }
 
         .col-num {
-            width: 75px;
+            width: 80px;
             text-align: center;
         }
 
         .shop-col {
             width: 90px;
             text-align: center;
+            vertical-align: middle; /* 垂直居中 */
+            align-items: center; /* 垂直居中 */
         }
 
 
@@ -234,6 +244,10 @@
             max-height: 180px;
             overflow: auto;
         }
+        .num-head{
+            color: #fff;
+            font-size: var(--num-head-font-size);
+        }
 
 
         /* 店舗ヘッダーの色（白文字）*/
@@ -243,6 +257,10 @@
             font-weight: 500;
             line-height: 0.9; /* 行间距更紧凑，可在 1.0~1.2 间微调 */
             font-size: 14px;
+        }
+
+        .text-all{
+            font-size: 15px;
         }
 
         .shop-time {
@@ -432,124 +450,126 @@
         <table>
             <thead>
             <tr>
-                <th class="col-model">機種</th>
-                <th class="col-capacity">容量</th>
-                <th class="col-num">定価</th>
-                <th class="col-num">最高</th>
-                <th class="col-num">差額</th>
-                <th class="col-num">利益</th>
-                <th class="col-num">前日比</th>
-                <th class="col-num is-hidden">平均値</th>
-                <th class="col-color">カラー</th>
+                <th class="col-model num-head">機種</th>
+                <th class="col-capacity num-head">容量</th>
+                <th class="col-num num-head">定価</th>
+                <th class="col-num num-head">最高</th>
+                <th class="col-num num-head">差額</th>
+                <th class="col-num num-head">利益</th>
+                <th class="col-num num-head">前日比</th>
+                <th class="col-num num-head is-hidden">平均値</th>
+                <th class="col-color num-head">カラー</th>
                 <!-- Stores -->
-                <th class="shop-col shop-head shop-買取商店">買取商店<br>　
-                    <p class="shop-time">営業時間</p>
-                    <p class="shop-time">11:00~18:00</p>
-                    <p class="shop-date">(月火水木金　　　)</p>
+                <th class="shop-col shop-head shop-買取商店">買取商店
+{#                    <p class="shop-time">営業時間</p>#}
+{#                    <p class="shop-time">11:00~18:00</p>#}
+{#                    <p class="shop-date">(月火水木金　　　)</p>#}
                 </th>
 
 
-                <th class="shop-col shop-head shop-海峡通信">海峡通信<br>　
-                    <p class="shop-time">営業時間</p>
-                    <p class="shop-time">10:00~19:00</p>
-                    <p class="shop-date">(月火水木金土日祝)</p>
+                <th class="shop-col shop-head shop-海峡通信">海峡通信
+{#                    <p class="shop-time">営業時間</p>#}
+{#                    <p class="shop-time">10:00~19:00</p>#}
+{#                    <p class="shop-date">(月火水木金土日祝)</p>#}
                 </th>
                 <th class="shop-col shop-head shop-買取１丁目">買取<br>一丁目
-                    <p class="shop-time">営業時間</p>
-                    <p class="shop-time">10:00~19:00</p>
-                    <p class="shop-date">(月火水木金土　　)</p>
+{#                    <p class="shop-time">営業時間</p>#}
+{#                    <p class="shop-time">10:00~19:00</p>#}
+{#                    <p class="shop-date">(月火水木金土　　)</p>#}
                 </th>
                 <th class="shop-col shop-head shop-モバイルミックス">モバイル<br>ミックス
-                    <p class="shop-time">営業時間</p>
-                    <p class="shop-time">11:00~19:00</p>
-                    <p class="shop-date">(月火水木金土　　)</p>
+{#                    <p class="shop-time">営業時間</p>#}
+{#                    <p class="shop-time">11:00~19:00</p>#}
+{#                    <p class="shop-date">(月火水木金土　　)</p>#}
                 </th>
-                <th class="shop-col shop-head shop-森森買取">森森買取<br>　
-                    <p class="shop-time">営業時間</p>
-                    <p class="shop-time">11:00~20:00</p>
-                    <p class="shop-date">(月火水木金土日祝)</p>
+                <th class="shop-col shop-head shop-森森買取">森森買取
+{#                    <p class="shop-time">営業時間</p>#}
+{#                    <p class="shop-time">11:00~20:00</p>#}
+{#                    <p class="shop-date">(月火水木金土日祝)</p>#}
                 </th>
                 <th class="shop-col shop-head shop-買取ルデヤ">買取<br>ルデヤ
-                    <p class="shop-time">営業時間</p>
-                    <p class="shop-time">11:00~19:00</p>
-                    <p class="shop-date">(月火水木金土　　)</p>
+{#                    <p class="shop-time">営業時間</p>#}
+{#                    <p class="shop-time">11:00~19:00</p>#}
+{#                    <p class="shop-date">(月火水木金土　　)</p>#}
                 </th>
                 <th class="shop-col shop-head shop-買取Wiki">買取<br>Wiki
-                    <p class="shop-time">営業時間</p>
-                    <p class="shop-time">10:30~19:30</p>
-                    <p class="shop-date">(月火水木金土日祝)</p>
+{#                    <p class="shop-time">営業時間</p>#}
+{#                    <p class="shop-time">10:30~19:30</p>#}
+{#                    <p class="shop-date">(月火水木金土日祝)</p>#}
                 </th>
                 <th class="shop-col shop-head shop-買取ホムラ">買取<br>ホムラ
-                    <p class="shop-time">営業時間</p>
-                    <p class="shop-time">11:00~19:00</p>
-                    <p class="shop-date">(月火水木金土日祝)</p>
+{#                    <p class="shop-time">営業時間</p>#}
+{#                    <p class="shop-time">11:00~19:00</p>#}
+{#                    <p class="shop-date">(月火水木金土日祝)</p>#}
                 </th>
                 <th class="shop-col shop-head shop-ドラゴンモバイル-">ドラゴン<br>モバイル
-                    <p class="shop-time">営業時間</p>
-                    <p class="shop-time">11:00~19:30</p>
-                    <p class="shop-date">(月火水木金土　　)</p>
+{#                    <p class="shop-time">営業時間</p>#}
+{#                    <p class="shop-time">11:00~19:30</p>#}
+{#                    <p class="shop-date">(月火水木金土　　)</p>#}
                 </th>
-                <th class="shop-col shop-head shop-モバステ-">モバステ<br>　
-                    <p class="shop-time">営業時間</p>
-                    <p class="shop-time">11:00~19:30</p>
-                    <p class="shop-date">(月火水木金土日祝)</p>
+                <th class="shop-col shop-head shop-モバステ-">モバステ
+{#                    <p class="shop-time">営業時間</p>#}
+{#                    <p class="shop-time">11:00~19:30</p>#}
+{#                    <p class="shop-date">(月火水木金土日祝)</p>#}
                 </th>
-                <th class="shop-col shop-head shop-アキモバ-">アキモバ<br>　
-                    <p class="shop-time">営業時間</p>
-                    <p class="shop-time">12:00~20:00</p>
-                    <p class="shop-date">(月火水木金土　　)</p>
+                <th class="shop-col shop-head shop-アキモバ-">アキモバ
+{#                    <p class="shop-time">営業時間</p>#}
+{#                    <p class="shop-time">12:00~20:00</p>#}
+{#                    <p class="shop-date">(月火水木金土　　)</p>#}
                 </th>
                 <th class="shop-col shop-head shop-トゥインクル">トゥイン<br>クル
-                    <p class="shop-time">営業時間</p>
-                    <p class="shop-time">10:30~19:30</p>
-                    <p class="shop-date">(月火水木金土日祝)</p>
+{#                    <p class="shop-time">営業時間</p>#}
+{#                    <p class="shop-time">10:30~19:30</p>#}
+{#                    <p class="shop-date">(月火水木金土日祝)</p>#}
                 </th>
-                <th class="shop-col shop-head shop-家電市場">家電市場<br>　
-                    <p class="shop-time">営業時間</p>
-                    <p class="shop-time">11:00~19:00</p>
-                    <p class="shop-date">(月火水木金　　　)</p>
+                <th class="shop-col shop-head shop-家電市場">家電市場
+{#                    <p class="shop-time">営業時間</p>#}
+{#                    <p class="shop-time">11:00~19:00</p>#}
+{#                    <p class="shop-date">(月火水木金　　　)</p>#}
                 </th>
-                <th class="shop-col shop-head shop-買取楽園">買取楽園<br>　
-                    <p class="shop-time">営業時間</p>
-                    <p class="shop-time">10:00~19:00</p>
-                    <p class="shop-date">(月火水木金土　祝)</p>
+                <th class="shop-col shop-head shop-買取楽園">買取楽園
+{#                    <p class="shop-time">営業時間</p>#}
+{#                    <p class="shop-time">10:00~19:00</p>#}
+{#                    <p class="shop-date">(月火水木金土　祝)</p>#}
                 </th>
-                <th class="shop-col shop-head shop-買取当番 is-hidden">買取当番<br>　
-                    <p class="shop-time">営業時間</p>
-                    <p class="shop-time">11:00~19:00</p>
-                    <p class="shop-date">(月火水木金土　　)</p>
-                </th>
-                <th class="shop-col shop-head shop-携帯空間">携帯空間<br>　
-                    <p class="shop-time">営業時間</p>
-                    <p class="shop-time">11:00~19:00</p>
-                    <p class="shop-date">(月火水木金土　祝)</p>
+{#                <th class="shop-col shop-head shop-買取当番 is-hidden">買取当番<br>　#}
+{#                    <p class="shop-time">営業時間</p>#}
+{#                    <p class="shop-time">11:00~19:00</p>#}
+{#                    <p class="shop-date">(月火水木金土　　)</p>#}
+{#                </th>#}
+                <th class="shop-col shop-head shop-携帯空間">携帯空間
+{#                    <p class="shop-time">営業時間</p>#}
+{#                    <p class="shop-time">11:00~19:00</p>#}
+{#                    <p class="shop-date">(月火水木金土　祝)</p>#}
                 </th>
                 <th class="shop-col shop-head shop-ゲストモバイル">ゲストモ<br>バイル
-                    <p class="shop-time">営業時間</p>
-                    <p class="shop-time">11:30~19:00</p>
-                    <p class="shop-date">(月火水木金　　　)</p>
+{#                    <p class="shop-time">営業時間</p>#}
+{#                    <p class="shop-time">11:30~19:00</p>#}
+{#                    <p class="shop-date">(月火水木金　　　)</p>#}
                 </th>
-                <th class="shop-col shop-head shop-買取オク is-hidden">買取オク<br>　
-                    <p class="shop-time">営業時間</p>
-                    <p class="shop-time">11:00~19:00</p>
-                    <p class="shop-date">(月火水木金土　祝)</p>
-                </th>
-                <th class="shop-col shop-head shop-毎日買取">毎日買取<br>　
-                    <p class="shop-time">営業時間</p>
-                    <p class="shop-time">10:30~20:00</p>
-                    <p class="shop-date">(月火水木金土日祝)</p>
+{#                <th class="shop-col shop-head shop-買取オク is-hidden">買取オク<br>　#}
+{#                    <p class="shop-time">営業時間</p>#}
+{#                    <p class="shop-time">11:00~19:00</p>#}
+{#                    <p class="shop-date">(月火水木金土　祝)</p>#}
+{#                </th>#}
+                <th class="shop-col shop-head shop-毎日買取">毎日買取
+{#                    <p class="shop-time">営業時間</p>#}
+{#                    <p class="shop-time">10:30~20:00</p>#}
+{#                    <p class="shop-date">(月火水木金土日祝)</p>#}
                 </th>
                 <th class="shop-col shop-head shop-MobileZone">Mobile<br>Zone
-                    <p class="shop-time">営業時間</p>
-                    <p class="shop-time">10:00~18:00</p>
-                    <p class="shop-date">(月火水木金土　祝)</p>
+{#                    <p class="shop-time">営業時間</p>#}
+{#                    <p class="shop-time">10:00~18:00</p>#}
+{#                    <p class="shop-date">(月火水木金土　祝)</p>#}
                 </th>
+                <th style="width: 10px;background: #ffffff;border:0"></th>
+
             </tr>
             </thead>
             <tbody>
             <!-- 256GB -->
             <tr>
-                <td class="front-num" rowspan="25" style="text-align:left;">iPhone 17 Pro Max</td>
+                <td class="front-name" rowspan="25" style="text-align:left;">17 Pro Max</td>
                 <td class="front-num" rowspan="5" style="text-align:left;">256GB</td>
                 <td class="front-num" rowspan="5" data-issue-pricing>194,800</td>
                 <td class="front-num" rowspan="5"
@@ -573,7 +593,7 @@
                 </td>
             </tr>
             <tr data-color="all">
-                <td style="text-align:left;">ALL</td>
+                <td class="text-all" style="text-align:left;">ALL</td>
                 <td class="nodata all-price" data-shop-id="14" data-iphen-average-id="21 22 20">※要問</td>
                 <td class="nodata all-price" data-shop-id="1" data-iphen-average-id="21 22 20">※要問</td>
                 <td class="nodata all-price" data-shop-id="8" data-iphen-average-id="21 22 20">※要問</td>
@@ -588,19 +608,19 @@
                 <td class="nodata all-price" data-shop-id="17" data-iphen-average-id="21 22 20">※要問</td>
                 <td class="nodata all-price" data-shop-id="3" data-iphen-average-id="21 22 20">※要問</td>
                 <td class="nodata all-price" data-shop-id="4" data-iphen-average-id="21 22 20">※要問</td>
-                <td class="nodata all-price" style="display: none !important;" data-shop-id="2"
-                    data-iphen-average-id="21 22 20">※要問
-                </td>
+{#                <td class="nodata all-price" style="display: none !important;" data-shop-id="2"#}
+{#                    data-iphen-average-id="21 22 20">※要問#}
+{#                </td>#}
                 <td class="nodata all-price" data-shop-id="5" data-iphen-average-id="21 22 20">※要問</td>
                 <td class="nodata all-price" data-shop-id="11" data-iphen-average-id="21 22 20">※要問</td>
-                <td class="nodata all-price" style="display: none !important;" data-shop-id="6"
-                    data-iphen-average-id="21 22 20">※要問
-                </td>
+{#                <td class="nodata all-price" style="display: none !important;" data-shop-id="6"#}
+{#                    data-iphen-average-id="21 22 20">※要問#}
+{#                </td>#}
                 <td class="nodata all-price" data-shop-id="15" data-iphen-average-id="21 22 20">※要問</td>
                 <td class="nodata all-price" data-shop-id="20" data-iphen-average-id="21 22 20">※要問</td>
             </tr>
             <tr data-color="orange">
-                <td style="background:#FF9900FF;text-align:left;">Orange</td>
+                <td style="text-align:left;">Orange</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="21" data-to-marge-iphone-id="21 22 20">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="21" data-to-marge-iphone-id="21 22 20">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="21" data-to-marge-iphone-id="21 22 20">※要問</td>
@@ -615,21 +635,21 @@
                 <td class="nodata" data-shop-id="17" data-iphen-id="21" data-to-marge-iphone-id="21 22 20">※要問</td>
                 <td class="nodata" data-shop-id="3" data-iphen-id="21" data-to-marge-iphone-id="21 22 20">※要問</td>
                 <td class="nodata" data-shop-id="4" data-iphen-id="21" data-to-marge-iphone-id="21 22 20">※要問</td>
-                <td class="nodata " style="display: none !important;" data-shop-id="2" data-iphen-id="21"
-                    data-to-marge-iphone-id="21 22 20">
-                    ※要問
-                </td>
+{#                <td class="nodata " style="display: none !important;" data-shop-id="2" data-iphen-id="21"#}
+{#                    data-to-marge-iphone-id="21 22 20">#}
+{#                    ※要問#}
+{#                </td>#}
                 <td class="nodata" data-shop-id="5" data-iphen-id="21" data-to-marge-iphone-id="21 22 20">※要問</td>
                 <td class="nodata" data-shop-id="11" data-iphen-id="21" data-to-marge-iphone-id="21 22 20">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="21"
-                    data-to-marge-iphone-id="21 22 20">
-                    ※要問
-                </td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="21"#}
+{#                    data-to-marge-iphone-id="21 22 20">#}
+{#                    ※要問#}
+{#                </td>#}
                 <td class="nodata" data-shop-id="15" data-iphen-id="21" data-to-marge-iphone-id="21 22 20">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="21" data-to-marge-iphone-id="21 22 20">※要問</td>
             </tr>
             <tr data-color="blue">
-                <td style="background:#4b5780;text-align:left;">Blue</td>
+                <td style="text-align:left;">Blue</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="22">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="22">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="22">※要問</td>
@@ -644,15 +664,15 @@
                 <td class="nodata" data-shop-id="17" data-iphen-id="22">※要問</td>
                 <td class="nodata" data-shop-id="3" data-iphen-id="22">※要問</td>
                 <td class="nodata" data-shop-id="4" data-iphen-id="22">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="22">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="22">※要問</td>#}
                 <td class="nodata" data-shop-id="5" data-iphen-id="22">※要問</td>
                 <td class="nodata" data-shop-id="11" data-iphen-id="22">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="22">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="22">※要問</td>#}
                 <td class="nodata" data-shop-id="15" data-iphen-id="22">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="22">※要問</td>
             </tr>
             <tr data-color="silver">
-                <td style="background:#e6e6e6;text-align:left;">Silver</td>
+                <td style="text-align:left;">Silver</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="20">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="20">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="20">※要問</td>
@@ -667,10 +687,10 @@
                 <td class="nodata" data-shop-id="17" data-iphen-id="20">※要問</td>
                 <td class="nodata" data-shop-id="3" data-iphen-id="20">※要問</td>
                 <td class="nodata" data-shop-id="4" data-iphen-id="20">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="20">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="20">※要問</td>#}
                 <td class="nodata" data-shop-id="5" data-iphen-id="20">※要問</td>
                 <td class="nodata" data-shop-id="11" data-iphen-id="20">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="20">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="20">※要問</td>#}
                 <td class="nodata" data-shop-id="15" data-iphen-id="20">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="20">※要問</td>
             </tr>
@@ -707,7 +727,7 @@
 
             </tr>
             <tr class="avg-row" data-color="all">
-                <td colspan="1" style="text-align:left;">ALL</td>
+                <td class="text-all" colspan="1" style="text-align:left;">ALL</td>
                 <td class="nodata all-price" data-shop-id="14" data-iphen-average-id="24 25 23">※要問</td>
                 <td class="nodata all-price" data-shop-id="1" data-iphen-average-id="24 25 23">※要問</td>
                 <td class="nodata all-price" data-shop-id="8" data-iphen-average-id="24 25 23">※要問</td>
@@ -722,19 +742,19 @@
                 <td class="nodata all-price" data-shop-id="17" data-iphen-average-id="24 25 23">※要問</td>
                 <td class="nodata all-price" data-shop-id="3" data-iphen-average-id="24 25 23">※要問</td>
                 <td class="nodata all-price" data-shop-id="4" data-iphen-average-id="24 25 23">※要問</td>
-                <td class="nodata  all-pric" style="display: none !important;" data-shop-id="2"
-                    data-iphen-average-id="24 25 23">※要問
-                </td>
+{#                <td class="nodata  all-pric" style="display: none !important;" data-shop-id="2"#}
+{#                    data-iphen-average-id="24 25 23">※要問#}
+{#                </td>#}
                 <td class="nodata all-price" data-shop-id="5" data-iphen-average-id="24 25 23">※要問</td>
                 <td class="nodata all-price" data-shop-id="11" data-iphen-average-id="24 25 23">※要問</td>
-                <td class="nodata  all-pric" style="display: none !important;" data-shop-id="6"
-                    data-iphen-average-id="24 25 23">※要問
-                </td>
+{#                <td class="nodata  all-pric" style="display: none !important;" data-shop-id="6"#}
+{#                    data-iphen-average-id="24 25 23">※要問#}
+{#                </td>#}
                 <td class="nodata all-price" data-shop-id="15" data-iphen-average-id="24 25 23">※要問</td>
                 <td class="nodata all-price" data-shop-id="20" data-iphen-average-id="24 25 23">※要問</td>
             </tr>
             <tr data-color="orange">
-                <td style="background:#FF9900FF;text-align:left;">Orange</td>
+                <td style="text-align:left;">Orange</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="24" data-to-marge-iphone-id="24 25 23">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="24" data-to-marge-iphone-id="24 25 23">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="24" data-to-marge-iphone-id="24 25 23">※要問</td>
@@ -749,21 +769,21 @@
                 <td class="nodata" data-shop-id="17" data-iphen-id="24" data-to-marge-iphone-id="24 25 23">※要問</td>
                 <td class="nodata" data-shop-id="3" data-iphen-id="24" data-to-marge-iphone-id="24 25 23">※要問</td>
                 <td class="nodata" data-shop-id="4" data-iphen-id="24" data-to-marge-iphone-id="24 25 23">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="24"
-                    data-to-marge-iphone-id="24 25 23">
-                    ※要問
-                </td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="24"#}
+{#                    data-to-marge-iphone-id="24 25 23">#}
+{#                    ※要問#}
+{#                </td>#}
                 <td class="nodata" data-shop-id="5" data-iphen-id="24" data-to-marge-iphone-id="24 25 23">※要問</td>
                 <td class="nodata" data-shop-id="11" data-iphen-id="24" data-to-marge-iphone-id="24 25 23">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="24"
-                    data-to-marge-iphone-id="24 25 23">
-                    ※要問
-                </td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="24"#}
+{#                    data-to-marge-iphone-id="24 25 23">#}
+{#                    ※要問#}
+{#                </td>#}
                 <td class="nodata" data-shop-id="15" data-iphen-id="24" data-to-marge-iphone-id="24 25 23">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="24" data-to-marge-iphone-id="24 25 23">※要問</td>
             </tr>
             <tr data-color="blue">
-                <td style="background:#4b5780;text-align:left;">Blue</td>
+                <td style="text-align:left;">Blue</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="25">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="25">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="25">※要問</td>
@@ -778,15 +798,15 @@
                 <td class="nodata" data-shop-id="17" data-iphen-id="25">※要問</td>
                 <td class="nodata" data-shop-id="3" data-iphen-id="25">※要問</td>
                 <td class="nodata" data-shop-id="4" data-iphen-id="25">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="25">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="25">※要問</td>#}
                 <td class="nodata" data-shop-id="5" data-iphen-id="25">※要問</td>
                 <td class="nodata" data-shop-id="11" data-iphen-id="25">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="25">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="25">※要問</td>#}
                 <td class="nodata" data-shop-id="15" data-iphen-id="25">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="25">※要問</td>
             </tr>
             <tr data-color="silver">
-                <td style="background:#e6e6e6;text-align:left;">Silver</td>
+                <td style="text-align:left;">Silver</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="23">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="23">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="23">※要問</td>
@@ -801,10 +821,10 @@
                 <td class="nodata" data-shop-id="17" data-iphen-id="23">※要問</td>
                 <td class="nodata" data-shop-id="3" data-iphen-id="23">※要問</td>
                 <td class="nodata" data-shop-id="4" data-iphen-id="23">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="23">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="23">※要問</td>#}
                 <td class="nodata" data-shop-id="5" data-iphen-id="23">※要問</td>
                 <td class="nodata" data-shop-id="11" data-iphen-id="23">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="23">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="23">※要問</td>#}
                 <td class="nodata" data-shop-id="15" data-iphen-id="23">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="23">※要問</td>
             </tr>
@@ -837,7 +857,7 @@
                 </td>
             </tr>
             <tr class="avg-row" data-color="ALL">
-                <td colspan="1" style="text-align:left;">ALL</td>
+                <td class="text-all" colspan="1" style="text-align:left;">ALL</td>
                 <td class="nodata all-price" data-shop-id="14" iphen-average-id="27 28 26">※要問</td>
                 <td class="nodata all-price" data-shop-id="1" iphen-average-id="27 28 26">※要問</td>
                 <td class="nodata all-price" data-shop-id="8" iphen-average-id="27 28 26">※要問</td>
@@ -852,19 +872,19 @@
                 <td class="nodata all-price" data-shop-id="17" iphen-average-id="27 28 26">※要問</td>
                 <td class="nodata all-price" data-shop-id="3" iphen-average-id="27 28 26">※要問</td>
                 <td class="nodata all-price" data-shop-id="4" iphen-average-id="27 28 26">※要問</td>
-                <td class="nodata all-price" style="display: none !important;" data-shop-id="2"
-                    iphen-average-id="27 28 26">※要問
-                </td>
+{#                <td class="nodata all-price" style="display: none !important;" data-shop-id="2"#}
+{#                    iphen-average-id="27 28 26">※要問#}
+{#                </td>#}
                 <td class="nodata all-price" data-shop-id="5" iphen-average-id="27 28 26">※要問</td>
                 <td class="nodata all-price" data-shop-id="11" iphen-average-id="27 28 26">※要問</td>
-                <td class="nodata all-price" style="display: none !important;" data-shop-id="6"
-                    iphen-average-id="27 28 26">※要問
-                </td>
+{#                <td class="nodata all-price" style="display: none !important;" data-shop-id="6"#}
+{#                    iphen-average-id="27 28 26">※要問#}
+{#                </td>#}
                 <td class="nodata all-price" data-shop-id="15" iphen-average-id="27 28 26">※要問</td>
                 <td class="nodata all-price" data-shop-id="20" iphen-average-id="27 28 26">※要問</td>
             </tr>
             <tr data-color="orange">
-                <td style="background:#FF9900FF;text-align:left;">Orange</td>
+                <td style="text-align:left;">Orange</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="27" data-to-marge-iphone-id="27 28 26">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="27" data-to-marge-iphone-id="27 28 26">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="27" data-to-marge-iphone-id="27 28 26">※要問</td>
@@ -879,21 +899,21 @@
                 <td class="nodata" data-shop-id="17" data-iphen-id="27" data-to-marge-iphone-id="27 28 26">※要問</td>
                 <td class="nodata" data-shop-id="3" data-iphen-id="27" data-to-marge-iphone-id="27 28 26">※要問</td>
                 <td class="nodata" data-shop-id="4" data-iphen-id="27" data-to-marge-iphone-id="27 28 26">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="27"
-                    data-to-marge-iphone-id="27 28 26">
-                    ※要問
-                </td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="27"#}
+{#                    data-to-marge-iphone-id="27 28 26">#}
+{#                    ※要問#}
+{#                </td>#}
                 <td class="nodata" data-shop-id="5" data-iphen-id="27" data-to-marge-iphone-id="27 28 26">※要問</td>
                 <td class="nodata" data-shop-id="11" data-iphen-id="27" data-to-marge-iphone-id="27 28 26">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="27"
-                    data-to-marge-iphone-id="27 28 26">
-                    ※要問
-                </td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="27"#}
+{#                    data-to-marge-iphone-id="27 28 26">#}
+{#                    ※要問#}
+{#                </td>#}
                 <td class="nodata" data-shop-id="15" data-iphen-id="27" data-to-marge-iphone-id="27 28 26">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="27" data-to-marge-iphone-id="27 28 26">※要問</td>
             </tr>
             <tr data-color="blue">
-                <td style="background:#4b5780;text-align:left;">Blue</td>
+                <td style="text-align:left;">Blue</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="28">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="28">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="28">※要問</td>
@@ -908,15 +928,15 @@
                 <td class="nodata" data-shop-id="17" data-iphen-id="28">※要問</td>
                 <td class="nodata" data-shop-id="3" data-iphen-id="28">※要問</td>
                 <td class="nodata" data-shop-id="4" data-iphen-id="28">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="28">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="28">※要問</td>#}
                 <td class="nodata" data-shop-id="5" data-iphen-id="28">※要問</td>
                 <td class="nodata" data-shop-id="11" data-iphen-id="28">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="28">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="28">※要問</td>#}
                 <td class="nodata" data-shop-id="15" data-iphen-id="28">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="28">※要問</td>
             </tr>
             <tr data-color="silver">
-                <td style="background:#e6e6e6;text-align:left;">Silver</td>
+                <td style="text-align:left;">Silver</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="26">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="26">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="26">※要問</td>
@@ -931,10 +951,10 @@
                 <td class="nodata" data-shop-id="17" data-iphen-id="26">※要問</td>
                 <td class="nodata" data-shop-id="3" data-iphen-id="26">※要問</td>
                 <td class="nodata" data-shop-id="4" data-iphen-id="26">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="26">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="26">※要問</td>#}
                 <td class="nodata" data-shop-id="5" data-iphen-id="26">※要問</td>
                 <td class="nodata" data-shop-id="11" data-iphen-id="26">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="26">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="26">※要問</td>#}
                 <td class="nodata" data-shop-id="15" data-iphen-id="26">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="26">※要問</td>
             </tr>
@@ -967,7 +987,7 @@
                 </td>
             </tr>
             <tr class="avg-row" data-color="All">
-                <td colspan="1" style="text-align:left;">ALL</td>
+                <td class="text-all" colspan="1" style="text-align:left;">ALL</td>
                 <td class="nodata all-price" data-shop-id="14" data-iphen-average-id="30 31 29">※要問</td>
                 <td class="nodata all-price" data-shop-id="1" data-iphen-average-id="30 31 29">※要問</td>
                 <td class="nodata all-price" data-shop-id="8" data-iphen-average-id="30 31 29">※要問</td>
@@ -982,19 +1002,19 @@
                 <td class="nodata all-price" data-shop-id="17" data-iphen-average-id="30 31 29">※要問</td>
                 <td class="nodata all-price" data-shop-id="3" data-iphen-average-id="30 31 29">※要問</td>
                 <td class="nodata all-price" data-shop-id="4" data-iphen-average-id="30 31 29">※要問</td>
-                <td class="nodata all-price" style="display: none !important;" data-shop-id="2"
-                    data-iphen-average-id="30 31 29">※要問
-                </td>
+{#                <td class="nodata all-price" style="display: none !important;" data-shop-id="2"#}
+{#                    data-iphen-average-id="30 31 29">※要問#}
+{#                </td>#}
                 <td class="nodata all-price" data-shop-id="5" data-iphen-average-id="30 31 29">※要問</td>
                 <td class="nodata all-price" data-shop-id="11" data-iphen-average-id="30 31 29">※要問</td>
-                <td class="nodata all-price" style="display: none !important;" data-shop-id="6"
-                    data-iphen-average-id="30 31 29">※要問
-                </td>
+{#                <td class="nodata all-price" style="display: none !important;" data-shop-id="6"#}
+{#                    data-iphen-average-id="30 31 29">※要問#}
+{#                </td>#}
                 <td class="nodata all-price" data-shop-id="15" data-iphen-average-id="30 31 29">※要問</td>
                 <td class="nodata all-price" data-shop-id="20" data-iphen-average-id="30 31 29">※要問</td>
             </tr>
             <tr data-color="orange">
-                <td style="background:#FF9900FF;text-align:left;">Orange</td>
+                <td style="text-align:left;">Orange</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="30" data-to-marge-iphone-id="30 31 29">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="30" data-to-marge-iphone-id="30 31 29">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="30" data-to-marge-iphone-id="30 31 29">※要問</td>
@@ -1009,21 +1029,21 @@
                 <td class="nodata" data-shop-id="17" data-iphen-id="30" data-to-marge-iphone-id="30 31 29">※要問</td>
                 <td class="nodata" data-shop-id="3" data-iphen-id="30" data-to-marge-iphone-id="30 31 29">※要問</td>
                 <td class="nodata" data-shop-id="4" data-iphen-id="30" data-to-marge-iphone-id="30 31 29">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="30"
-                    data-to-marge-iphone-id="30 31 29">
-                    ※要問
-                </td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="30"#}
+{#                    data-to-marge-iphone-id="30 31 29">#}
+{#                    ※要問#}
+{#                </td>#}
                 <td class="nodata" data-shop-id="5" data-iphen-id="30" data-to-marge-iphone-id="30 31 29">※要問</td>
                 <td class="nodata" data-shop-id="11" data-iphen-id="30" data-to-marge-iphone-id="30 31 29">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="30"
-                    data-to-marge-iphone-id="30 31 29">
-                    ※要問
-                </td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="30"#}
+{#                    data-to-marge-iphone-id="30 31 29">#}
+{#                    ※要問#}
+{#                </td>#}
                 <td class="nodata" data-shop-id="15" data-iphen-id="30" data-to-marge-iphone-id="30 31 29">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="30" data-to-marge-iphone-id="30 31 29">※要問</td>
             </tr>
             <tr data-color="blue">
-                <td style="background:#4b5780;text-align:left;">Blue</td>
+                <td style="text-align:left;">Blue</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="31">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="31">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="31">※要問</td>
@@ -1038,15 +1058,15 @@
                 <td class="nodata" data-shop-id="17" data-iphen-id="31">※要問</td>
                 <td class="nodata" data-shop-id="3" data-iphen-id="31">※要問</td>
                 <td class="nodata" data-shop-id="4" data-iphen-id="31">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="31">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="31">※要問</td>#}
                 <td class="nodata" data-shop-id="5" data-iphen-id="31">※要問</td>
                 <td class="nodata" data-shop-id="11" data-iphen-id="31">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="31">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="31">※要問</td>#}
                 <td class="nodata" data-shop-id="15" data-iphen-id="31">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="31">※要問</td>
             </tr>
             <tr data-color="silver">
-                <td style="background:#e6e6e6;text-align:left;">Silver</td>
+                <td style="text-align:left;">Silver</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="29">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="29">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="29">※要問</td>
@@ -1061,10 +1081,10 @@
                 <td class="nodata" data-shop-id="17" data-iphen-id="29">※要問</td>
                 <td class="nodata" data-shop-id="3" data-iphen-id="29">※要問</td>
                 <td class="nodata" data-shop-id="4" data-iphen-id="29">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="29">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="29">※要問</td>#}
                 <td class="nodata" data-shop-id="5" data-iphen-id="29">※要問</td>
                 <td class="nodata" data-shop-id="11" data-iphen-id="29">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="29">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="29">※要問</td>#}
                 <td class="nodata" data-shop-id="15" data-iphen-id="29">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="29">※要問</td>
             </tr>
@@ -1106,10 +1126,10 @@
                 <th class="shop-col shop-head shop-トゥインクル">トゥインクル</th>
                 <th class="shop-col shop-head shop-家電市場">家電市場</th>
                 <th class="shop-col shop-head shop-買取楽園">買取楽園</th>
-                <th class="shop-col shop-head shop-買取当番">買取当番</th>
+{#                <th class="shop-col shop-head shop-買取当番">買取当番</th>#}
                 <th class="shop-col shop-head shop-携帯空間">携帯空間</th>
                 <th class="shop-col shop-head shop-ゲストモバイル">ゲストモバイル</th>
-                <th class="shop-col shop-head shop-買取オク">買取オク</th>
+{#                <th class="shop-col shop-head shop-買取オク">買取オク</th>#}
                 <th class="shop-col shop-head shop-毎日買取">毎日買取</th>
                 <th class="shop-col shop-head shop-MobileZone">Mobile Zone</th>
             </tr>
@@ -1117,7 +1137,7 @@
             <tbody>
             <!-- 256GB -->
             <tr>
-                <td class="front-num" rowspan="17" style="text-align:left;">iPhone 17 Pro</td>
+                <td class="front-name" rowspan="17" style="text-align:left;">17 Pro</td>
                 <td class="front-num" rowspan="5" style="text-align:left;">256GB</td>
                 <td class="front-num" rowspan="5" data-issue-pricing>179,800</td>
                 <td class="front-num" rowspan="5"
@@ -1141,7 +1161,7 @@
                 </td>
             </tr>
             <tr class="avg-row" data-color="All">
-                <td colspan="1" style="text-align:left;">ALL</td>
+                <td class="text-all" colspan="1" style="text-align:left;">ALL</td>
                 <td class="nodata all-price" data-shop-id="14" data-iphen-average-id="12 13 11">※要問</td>
                 <td class="nodata all-price" data-shop-id="1" data-iphen-average-id="12 13 11">※要問</td>
                 <td class="nodata all-price" data-shop-id="8" data-iphen-average-id="12 13 11">※要問</td>
@@ -1156,19 +1176,19 @@
                 <td class="nodata all-price" data-shop-id="17" data-iphen-average-id="12 13 11">※要問</td>
                 <td class="nodata all-price" data-shop-id="3" data-iphen-average-id="12 13 11">※要問</td>
                 <td class="nodata all-price" data-shop-id="4" data-iphen-average-id="12 13 11">※要問</td>
-                <td class="nodata all-price" style="display: none !important;" data-shop-id="2"
-                    data-iphen-average-id="12 13 11">※要問
-                </td>
+{#                <td class="nodata all-price" style="display: none !important;" data-shop-id="2"#}
+{#                    data-iphen-average-id="12 13 11">※要問#}
+{#                </td>#}
                 <td class="nodata all-price" data-shop-id="5" data-iphen-average-id="12 13 11">※要問</td>
                 <td class="nodata all-price" data-shop-id="11" data-iphen-average-id="12 13 11">※要問</td>
-                <td class="nodata all-price" style="display: none !important;" data-shop-id="6"
-                    data-iphen-average-id="12 13 11">※要問
-                </td>
+{#                <td class="nodata all-price" style="display: none !important;" data-shop-id="6"#}
+{#                    data-iphen-average-id="12 13 11">※要問#}
+{#                </td>#}
                 <td class="nodata all-price" data-shop-id="15" data-iphen-average-id="12 13 11">※要問</td>
                 <td class="nodata all-price" data-shop-id="20" data-iphen-average-id="12 13 11">※要問</td>
             </tr>
             <tr data-color="orange">
-                <td style="background:#FF9900FF;text-align:left;">Orange</td>
+                <td style="text-align:left;">Orange</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="12" data-to-marge-iphone-id="12 13 11">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="12" data-to-marge-iphone-id="12 13 11">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="12" data-to-marge-iphone-id="12 13 11">※要問</td>
@@ -1183,21 +1203,21 @@
                 <td class="nodata" data-shop-id="17" data-iphen-id="12" data-to-marge-iphone-id="12 13 11">※要問</td>
                 <td class="nodata" data-shop-id="3" data-iphen-id="12" data-to-marge-iphone-id="12 13 11">※要問</td>
                 <td class="nodata" data-shop-id="4" data-iphen-id="12" data-to-marge-iphone-id="12 13 11">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="12"
-                    data-to-marge-iphone-id="12 13 11">
-                    ※要問
-                </td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="12"#}
+{#                    data-to-marge-iphone-id="12 13 11">#}
+{#                    ※要問#}
+{#                </td>#}
                 <td class="nodata" data-shop-id="5" data-iphen-id="12" data-to-marge-iphone-id="12 13 11">※要問</td>
                 <td class="nodata" data-shop-id="11" data-iphen-id="12" data-to-marge-iphone-id="12 13 11">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="12"
-                    data-to-marge-iphone-id="12 13 11">
-                    ※要問
-                </td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="12"#}
+{#                    data-to-marge-iphone-id="12 13 11">#}
+{#                    ※要問#}
+{#                </td>#}
                 <td class="nodata" data-shop-id="15" data-iphen-id="12" data-to-marge-iphone-id="12 13 11">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="12" data-to-marge-iphone-id="12 13 11">※要問</td>
             </tr>
             <tr data-color="blue">
-                <td style="background:#4b5780;text-align:left;">Blue</td>
+                <td style="text-align:left;">Blue</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="13">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="13">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="13">※要問</td>
@@ -1212,15 +1232,15 @@
                 <td class="nodata" data-shop-id="17" data-iphen-id="13">※要問</td>
                 <td class="nodata" data-shop-id="3" data-iphen-id="13">※要問</td>
                 <td class="nodata" data-shop-id="4" data-iphen-id="13">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="13">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="13">※要問</td>#}
                 <td class="nodata" data-shop-id="5" data-iphen-id="13">※要問</td>
                 <td class="nodata" data-shop-id="11" data-iphen-id="13">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="13">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="13">※要問</td>#}
                 <td class="nodata" data-shop-id="15" data-iphen-id="13">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="13">※要問</td>
             </tr>
             <tr data-color="silver">
-                <td style="background:#e6e6e6;text-align:left;">Silver</td>
+                <td style="text-align:left;">Silver</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="11">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="11">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="11">※要問</td>
@@ -1235,10 +1255,10 @@
                 <td class="nodata" data-shop-id="17" data-iphen-id="11">※要問</td>
                 <td class="nodata" data-shop-id="3" data-iphen-id="11">※要問</td>
                 <td class="nodata" data-shop-id="4" data-iphen-id="11">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="11">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="11">※要問</td>#}
                 <td class="nodata" data-shop-id="5" data-iphen-id="11">※要問</td>
                 <td class="nodata" data-shop-id="11" data-iphen-id="11">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="11">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="11">※要問</td>#}
                 <td class="nodata" data-shop-id="15" data-iphen-id="11">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="11">※要問</td>
             </tr>
@@ -1271,7 +1291,7 @@
                 </td>
             </tr>
             <tr class="avg-row" data-color="All">
-                <td colspan="1" style="text-align:left;">ALL</td>
+                <td class="text-all" colspan="1" style="text-align:left;">ALL</td>
                 <td class="nodata all-price" data-shop-id="14" data-iphen-average-id="15 16 14">※要問</td>
                 <td class="nodata all-price" data-shop-id="1" data-iphen-average-id="15 16 14">※要問</td>
                 <td class="nodata all-price" data-shop-id="8" data-iphen-average-id="15 16 14">※要問</td>
@@ -1286,19 +1306,19 @@
                 <td class="nodata all-price" data-shop-id="17" data-iphen-average-id="15 16 14">※要問</td>
                 <td class="nodata all-price" data-shop-id="3" data-iphen-average-id="15 16 14">※要問</td>
                 <td class="nodata all-price" data-shop-id="4" data-iphen-average-id="15 16 14">※要問</td>
-                <td class="nodata all-price" style="display: none !important;" data-shop-id="2"
-                    data-iphen-average-id="15 16 14">※要問
-                </td>
+{#                <td class="nodata all-price" style="display: none !important;" data-shop-id="2"#}
+{#                    data-iphen-average-id="15 16 14">※要問#}
+{#                </td>#}
                 <td class="nodata all-price" data-shop-id="5" data-iphen-average-id="15 16 14">※要問</td>
                 <td class="nodata all-price" data-shop-id="11" data-iphen-average-id="15 16 14">※要問</td>
-                <td class="nodata all-price" style="display: none !important;" data-shop-id="6"
-                    data-iphen-average-id="15 16 14">※要問
-                </td>
+{#                <td class="nodata all-price" style="display: none !important;" data-shop-id="6"#}
+{#                    data-iphen-average-id="15 16 14">※要問#}
+{#                </td>#}
                 <td class="nodata all-price" data-shop-id="15" data-iphen-average-id="15 16 14">※要問</td>
                 <td class="nodata all-price" data-shop-id="20" data-iphen-average-id="15 16 14">※要問</td>
             </tr>
             <tr data-color="orange">
-                <td style="background:#FF9900FF;text-align:left;">Orange</td>
+                <td style="text-align:left;">Orange</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="15" data-to-marge-iphone-id="15 16 14">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="15" data-to-marge-iphone-id="15 16 14">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="15" data-to-marge-iphone-id="15 16 14">※要問</td>
@@ -1313,21 +1333,21 @@
                 <td class="nodata" data-shop-id="17" data-iphen-id="15" data-to-marge-iphone-id="15 16 14">※要問</td>
                 <td class="nodata" data-shop-id="3" data-iphen-id="15" data-to-marge-iphone-id="15 16 14">※要問</td>
                 <td class="nodata" data-shop-id="4" data-iphen-id="15" data-to-marge-iphone-id="15 16 14">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="15"
-                    data-to-marge-iphone-id="15 16 14">
-                    ※要問
-                </td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="15"#}
+{#                    data-to-marge-iphone-id="15 16 14">#}
+{#                    ※要問#}
+{#                </td>#}
                 <td class="nodata" data-shop-id="5" data-iphen-id="15" data-to-marge-iphone-id="15 16 14">※要問</td>
                 <td class="nodata" data-shop-id="11" data-iphen-id="15" data-to-marge-iphone-id="15 16 14">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="15"
-                    data-to-marge-iphone-id="15 16 14">
-                    ※要問
-                </td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="15"#}
+{#                    data-to-marge-iphone-id="15 16 14">#}
+{#                    ※要問#}
+{#                </td>#}
                 <td class="nodata" data-shop-id="15" data-iphen-id="15" data-to-marge-iphone-id="15 16 14">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="15" data-to-marge-iphone-id="15 16 14">※要問</td>
             </tr>
             <tr data-color="blue">
-                <td style="background:#4b5780;text-align:left;">Blue</td>
+                <td style="text-align:left;">Blue</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="16">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="16">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="16">※要問</td>
@@ -1342,15 +1362,15 @@
                 <td class="nodata" data-shop-id="17" data-iphen-id="16">※要問</td>
                 <td class="nodata" data-shop-id="3" data-iphen-id="16">※要問</td>
                 <td class="nodata" data-shop-id="4" data-iphen-id="16">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="16">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="16">※要問</td>#}
                 <td class="nodata" data-shop-id="5" data-iphen-id="16">※要問</td>
                 <td class="nodata" data-shop-id="11" data-iphen-id="16">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="16">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="16">※要問</td>#}
                 <td class="nodata" data-shop-id="15" data-iphen-id="16">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="16">※要問</td>
             </tr>
             <tr data-color="silver">
-                <td style="background:#e6e6e6;text-align:left;">Silver</td>
+                <td style="text-align:left;">Silver</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="14">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="14">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="14">※要問</td>
@@ -1365,10 +1385,10 @@
                 <td class="nodata" data-shop-id="17" data-iphen-id="14">※要問</td>
                 <td class="nodata" data-shop-id="3" data-iphen-id="14">※要問</td>
                 <td class="nodata" data-shop-id="4" data-iphen-id="14">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="14">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="14">※要問</td>#}
                 <td class="nodata" data-shop-id="5" data-iphen-id="14">※要問</td>
                 <td class="nodata" data-shop-id="11" data-iphen-id="14">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="14">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="14">※要問</td>#}
                 <td class="nodata" data-shop-id="15" data-iphen-id="14">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="14">※要問</td>
             </tr>
@@ -1401,7 +1421,7 @@
                 </td>
             </tr>
             <tr class="avg-row" data-color="All">
-                <td colspan="1" style="text-align:left;">ALL</td>
+                <td class="text-all" colspan="1" style="text-align:left;">ALL</td>
                 <td class="nodata all-price" data-shop-id="14" data-iphen-average-id="18 19 17">※要問</td>
                 <td class="nodata all-price" data-shop-id="1" data-iphen-average-id="18 19 17">※要問</td>
                 <td class="nodata all-price" data-shop-id="8" data-iphen-average-id="18 19 17">※要問</td>
@@ -1416,19 +1436,19 @@
                 <td class="nodata all-price" data-shop-id="17" data-iphen-average-id="18 19 17">※要問</td>
                 <td class="nodata all-price" data-shop-id="3" data-iphen-average-id="18 19 17">※要問</td>
                 <td class="nodata all-price" data-shop-id="4" data-iphen-average-id="18 19 17">※要問</td>
-                <td class="nodata all-price" style="display: none !important;" data-shop-id="2"
-                    data-iphen-average-id="18 19 17">※要問
-                </td>
+{#                <td class="nodata all-price" style="display: none !important;" data-shop-id="2"#}
+{#                    data-iphen-average-id="18 19 17">※要問#}
+{#                </td>#}
                 <td class="nodata all-price" data-shop-id="5" data-iphen-average-id="18 19 17">※要問</td>
                 <td class="nodata all-price" data-shop-id="11" data-iphen-average-id="18 19 17">※要問</td>
-                <td class="nodata all-price" style="display: none !important;" data-shop-id="6"
-                    data-iphen-average-id="18 19 17">※要問
-                </td>
+{#                <td class="nodata all-price" style="display: none !important;" data-shop-id="6"#}
+{#                    data-iphen-average-id="18 19 17">※要問#}
+{#                </td>#}
                 <td class="nodata all-price" data-shop-id="15" data-iphen-average-id="18 19 17">※要問</td>
                 <td class="nodata all-price" data-shop-id="20" data-iphen-average-id="18 19 17">※要問</td>
             </tr>
             <tr data-color="orange">
-                <td style="background:#FF9900FF;text-align:left;">Orange</td>
+                <td style="text-align:left;">Orange</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="18" data-to-marge-iphone-id="18 19 17">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="18" data-to-marge-iphone-id="18 19 17">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="18" data-to-marge-iphone-id="18 19 17">※要問</td>
@@ -1443,21 +1463,21 @@
                 <td class="nodata" data-shop-id="17" data-iphen-id="18" data-to-marge-iphone-id="18 19 17">※要問</td>
                 <td class="nodata" data-shop-id="3" data-iphen-id="18" data-to-marge-iphone-id="18 19 17">※要問</td>
                 <td class="nodata" data-shop-id="4" data-iphen-id="18" data-to-marge-iphone-id="18 19 17">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="18"
-                    data-to-marge-iphone-id="18 19 17">
-                    ※要問
-                </td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="18"#}
+{#                    data-to-marge-iphone-id="18 19 17">#}
+{#                    ※要問#}
+{#                </td>#}
                 <td class="nodata" data-shop-id="5" data-iphen-id="18" data-to-marge-iphone-id="18 19 17">※要問</td>
                 <td class="nodata" data-shop-id="11" data-iphen-id="18" data-to-marge-iphone-id="18 19 17">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="18"
-                    data-to-marge-iphone-id="18 19 17">
-                    ※要問
-                </td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="18"#}
+{#                    data-to-marge-iphone-id="18 19 17">#}
+{#                    ※要問#}
+{#                </td>#}
                 <td class="nodata" data-shop-id="15" data-iphen-id="18" data-to-marge-iphone-id="18 19 17">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="18" data-to-marge-iphone-id="18 19 17">※要問</td>
             </tr>
             <tr data-color="blue">
-                <td style="background:#4b5780;text-align:left;">Blue</td>
+                <td style="text-align:left;">Blue</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="19">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="19">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="19">※要問</td>
@@ -1472,15 +1492,15 @@
                 <td class="nodata" data-shop-id="17" data-iphen-id="19">※要問</td>
                 <td class="nodata" data-shop-id="3" data-iphen-id="19">※要問</td>
                 <td class="nodata" data-shop-id="4" data-iphen-id="19">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="19">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="19">※要問</td>#}
                 <td class="nodata" data-shop-id="5" data-iphen-id="19">※要問</td>
                 <td class="nodata" data-shop-id="11" data-iphen-id="19">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="19">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="19">※要問</td>#}
                 <td class="nodata" data-shop-id="15" data-iphen-id="19">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="19">※要問</td>
             </tr>
             <tr data-color="silver">
-                <td style="background:#e6e6e6;text-align:left;">Silver</td>
+                <td style="text-align:left;">Silver</td>
                 <td class="nodata" data-shop-id="14" data-iphen-id="17">※要問</td>
                 <td class="nodata" data-shop-id="1" data-iphen-id="17">※要問</td>
                 <td class="nodata" data-shop-id="8" data-iphen-id="17">※要問</td>
@@ -1495,10 +1515,10 @@
                 <td class="nodata" data-shop-id="17" data-iphen-id="17">※要問</td>
                 <td class="nodata" data-shop-id="3" data-iphen-id="17">※要問</td>
                 <td class="nodata" data-shop-id="4" data-iphen-id="17">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="17">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="2" data-iphen-id="17">※要問</td>#}
                 <td class="nodata" data-shop-id="5" data-iphen-id="17">※要問</td>
                 <td class="nodata" data-shop-id="11" data-iphen-id="17">※要問</td>
-                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="17">※要問</td>
+{#                <td class="nodata" style="display: none !important;" data-shop-id="6" data-iphen-id="17">※要問</td>#}
                 <td class="nodata" data-shop-id="15" data-iphen-id="17">※要問</td>
                 <td class="nodata" data-shop-id="20" data-iphen-id="17">※要問</td>
             </tr>
@@ -1540,10 +1560,10 @@
                 <th class="shop-col shop-head shop-トゥインクル">トゥインクル</th>
                 <th class="shop-col shop-head shop-家電市場">家電市場</th>
                 <th class="shop-col shop-head shop-買取楽園">買取楽園</th>
-                <th class="shop-col shop-head shop-買取当番">買取当番</th>
+{#                <th class="shop-col shop-head shop-買取当番">買取当番</th>#}
                 <th class="shop-col shop-head shop-携帯空間">携帯空間</th>
                 <th class="shop-col shop-head shop-ゲストモバイル">ゲストモバイル</th>
-                <th class="shop-col shop-head shop-買取オク">買取オク</th>
+{#                <th class="shop-col shop-head shop-買取オク">買取オク</th>#}
                 <th class="shop-col shop-head shop-毎日買取">毎日買取</th>
                 <th class="shop-col shop-head shop-MobileZone">Mobile Zone</th>
             </tr>
@@ -1552,7 +1572,7 @@
             <tbody>
             <tr>
 
-                <td class="front-num" rowspan="3" style="text-align:left;">iPhone Air</td>
+                <td class="front-name" rowspan="3" style="text-align:left;">Air</td>
                 <td class="front-num" style="text-align:left;">256GB</td>
                 <td class="front-num" rowspan="1" data-issue-pricing>159,800</td>
                 <td class="front-num" rowspan="1"
@@ -1574,7 +1594,7 @@
                     data-average>
                     -
                 </td>
-                <td style="text-align:left;">ALL</td>
+                <td class="text-all" style="text-align:left;">ALL</td>
                 <td class="nodata all-price" data-shop-id="14" data-iphen-average-id="32 33 34 35">※要問</td>
                 <td class="nodata all-price" data-shop-id="1" data-iphen-average-id="32 33 34 35">※要問</td>
                 <td class="nodata all-price" data-shop-id="8" data-iphen-average-id="32 33 34 35">※要問</td>
@@ -1589,14 +1609,14 @@
                 <td class="nodata all-price" data-shop-id="17" data-iphen-average-id="32 33 34 35">※要問</td>
                 <td class="nodata all-price" data-shop-id="3" data-iphen-average-id="32 33 34 35">※要問</td>
                 <td class="nodata all-price" data-shop-id="4" data-iphen-average-id="32 33 34 35">※要問</td>
-                <td class="nodata all-price" style="display: none !important;" data-shop-id="2"
-                    data-iphen-average-id="32 33 34 35">※要問
-                </td>
+{#                <td class="nodata all-price" style="display: none !important;" data-shop-id="2"#}
+{#                    data-iphen-average-id="32 33 34 35">※要問#}
+{#                </td>#}
                 <td class="nodata all-price" data-shop-id="5" data-iphen-average-id="32 33 34 35">※要問</td>
                 <td class="nodata all-price" data-shop-id="11" data-iphen-average-id="32 33 34 35">※要問</td>
-                <td class="nodata all-price" style="display: none !important;" data-shop-id="6"
-                    data-iphen-average-id="32 33 34 35">※要問
-                </td>
+{#                <td class="nodata all-price" style="display: none !important;" data-shop-id="6"#}
+{#                    data-iphen-average-id="32 33 34 35">※要問#}
+{#                </td>#}
                 <td class="nodata all-price" data-shop-id="15" data-iphen-average-id="32 33 34 35">※要問</td>
                 <td class="nodata all-price" data-shop-id="20" data-iphen-average-id="32 33 34 35">※要問</td>
             </tr>
@@ -1623,7 +1643,7 @@
                     data-average>
                     -
                 </td>
-                <td style="text-align:left;">ALL</td>
+                <td class="text-all" style="text-align:left;">ALL</td>
                 <td class="nodata all-price" data-shop-id="14" data-iphen-average-id="36 37 38 39">※要問</td>
                 <td class="nodata all-price" data-shop-id="1" data-iphen-average-id="36 37 38 39">※要問</td>
                 <td class="nodata all-price" data-shop-id="8" data-iphen-average-id="36 37 38 39">※要問</td>
@@ -1638,14 +1658,14 @@
                 <td class="nodata all-price" data-shop-id="17" data-iphen-average-id="36 37 38 39">※要問</td>
                 <td class="nodata all-price" data-shop-id="3" data-iphen-average-id="36 37 38 39">※要問</td>
                 <td class="nodata all-price" data-shop-id="4" data-iphen-average-id="36 37 38 39">※要問</td>
-                <td class="nodata all-price" style="display: none !important;" data-shop-id="2"
-                    data-iphen-average-id="36 37 38 39">※要問
-                </td>
+{#                <td class="nodata all-price" style="display: none !important;" data-shop-id="2"#}
+{#                    data-iphen-average-id="36 37 38 39">※要問#}
+{#                </td>#}
                 <td class="nodata all-price" data-shop-id="5" data-iphen-average-id="36 37 38 39">※要問</td>
                 <td class="nodata all-price" data-shop-id="11" data-iphen-average-id="36 37 38 39">※要問</td>
-                <td class="nodata all-price" style="display: none !important;" data-shop-id="6"
-                    data-iphen-average-id="36 37 38 39">※要問
-                </td>
+{#                <td class="nodata all-price" style="display: none !important;" data-shop-id="6"#}
+{#                    data-iphen-average-id="36 37 38 39">※要問#}
+{#                </td>#}
                 <td class="nodata all-price" data-shop-id="15" data-iphen-average-id="36 37 38 39">※要問</td>
                 <td class="nodata all-price" data-shop-id="20" data-iphen-average-id="36 37 38 39">※要問</td>
             </tr>
@@ -1672,7 +1692,7 @@
                     data-average>
                     -
                 </td>
-                <td style="text-align:left;">ALL</td>
+                <td class="text-all" style="text-align:left;">ALL</td>
                 <td class="nodata all-price" data-shop-id="14" data-iphen-average-id="40 41 42 43">※要問</td>
                 <td class="nodata all-price" data-shop-id="1" data-iphen-average-id="40 41 42 43">※要問</td>
                 <td class="nodata all-price" data-shop-id="8" data-iphen-average-id="40 41 42 43">※要問</td>
@@ -1687,14 +1707,14 @@
                 <td class="nodata all-price" data-shop-id="17" data-iphen-average-id="40 41 42 43">※要問</td>
                 <td class="nodata all-price" data-shop-id="3" data-iphen-average-id="40 41 42 43">※要問</td>
                 <td class="nodata all-price" data-shop-id="4" data-iphen-average-id="40 41 42 43">※要問</td>
-                <td class="nodata all-price" style="display: none !important;" data-shop-id="2"
-                    data-iphen-average-id="40 41 42 43">※要問
-                </td>
+{#                <td class="nodata all-price" style="display: none !important;" data-shop-id="2"#}
+{#                    data-iphen-average-id="40 41 42 43">※要問#}
+{#                </td>#}
                 <td class="nodata all-price" data-shop-id="5" data-iphen-average-id="40 41 42 43">※要問</td>
                 <td class="nodata all-price" data-shop-id="11" data-iphen-average-id="40 41 42 43">※要問</td>
-                <td class="nodata all-price" style="display: none !important;" data-shop-id="6"
-                    data-iphen-average-id="40 41 42 43">※要問
-                </td>
+{#                <td class="nodata all-price" style="display: none !important;" data-shop-id="6"#}
+{#                    data-iphen-average-id="40 41 42 43">※要問#}
+{#                </td>#}
                 <td class="nodata all-price" data-shop-id="15" data-iphen-average-id="40 41 42 43">※要問</td>
                 <td class="nodata all-price" data-shop-id="20" data-iphen-average-id="40 41 42 43">※要問</td>
             </tr>
@@ -1735,17 +1755,17 @@
                 <th class="shop-col shop-head shop-トゥインクル">トゥインクル</th>
                 <th class="shop-col shop-head shop-家電市場">家電市場</th>
                 <th class="shop-col shop-head shop-買取楽園">買取楽園</th>
-                <th class="shop-col shop-head shop-買取当番">買取当番</th>
+{#                <th class="shop-col shop-head shop-買取当番">買取当番</th>#}
                 <th class="shop-col shop-head shop-携帯空間">携帯空間</th>
                 <th class="shop-col shop-head shop-ゲストモバイル">ゲストモバイル</th>
-                <th class="shop-col shop-head shop-買取オク">買取オク</th>
+{#                <th class="shop-col shop-head shop-買取オク">買取オク</th>#}
                 <th class="shop-col shop-head shop-毎日買取">毎日買取</th>
                 <th class="shop-col shop-head shop-MobileZone">Mobile Zone</th>
             </tr>
             </thead>
             <tbody>
             <tr>
-                <td class="front-num" rowspan="2" style="text-align:left;">iPhone 17</td>
+                <td class="front-name" rowspan="2" style="text-align:left;">17</td>
                 <td class="front-num" style="text-align:left;">256GB</td>
                 <td class="front-num" rowspan="1" data-issue-pricing>129,800</td>
                 <td class="front-num" rowspan="1"
@@ -1768,7 +1788,7 @@
                     -
                 </td>
 
-                <td style="text-align:left;">ALL</td>
+                <td class="text-all" style="text-align:left;">ALL</td>
                 <td class="nodata all-price" data-shop-id="14" data-iphen-average-id="1 2 3 4 5">※要問</td>
                 <td class="nodata all-price" data-shop-id="1" data-iphen-average-id="1 2 3 4 5">※要問</td>
                 <td class="nodata all-price" data-shop-id="8" data-iphen-average-id="1 2 3 4 5">※要問</td>
@@ -1783,14 +1803,14 @@
                 <td class="nodata all-price" data-shop-id="17" data-iphen-average-id="1 2 3 4 5">※要問</td>
                 <td class="nodata all-price" data-shop-id="3" data-iphen-average-id="1 2 3 4 5">※要問</td>
                 <td class="nodata all-price" data-shop-id="4" data-iphen-average-id="1 2 3 4 5">※要問</td>
-                <td class="nodata all-price" style="display: none !important;" data-shop-id="2"
-                    data-iphen-average-id="1 2 3 4 5">※要問
-                </td>
+{#                <td class="nodata all-price" style="display: none !important;" data-shop-id="2"#}
+{#                    data-iphen-average-id="1 2 3 4 5">※要問#}
+{#                </td>#}
                 <td class="nodata all-price" data-shop-id="5" data-iphen-average-id="1 2 3 4 5">※要問</td>
                 <td class="nodata all-price" data-shop-id="11" data-iphen-average-id="1 2 3 4 5">※要問</td>
-                <td class="nodata all-price" style="display: none !important;" data-shop-id="6"
-                    data-iphen-average-id="1 2 3 4 5">※要問
-                </td>
+{#                <td class="nodata all-price" style="display: none !important;" data-shop-id="6"#}
+{#                    data-iphen-average-id="1 2 3 4 5">※要問#}
+{#                </td>#}
                 <td class="nodata all-price" data-shop-id="15" data-iphen-average-id="1 2 3 4 5">※要問</td>
                 <td class="nodata all-price" data-shop-id="20" data-iphen-average-id="1 2 3 4 5">※要問</td>
             </tr>
@@ -1817,7 +1837,7 @@
                     data-average>
                     -
                 </td>
-                <td style="text-align:left;">ALL</td>
+                <td class="text-all" style="text-align:left;">ALL</td>
                 <td class="nodata all-price" data-shop-id="14" data-iphen-average-id="6 7 8 9 10">※要問</td>
                 <td class="nodata all-price" data-shop-id="1" data-iphen-average-id="6 7 8 9 10">※要問</td>
                 <td class="nodata all-price" data-shop-id="8" data-iphen-average-id="6 7 8 9 10">※要問</td>
@@ -1832,14 +1852,14 @@
                 <td class="nodata all-price" data-shop-id="17" data-iphen-average-id="6 7 8 9 10">※要問</td>
                 <td class="nodata all-price" data-shop-id="3" data-iphen-average-id="6 7 8 9 10">※要問</td>
                 <td class="nodata all-price" data-shop-id="4" data-iphen-average-id="6 7 8 9 10">※要問</td>
-                <td class="nodata all-price" style="display: none !important;" data-shop-id="2"
-                    data-iphen-average-id="6 7 8 9 10">※要問
-                </td>
+{#                <td class="nodata all-price" style="display: none !important;" data-shop-id="2"#}
+{#                    data-iphen-average-id="6 7 8 9 10">※要問#}
+{#                </td>#}
                 <td class="nodata all-price" data-shop-id="5" data-iphen-average-id="6 7 8 9 10">※要問</td>
                 <td class="nodata all-price" data-shop-id="11" data-iphen-average-id="6 7 8 9 10">※要問</td>
-                <td class="nodata all-price" style="display: none !important;" data-shop-id="6"
-                    data-iphen-average-id="6 7 8 9 10">※要問
-                </td>
+{#                <td class="nodata all-price" style="display: none !important;" data-shop-id="6"#}
+{#                    data-iphen-average-id="6 7 8 9 10">※要問#}
+{#                </td>#}
                 <td class="nodata all-price" data-shop-id="15" data-iphen-average-id="6 7 8 9 10">※要問</td>
                 <td class="nodata all-price" data-shop-id="20" data-iphen-average-id="6 7 8 9 10">※要問</td>
             </tr>
