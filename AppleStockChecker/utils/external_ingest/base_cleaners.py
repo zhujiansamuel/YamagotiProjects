@@ -3326,8 +3326,8 @@ def clean_shop14(df: pd.DataFrame) -> pd.DataFrame:
         # 也支持旧字段名：若某些文件用不同名字，可以按需加
         combined = " ".join([p for p in (part_a, part_b) if p]).strip()
 
-        # rec_at = parse_dt_aware(row.get("time-scraped"))
-        rec_at = row.get("time-scraped")
+        rec_at = parse_dt_aware(row.get("time-scraped"))
+        #rec_at = row.get("time-scraped")
 
         print(f"[{idx}] model='{model_text}' -> norm='{model_norm}', cap={cap_gb}, base_price={base_price}, combined_remark='{combined}'")
 
