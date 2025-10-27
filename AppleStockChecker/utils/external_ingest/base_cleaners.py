@@ -3187,6 +3187,34 @@ def _build_color_map_shop14(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict
         cmap[key][_norm(str(r["color"]))] = (str(r["part_number"]), str(r["color"]))
     return cmap
 
+def _norm_label(lbl: str) -> str:
+    """去除空白并统一全角空格/NBSP，保留原文字顺序用作匹配用 key"""
+    if lbl is None:
+        return ""
+    s = str(lbl)
+    # 去掉左右空白并规范全角空格为半角
+    s = s.strip().replace("\u3000", " ").replace("\xa0", " ").strip()
+    # 把中间多空格合并
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+
+def _clean_remark_frag(x) -> str:
+    """把单列 remark 做清理：去 None/nan，统一空格，去 BOM，去多余标点尾巴等。"""
+    if x is None:
+        return ""
+    s = str(x).strip()
+    if not s:
+        return ""
+    # pandas 的 nan/NaN/None 字符串化为 'nan'，把它当空
+    if s.lower() == "nan":
+        return ""
+    # 去 BOM / 不可见空白
+    s = s.lstrip("\ufeff").replace("\u3000", " ")
+    # 把多空格压成一个
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
 def _extract_color_abs_prices(text: str) -> List[Tuple[str, int]]:
     """
     从 text 中抽取 (label_raw, abs_price) 绝对价。
