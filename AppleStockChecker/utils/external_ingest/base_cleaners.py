@@ -12,7 +12,7 @@ from typing import Dict, Optional, List, Iterable, Union
 import os, re, json, pathlib
 from datetime import datetime
 import pytz
-
+import time
 
 _NUM_MODEL_PAT = re.compile(r"(iPhone)\s*(\d{2})(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
 _AIR_PAT = re.compile(r"(iPhone)\s*(Air)(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
@@ -1049,6 +1049,7 @@ def _build_color_map_shop3(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict[
 
 @register_cleaner("shop3")
 def clean_shop3(df: pd.DataFrame) -> pd.DataFrame:
+    print("shop3:買取一丁目---------->进入清洗器时间：",time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     """
     输入列：
       web-scraper-order, web-scraper-start-url, data4, data5, data6, data8, title, 减价1, time-scraped
@@ -1114,7 +1115,6 @@ def clean_shop3(df: pd.DataFrame) -> pd.DataFrame:
         # 解析“减价1”中的差额
         rem_text = str(remark.iat[i]) if remark is not None else ""
         deltas = _extract_color_deltas_shop3(rem_text)
-        print("------->deltas:",deltas)
         if deltas:
             for col_norm, (pn, col_raw) in cmap.items():
                 for label_raw, delta in deltas:
@@ -1286,6 +1286,7 @@ def _collect_adjustments_shop4(df: pd.DataFrame, start_idx: int) -> Dict[str, in
 
 # @register_cleaner("shop4")
 def clean_shop4(df: pd.DataFrame) -> pd.DataFrame:
+    print("shop4:モバイルミックス---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     """
     输入 (shop4.csv):
       - web-scraper-order, web-scraper-start-url, data, data11, time-scraped
@@ -1309,7 +1310,7 @@ def clean_shop4(df: pd.DataFrame) -> pd.DataFrame:
     # 归一化信息表并建立 (model_norm, cap) → {color_norm: pn}
     info_df = _load_iphone17_info_df_for_shop2().copy()
     # 预期含：part_number, model_name, capacity_gb, color
-    info_df["model_name_norm"] = info_df["model_name"].map(_normalize_model_generic)
+    info_df["model_name_norm"] = info_df["model_name_norm"].map(_normalize_model_generic)
     info_df["capacity_gb"] = pd.to_numeric(info_df["capacity_gb"], errors="coerce").astype("Int64")
     info_df["color_norm"] = info_df["color"].map(lambda x: _norm(str(x)))
 
@@ -1410,6 +1411,8 @@ def clean_shop4(df: pd.DataFrame) -> pd.DataFrame:
 
 @register_cleaner("shop5-1")
 def clean_shop5_1(df: pd.DataFrame) -> pd.DataFrame:
+    print("shop5-1:森森買取---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+
     """
     输入表头：web-scraper-order, web-scraper-start-url, pagination-selector, price, data, name, (time-scraped)
     要求：删除 name 含 '中古' 的行；通过 data 的 JAN 定位 PN；price -> price_new；time-scraped -> recorded_at
@@ -1465,6 +1468,7 @@ def clean_shop5_1(df: pd.DataFrame) -> pd.DataFrame:
 
 @register_cleaner("shop5-2")
 def clean_shop5_2(df: pd.DataFrame) -> pd.DataFrame:
+    print("shop5-2:森森買取---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     """
     输入表头：web-scraper-order, web-scraper-start-url, pagination-selector, price, data, name, (time-scraped)
     要求：删除 name 含 '中古' 的行；通过 data 的 JAN 定位 PN；price -> price_new；time-scraped -> recorded_at
@@ -1520,6 +1524,7 @@ def clean_shop5_2(df: pd.DataFrame) -> pd.DataFrame:
 
 @register_cleaner("shop5-3")
 def clean_shop5_3(df: pd.DataFrame) -> pd.DataFrame:
+    print("shop5-3:森森買取---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     """
     输入表头：web-scraper-order, web-scraper-start-url, pagination-selector, price, data, name, (time-scraped)
     要求：删除 name 含 '中古' 的行；通过 data 的 JAN 定位 PN；price -> price_new；time-scraped -> recorded_at
@@ -1575,6 +1580,7 @@ def clean_shop5_3(df: pd.DataFrame) -> pd.DataFrame:
 
 @register_cleaner("shop5-4")
 def clean_shop5_4(df: pd.DataFrame) -> pd.DataFrame:
+    print("shop5-4:森森買取---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     """
     输入表头：web-scraper-order, web-scraper-start-url, pagination-selector, price, data, name, (time-scraped)
     要求：删除 name 含 '中古' 的行；通过 data 的 JAN 定位 PN；price -> price_new；time-scraped -> recorded_at
@@ -1630,6 +1636,7 @@ def clean_shop5_4(df: pd.DataFrame) -> pd.DataFrame:
 
 @register_cleaner("shop6-1")
 def clean_shop6_1(df: pd.DataFrame) -> pd.DataFrame:
+    print("shop6-1:買取ルデヤ---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     # 必要列检查
     need_cols = ["data7", "phone", "data8", "time-scraped"]
     for c in need_cols:
@@ -1677,6 +1684,7 @@ def clean_shop6_1(df: pd.DataFrame) -> pd.DataFrame:
 
 @register_cleaner("shop6-2")
 def clean_shop6_2(df: pd.DataFrame) -> pd.DataFrame:
+    print("shop6-2:買取ルデヤ---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     # 必要列检查
     need_cols = ["data7", "phone", "data8", "time-scraped"]
     for c in need_cols:
@@ -1724,6 +1732,7 @@ def clean_shop6_2(df: pd.DataFrame) -> pd.DataFrame:
 
 @register_cleaner("shop6-3")
 def clean_shop6_3(df: pd.DataFrame) -> pd.DataFrame:
+    print("shop6-3:買取ルデヤ---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     # 必要列检查
     need_cols = ["data7", "phone", "data8", "time-scraped"]
     for c in need_cols:
@@ -1771,6 +1780,7 @@ def clean_shop6_3(df: pd.DataFrame) -> pd.DataFrame:
 
 @register_cleaner("shop6-4")
 def clean_shop6_4(df: pd.DataFrame) -> pd.DataFrame:
+    print("shop6-4:買取ルデヤ---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     # 必要列检查
     need_cols = ["data7", "phone", "data8", "time-scraped"]
     for c in need_cols:
@@ -1818,6 +1828,7 @@ def clean_shop6_4(df: pd.DataFrame) -> pd.DataFrame:
 
 @register_cleaner("shop7")
 def clean_shop7(df: pd.DataFrame) -> pd.DataFrame:
+    print("shop7:買取ホムラ---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     info_df = _load_iphone17_info_df()  # part_number, model_name_norm, capacity_gb
 
     # 必要列检查
@@ -1879,6 +1890,7 @@ def clean_shop7(df: pd.DataFrame) -> pd.DataFrame:
 
 @register_cleaner("shop8")
 def clean_shop8(df: pd.DataFrame) -> pd.DataFrame:
+    print("shop8:買取wiki---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     # 列名容错：有些抓取器可能用不同大小写或空白
     # 这里统一抓关键列
     col_model = "機種名"
@@ -1911,6 +1923,7 @@ def clean_shop8(df: pd.DataFrame) -> pd.DataFrame:
 #ドラゴンモバイル    # shop10　　９
 @register_cleaner("shop10")
 def clean_shop10(df: pd.DataFrame) -> pd.DataFrame:
+    print("shop10:ドラゴンモバイル---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     info_df = _load_iphone17_info_df()
 
     need_cols = ["data2", "price", "time-scraped"]
@@ -2245,6 +2258,7 @@ def _build_color_map_shop11(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict
 # -------- 主清洗器 ----------
 @register_cleaner("shop11")
 def clean_shop11(df: pd.DataFrame) -> pd.DataFrame:
+    print("shop11:モバステ---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     """
     shop11 清洗器：
       - storage_name -> model+capacity (使用 _normalize_model_generic / _parse_capacity_gb)
@@ -2313,6 +2327,7 @@ def clean_shop11(df: pd.DataFrame) -> pd.DataFrame:
 
 @register_cleaner("shop9")
 def clean_shop9(df: pd.DataFrame) -> pd.DataFrame:
+    print("shop9:アキモバ---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     """
     增强的 shop9 清洗器，支持 price 字段中包含：
       - 绝对价（例：'橙175,000/青,銀174,000'）
@@ -2577,6 +2592,7 @@ def clean_shop9(df: pd.DataFrame) -> pd.DataFrame:
 # "トゥインクル", # shop12      12
 @register_cleaner("shop12")
 def clean_shop12(df: pd.DataFrame) -> pd.DataFrame:
+    print("shop12:トゥインクル---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     """
     输入 (shop12.csv):
       - モデルナンバー: 含 “iPhone17 Pro 256GB 未開封” 等机型信息；无价或纯标题行将被跳过
@@ -2665,6 +2681,7 @@ def clean_shop12(df: pd.DataFrame) -> pd.DataFrame:
 #家電市場   # shop13           13
 @register_cleaner("shop13")
 def clean_shop13(df: pd.DataFrame) -> pd.DataFrame:
+    print("shop13:家電市場---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     """
     输入列（来自 shop13.csv）：
       - 「新品価格」: 价格（可能含 '円'、'¥'、'～'、'万' 等）
@@ -3003,6 +3020,7 @@ def _extract_color_abs_prices(text: str) -> List[Tuple[str, int]]:
 
 @register_cleaner("shop14")
 def clean_shop14(df: pd.DataFrame) -> pd.DataFrame:
+    print("shop14:買取楽園---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     """
     输入 (shop14.csv):
       - name: 机型（如 'iPhone17 Pro 256GB'）
@@ -3238,6 +3256,7 @@ def _build_color_map_shop15(info_df: pd.DataFrame) -> Dict[tuple, Dict[str, Tupl
 
 @register_cleaner("shop15")
 def clean_shop15(df: pd.DataFrame) -> pd.DataFrame:
+    print("shop15:買取当番---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     """
     输入 (shop15.csv):
       - data2: 机型（如 'iPhone 17 Pro Max 256GB'）
@@ -3495,6 +3514,7 @@ PRICE_COL = "買取価格"
 
 @register_cleaner("shop16")
 def clean_shop16(df: pd.DataFrame) -> pd.DataFrame:
+    print("shop16:携帯空間---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     """
     输入 (shop16.csv):
       - MODEL_COL: 既可能是分组标题，也可能是 'iPhone 17 Pro/Max 256GB' 等
@@ -3787,6 +3807,7 @@ def _extract_color_deltas_shop17(text: str) -> List[Tuple[str, int]]:
 
 @register_cleaner("shop17")
 def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
+    print("shop17:ゲストモバイル---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     """
     输入 (shop17.csv):
       - type: 机型（如 'iPhone 17 Pro 256GB'）
@@ -3870,12 +3891,6 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
     return out
 #
 #
-#
-#
-#
-#
-#
-#
 
 
 # ---- 常量：可在此处覆盖店名；默认用域名当 shop_name ----
@@ -3956,6 +3971,7 @@ def _match_by_type(type_text: str, info_df: pd.DataFrame) -> Optional[str]:
 
 @register_cleaner("shop18")
 def clean_shop18(df: pd.DataFrame) -> pd.DataFrame:
+    print("shop18:買取オク---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     """
     输入 (shop18.csv):
       - jan: 如 'JAN: 4549995648300'
@@ -4103,6 +4119,7 @@ def _coerce_price(v) -> Optional[int]:
 
 @register_cleaner("shop20")
 def clean_shop20(df: pd.DataFrame) -> pd.DataFrame:
+    print("shop20:毎日買取---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     """
     输入 (shop20.csv):
       - json: 形如 {""success"":true,""data"":[...]} 的 JSON 文本（需先把 "" → "）
@@ -4184,8 +4201,6 @@ def clean_shop20(df: pd.DataFrame) -> pd.DataFrame:
         out["part_number"] = out["part_number"].astype(str)
         out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
     return out
-
-
 
 JAN_RE_shop1 = re.compile(r"(\d{8,})")
 
@@ -4285,11 +4300,11 @@ def clean_shop1(df: pd.DataFrame) -> pd.DataFrame:
 
     for rec in _iter_records(df):
         jan = _extract_jan_digits_shop1(rec.get("JAN"))
-        print(jan)
+
         if not jan:
             continue
         pn = jan_map.get(jan)
-        print(pn)
+
         if not pn:
             continue
 

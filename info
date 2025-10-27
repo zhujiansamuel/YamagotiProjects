@@ -482,3 +482,6 @@ https://docs.google.com/spreadsheets/d/e/2PACX-1vTHgVMpH0FnvdAmk2sqEUVkexuuo5oA5
 
 アキモバ
 ドラゴンモバイル
+
+
+print("shop10:ドラゴンモバイル---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
