@@ -903,6 +903,8 @@ def clean_shop2(shop2_df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(out_rows, columns=["part_number","shop_name","price_new","recorded_at"])
     return out
 
+
+FAMILY_SYNONYMS_shop3 = { "blue": ["ブルー", "青", "ディープブルー"], "ブルー": ["ブルー", "青", "ディープブルー"], "青": ["ブルー", "青", "ディープブルー"], "ディープブルー": ["ディープブルー", "ブルー", "青"], "silver": ["シルバー", "銀"], "シルバー": ["シルバー", "銀"], "銀": ["シルバー", "銀"], }
 # 分隔标签的常见 token
 _LABEL_SPLIT_RE = re.compile(r"[／/、，,・\s；;]+")  # include ideographic middle dot, full-width space etc.
 
@@ -2431,7 +2433,7 @@ def clean_shop9(df: pd.DataFrame) -> pd.DataFrame:
 
     # 先把 info_df 分组，建立 (model_norm, cap) -> { color_norm: part_number }
     info_df2 = info_df.copy()
-    info_df2["model_name_norm"] = info_df2["model_name"].map(_normalize_model_generic)
+    info_df2["model_name_norm"] = info_df2["model_name_norm"].map(_normalize_model_generic)
     info_df2["capacity_gb"] = pd.to_numeric(info_df2["capacity_gb"], errors="coerce").astype("Int64")
     info_df2["color_norm"] = info_df2["color"].map(lambda x: _norm(str(x)))
 
