@@ -139,7 +139,9 @@ git pull origin master
 docker compose build
 docker compose up -d web nginx
 
+
 docker compose up -d --scale worker=5
+
 
 docker compose logs -f web
 docker compose logs -f celery
@@ -473,15 +475,39 @@ curl "https://docs.google.com/spreadsheets/d/e/2PACX-1vTHgVMpH0FnvdAmk2sqEUVkexu
 
 https://docs.google.com/spreadsheets/d/e/2PACX-1vTHgVMpH0FnvdAmk2sqEUVkexuuo5oA5XNZTaTbCMGMpy8HSK3TImgQviU99UX-STS4B4IuNrnYG7Sz/pubhtml?gid=1011791912&single=true&range=A1:B152&widget=false&headers=false&chrome=false
 
+SHOP_DISPLAY_ORDER = [
+    "買取商店",
+    "海峡通信",  # shop2　　　      ２
+    "買取一丁目",  # shop3         ３
+    "モバイルミックス",  # shop4         4
+    "森森買取",  # shop5           ５
+    "買取ルデヤ",  # shop6         ６
+    "買取wiki",  # shop8          ７
+    "買取ホムラ",  # shop7         ８
+    "ドラゴンモバイル",  # shop10　　９
+    "モバステ",  # shop11　         10
+    "アキモバ",  # shop9           11
+    "トゥインクル",  # shop12        12
+    "家電市場",  # shop13           13
+    "買取楽園",  # shop14           14
+    "買取当番",  # shop15           15
+    "携帯空間",  # shop16           16
+    "ゲストモバイル",  # shop17               17
+    "買取オク",  # shop18               18
+    "毎日買取",  # shop20           20
+]
 
-買取ルデヤ part_number
-森森買取 part_number
-買取商店 part_number
-買取Wiki part_number
+買取商店 part_number  #shop1
+森森買取 part_number  # shop5
+買取ルデヤ part_number # shop6
+買取Wiki part_number  # shop8
+家電市場 part_number  # shop13
+毎日買取 part_number  # shop20
 
+https://docs.google.com/spreadsheets/d/e/2PACX-1vTHgVMpH0FnvdAmk2sqEUVkexuuo5oA5XNZTaTbCMGMpy8HSK3TImgQviU99UX-STS4B4IuNrnYG7Sz/pubhtml?gid=1011791912
 
 アキモバ
+トゥインクル
+携帯空間
 ドラゴンモバイル
 
-
-print("shop10:ドラゴンモバイル---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
