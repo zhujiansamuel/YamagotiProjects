@@ -2448,7 +2448,7 @@ def clean_shop9(df: pd.DataFrame) -> pd.DataFrame:
 
     # 先把 info_df 分组，建立 (model_norm, cap) -> { color_norm: part_number }
     info_df2 = info_df.copy()
-    info_df2["model_name_norm"] = info_df2["model_name_norm"].map(_normalize_model_generic)
+    info_df2["model_name_norm"] = info_df2["model_name"].map(_normalize_model_generic)
     info_df2["capacity_gb"] = pd.to_numeric(info_df2["capacity_gb"], errors="coerce").astype("Int64")
     info_df2["color_norm"] = info_df2["color"].map(lambda x: _norm(str(x)))
 
