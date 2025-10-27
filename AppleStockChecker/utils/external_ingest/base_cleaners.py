@@ -1310,7 +1310,7 @@ def clean_shop4(df: pd.DataFrame) -> pd.DataFrame:
     # 归一化信息表并建立 (model_norm, cap) → {color_norm: pn}
     info_df = _load_iphone17_info_df_for_shop2().copy()
     # 预期含：part_number, model_name, capacity_gb, color
-    info_df["model_name_norm"] = info_df["model_name_norm"].map(_normalize_model_generic)
+    info_df["model_name_norm"] = info_df["model_name"].map(_normalize_model_generic)
     info_df["capacity_gb"] = pd.to_numeric(info_df["capacity_gb"], errors="coerce").astype("Int64")
     info_df["color_norm"] = info_df["color"].map(lambda x: _norm(str(x)))
 
@@ -1358,7 +1358,7 @@ def clean_shop4(df: pd.DataFrame) -> pd.DataFrame:
             continue
 
         # 同行 data 若写“全色 ± n円”，优先应用统一调整
- # 同行 data 若写“全色 ± n円”，优先应用统一调整
+        # 同行 data 若写“全色 ± n円”，优先应用统一调整
         same_line = str(df["data"].iat[i]) if df["data"].iat[i] is not None else ""
         same_line_parsed = _parse_color_delta_shop4(same_line)  # 可能 None 或 list[(label,delta)]
         global_delta = None
