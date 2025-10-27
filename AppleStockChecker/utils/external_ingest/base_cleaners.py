@@ -1284,7 +1284,7 @@ def _collect_adjustments_shop4(df: pd.DataFrame, start_idx: int) -> Dict[str, in
 
 # ---------- 主清洗器 ----------
 
-# @register_cleaner("shop4")
+@register_cleaner("shop4")
 def clean_shop4(df: pd.DataFrame) -> pd.DataFrame:
     print("shop4:モバイルミックス---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     """
