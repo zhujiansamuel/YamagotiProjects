@@ -1901,7 +1901,8 @@ def clean_shop7(df: pd.DataFrame) -> pd.DataFrame:
 
     # 价格/时间（注意 data2 里是价格，我们仅在行有 price 时才处理该行）
     price_series  = df["data3"].map(_price_from_shop7)
-    recorded_at   = df["time-scraped"]
+    recorded_at   = df["time-scraped"].map(parse_dt_aware)
+
 
     # ------------- 构建 (model_norm, cap) -> { color_norm: part_number } -------------
     info2 = info_df.copy()
