@@ -2335,7 +2335,7 @@ def clean_shop9(df: pd.DataFrame) -> pd.DataFrame:
       - 全色（'全色'）
     输出列与以前一致：part_number, shop_name (固定 'アキモバ'), price_new, recorded_at
     """
-    info_df = _load_iphone17_info_df()
+    info_df = _load_iphone17_info_df_for_shop2()
 
     col_model = "機種名"
     col_price = "買取価格"
