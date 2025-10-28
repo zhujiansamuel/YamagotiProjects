@@ -2963,7 +2963,7 @@
 
             // —— 4) 决定“当前窗口”时间长度 —— //
             // 优先使用 runWithEnd 写入的 window 长度（毫秒），否则回退 25 分钟
-            const defaultWindowMs = 25 * 60 * 1000;
+            const defaultWindowMs = 60 * 60 * 1000;
             const windowMs = (typeof window._PSTA_windowMs === 'number' && window._PSTA_windowMs > 0)
                 ? window._PSTA_windowMs
                 : defaultWindowMs;
