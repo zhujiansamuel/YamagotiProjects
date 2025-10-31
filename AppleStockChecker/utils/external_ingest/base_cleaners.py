@@ -4421,7 +4421,7 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
       - part_number, shop_name, price_new, recorded_at
     """
     # 必要列检查
-    for c in ["type", "新未開封品", "色減額", "time-scraped", "web-scraper-start-url"]:
+    for c in ["type", "新未開封品", "色減額", "time-scraped"]:
         if c not in df.columns:
             raise ValueError(f"shop20 清洗器缺少必要列：{c}")
 
