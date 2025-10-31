@@ -4585,7 +4585,7 @@ def clean_shop18(df: pd.DataFrame) -> pd.DataFrame:
       - part_number, shop_name, price_new, recorded_at
     仅输出出现在 _load_iphone17_info_df_for_shop2() 的机型。
     """
-    need_cols = ["jan", "type", "price", "time-scraped", "web-scraper-start-url"]
+    need_cols = ["jan", "type", "price", "time-scraped"]
     for c in need_cols:
         if c not in df.columns:
             raise ValueError(f"shop18 清洗器缺少必要列：{c}")
