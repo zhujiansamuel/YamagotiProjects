@@ -504,6 +504,26 @@ SHOP_DISPLAY_ORDER = [
 家電市場 part_number  # shop13
 毎日買取 part_number  # shop20
 
+買取商店	          part_number  #shop1
+海峡通信           1
+買取一丁目          1
+モバイルミックス     1
+森森買取	          part_number  # shop5
+買取ルデヤ	      part_number # shop6
+買取Wiki	          part_number  # shop8
+買取ホムラ         2
+ドラゴンモバイル
+モバステ           1
+アキモバ           1
+トゥインクル        1
+家電市場	          part_number  # shop13
+買取楽園           1
+携帯空間           1
+ゲストモバイル      1
+毎日買取	          part_number  # shop20
+MobileZone
+
+
 https://docs.google.com/spreadsheets/d/e/2PACX-1vTHgVMpH0FnvdAmk2sqEUVkexuuo5oA5XNZTaTbCMGMpy8HSK3TImgQviU99UX-STS4B4IuNrnYG7Sz/pubhtml?gid=1011791912
 
 アキモバ
@@ -511,3 +531,5 @@ https://docs.google.com/spreadsheets/d/e/2PACX-1vTHgVMpH0FnvdAmk2sqEUVkexuuo5oA5
 携帯空間
 ドラゴンモバイル
 
+                <th class="shop-col shop-head shop-買取ホムラ">買取<br>ホムラ
+                <th class="shop-col shop-head shop-ドラゴンモバイル-">ドラゴン<br>モバイル

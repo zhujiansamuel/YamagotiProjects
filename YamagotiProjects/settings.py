@@ -169,19 +169,30 @@ WSGI_APPLICATION = 'YamagotiProjects.wsgi.application'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
 
+# DATABASES = {
+#     "default": {
+#         "ENGINE": "django.db.backends.postgresql",
+#         "NAME": "yappdb",
+#         "USER": "samuelzhujian",
+#         "PASSWORD": "Xdb73008762",
+#         "HOST": "127.0.0.1",
+#         "PORT": "5432",
+#         "CONN_MAX_AGE": 60,  # 连接复用
+#         "OPTIONS": {"sslmode": "prefer"},  # 按需
+#     }
+# }
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": "yappdb",
-        "USER": "samuelzhujian",
-        "PASSWORD": "Xdb73008762",
+        "NAME": "applestockchecker_dev",
+        "USER": "samuelzhu",         # 或 "postgres"
+        "PASSWORD": "Xdb73008762",       # 如果用 "postgres" 则是 "localpass"
         "HOST": "127.0.0.1",
-        "PORT": "5432",
-        "CONN_MAX_AGE": 60,  # 连接复用
-        "OPTIONS": {"sslmode": "prefer"},  # 按需
+        "PORT": "5433",               # ★ 容器映射到 5433
+        "CONN_MAX_AGE": 60,
+        "OPTIONS": {"options": "-c statement_timeout=60000"},
     }
 }
-
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
 
@@ -555,7 +566,6 @@ SHOP_DISPLAY_ORDER = [
     "ゲストモバイル",  # shop17               17
     "買取オク",  # shop18               18
     "毎日買取",  # shop20           20
-
 ]
 
 FX_API_KEYS = {

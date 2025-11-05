@@ -43,6 +43,7 @@ def extract_csrf_token(html: str) -> str | None:
     if r: return r.group(1)
     return None
 
+
 def extract_sprite_info(soup):
     # 从 <style> 找到 .encrypt-num 的 background-image 与宽高
     css = "\n".join((s.string or s.text or "") for s in soup.find_all("style"))
@@ -55,6 +56,7 @@ def extract_sprite_info(soup):
     cell_w = int(m_w.group(1)) if m_w else 10
     cell_h = int(m_h.group(1)) if m_h else 16
     return sprite_url, cell_w, cell_h
+
 
 def open_image_bytes(raw, content_type_hint=""):
     # 打开 PNG/WEBP/AVIF（若为 AVIF 需 pillow-heif 或 pillow-avif-plugin）

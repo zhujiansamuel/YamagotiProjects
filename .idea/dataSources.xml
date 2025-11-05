@@ -19,5 +19,19 @@
       <jdbc-url>jdbc:postgresql://127.0.0.1:5432/yappdb</jdbc-url>
       <working-dir>$ProjectFileDir$</working-dir>
     </data-source>
+    <data-source source="LOCAL" name="yappdb@47.111.136.177" uuid="2a187e6f-92a0-4b5c-a4b1-3551ecf622c7">
+      <driver-ref>postgresql</driver-ref>
+      <synchronize>true</synchronize>
+      <jdbc-driver>org.postgresql.Driver</jdbc-driver>
+      <jdbc-url>jdbc:postgresql://47.111.136.177:5432/yappdb</jdbc-url>
+      <working-dir>$ProjectFileDir$</working-dir>
+    </data-source>
+    <data-source source="LOCAL" name="applestockchecker_dev@127.0.0.1" uuid="a42d2361-5a0d-4cb4-a4b5-bf0419b6a8a8">
+      <driver-ref>postgresql</driver-ref>
+      <synchronize>true</synchronize>
+      <jdbc-driver>org.postgresql.Driver</jdbc-driver>
+      <jdbc-url>jdbc:postgresql://127.0.0.1:5433/applestockchecker_dev</jdbc-url>
+      <working-dir>$ProjectFileDir$</working-dir>
+    </data-source>
   </component>
 </project>
