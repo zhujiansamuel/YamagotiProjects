@@ -6,6 +6,9 @@ from django.conf import settings
 from AppleStockChecker.services.external_ingest_service import ingest_external_sources
 
 class Command(BaseCommand):
+    """
+    目前已经不用了
+    """
     help = "预览从外部平台拉取 CSV 并清洗后的前 10 行（不入库）"
 
     def add_arguments(self, parser):

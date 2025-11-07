@@ -1,9 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 import io, re
-import pandas as pd
-from celery import shared_task
-
 from celery import shared_task
 from django.db import transaction
 from django.utils import timezone
@@ -13,8 +10,6 @@ from AppleStockChecker.utils.external_ingest.registry import run_cleaner  # å·²æ
 from AppleStockChecker.models import Iphone, SecondHandShop, PurchasingShopPriceRecord
 from AppleStockChecker.utils.external_ingest.webscraper import fetch_webscraper_export_sync
 from AppleStockChecker.services.external_ingest_service import ingest_external_dataframe
-from django.db import close_old_connections
-from celery.exceptions import SoftTimeLimitExceeded
 from django.db.utils import OperationalError
 
 _ENGINE_HINT = {

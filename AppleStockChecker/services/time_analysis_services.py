@@ -2,7 +2,10 @@ from django.db import transaction
 from ..models import PurchasingShopTimeAnalysis, SecondHandShop, Iphone
 
 def upsert_purchasing_time_analysis(data: dict) -> PurchasingShopTimeAnalysis:
-    """基于 (shop, iphone, Timestamp_Time) 幂等写入，并维护 Update_Count。"""
+    """
+    基于 (shop, iphone, Timestamp_Time) 幂等写入，并维护 Update_Count。
+    似乎目前没有使用
+    """
     with transaction.atomic():
         shop = SecondHandShop.objects.get(pk=data["shop_id"])
         iphone = Iphone.objects.get(pk=data["iphone_id"])

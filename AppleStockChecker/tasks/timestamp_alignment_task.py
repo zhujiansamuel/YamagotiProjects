@@ -1,40 +1,27 @@
 from __future__ import annotations
-from ..serializers import PurchasingShopTimeAnalysisSerializer
-from collections import Counter
-from django.core.exceptions import ObjectDoesNotExist, ValidationError
-from django.db import IntegrityError
-from django.utils.dateparse import parse_datetime
-from AppleStockChecker.ws_notify import notify_progress_all
-from AppleStockChecker.models import SecondHandShop, Iphone
-from ..ws_notify import notify_progress, notify_batch_items
 import logging
-from typing import List, Dict, Any, Optional, Tuple
 from datetime import timedelta
-from celery import shared_task, group, chord
-from celery import shared_task, group
-from django.db import transaction, IntegrityError
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
-from typing import Optional, List, Dict, Any
 from AppleStockChecker.collectors import collect_items_for_psta
 from AppleStockChecker.utils.timebox import nearest_past_minute_iso
-from AppleStockChecker.models import PurchasingShopTimeAnalysis, SecondHandShop, Iphone
-from AppleStockChecker.services.time_analysis_services import upsert_purchasing_time_analysis
-from AppleStockChecker.serializers import PSTACompactSerializer
+
 from AppleStockChecker.ws_notify import (
     notify_progress_all,
     notify_batch_items_all,
     notify_batch_done_all,
 )
-# AppleStockChecker/tasks.py
 from typing import Any, Dict, List, Optional
 from collections import Counter, defaultdict
 from celery import shared_task, chord
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import transaction, IntegrityError
+from decimal import Decimal, ROUND_HALF_UP
+
+
+
 
 logger = logging.getLogger(__name__)
-
 
 
 # ---------- 工具：ISO ↔ aware datetime ----------

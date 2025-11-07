@@ -33,6 +33,7 @@ def ingest_external_sources(sources: List[Dict[str, Any]], *, dry_run: bool = Fa
     """
     sources: [{"name": "sample_a", "url": "...", "headers": {...}}, ...]
     return: 统计与预览
+
     """
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
