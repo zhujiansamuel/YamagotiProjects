@@ -15,7 +15,7 @@ def group_for_job(job_id: str) -> str:
 def group_for_stream(shop_id: int, iphone_id: int) -> str:
     return f"stream_psta_shop_{shop_id}_iphone_{iphone_id}"
 
-
+# 好像没有实际使用，前因后果有些忘记
 def notify_progress(*, job_id: str|None, shop_id: int|None, iphone_id: int|None, data: dict):
     ch = get_channel_layer()
     payload = {"type": "progress_message", "data": data}
@@ -28,6 +28,7 @@ def notify_progress(*, job_id: str|None, shop_id: int|None, iphone_id: int|None,
     # 全部频道（可选）
     async_to_sync(ch.group_send)(group_for_all(), payload)
 
+# 好像没有实际使用，前因后果有些忘记
 def notify_batch_items(*, job_id: str, shop_id: int, iphone_id: int,
                        timestamp_iso: str, items: list, chunk_size: int = 200):
     """

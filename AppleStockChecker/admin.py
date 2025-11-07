@@ -1,5 +1,21 @@
 from django.contrib import admin
-from .models import SecondHandShop, PurchasingShopPriceRecord, Iphone, OfficialStore, InventoryRecord,PurchasingShopTimeAnalysis
+from .models import (
+    SecondHandShop,
+    PurchasingShopPriceRecord,
+    Iphone,
+    OfficialStore,
+    InventoryRecord,
+    PurchasingShopTimeAnalysis,
+    OverallBar,
+    FeatureSnapshot,
+    ModelArtifact,
+    ForecastSnapshot,
+    Cohort,
+    CohortMember,
+    CohortBar,
+    ShopWeightProfile,
+    ShopWeightItem,
+)
 
 
 @admin.register(Iphone)
@@ -85,3 +101,66 @@ class PurchasingShopTimeAnalysisAdmin(admin.ModelAdmin):
     date_hierarchy = "Timestamp_Time"
     ordering = ("-Timestamp_Time",)
     autocomplete_fields = ("shop", "iphone")
+
+#
+# @admin.register(OverallBar)
+# class OverallBarAdmin(admin.ModelAdmin):
+#     list_display = (
+#         "bucket",
+#         "mean",
+#         "median",
+#
+#     )
+
+# @admin.register(FeatureSnapshot)
+# class FeatureSnapshotAdmin(admin.ModelAdmin):
+#     list_display = (
+#
+#     )
+#
+#
+#
+# @admin.register(FeatureSnapshot)
+# class FeatureSnapshotAdmin(admin.ModelAdmin):
+#     list_display = (
+#
+#     )
+
+# @admin.register(ModelArtifact)
+# class ModelArtifactAdmin(admin.ModelAdmin):
+#     list_display = (
+#
+#     )
+# @admin.register(ForecastSnapshot)
+# class ForecastSnapshotAdmin(admin.ModelAdmin):
+#     list_display = (
+#
+#     )
+
+@admin.register(Cohort)
+class CohortAdmin(admin.ModelAdmin):
+    list_display = ("id", "slug", "title","display_index", "note")
+    search_fields = ("slug", "title")
+
+@admin.register(CohortMember)
+class CohortMemberAdmin(admin.ModelAdmin):
+    list_display = ("id", "cohort", "iphone", "weight")
+    list_filter = ("cohort",)
+    search_fields = ("cohort__slug", "iphone__part_number")
+
+# @admin.register(CohortBar)
+# class CohortBarAdmin(admin.ModelAdmin):
+#     list_display = (
+#"id", "cohort", "iphone", "weight"
+#     )
+
+@admin.register(ShopWeightProfile)
+class ShopWeightProfileAdmin(admin.ModelAdmin):
+    list_display = ("id", "slug","display_index", "title")
+    list_filter = ("slug","title")
+
+@admin.register(ShopWeightItem)
+class ShopWeightItemAdmin(admin.ModelAdmin):
+    list_display = ("id", "profile","shop","display_index", "weight")
+    list_filter = ("profile","shop","weight")
+

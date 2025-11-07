@@ -12,11 +12,48 @@ from AppleStockChecker.tasks.timestamp_alignment_task import batch_generate_psta
 
 
 
-#@permission_classes([IsAuthenticatedOrReadOnly])
+
 
 @api_view(["POST"])
 @permission_classes([AllowAny])  # 本地调试也可 AllowAny
 def dispatch_psta_batch_same_ts(request):
+    """
+    调用方法的一个例子
+    （作用是发起为历史数据做分桶计算，用于增加或者修改统计指标时重算历史记录）
+    ---------------------------------------------
+    from datetime import datetime, timedelta, timezone
+    import subprocess, json
+
+    JST = timezone(timedelta(hours=9))
+
+    start = datetime(2025,10,23, 7, 0, 0, tzinfo=JST)
+    end   = datetime(2025,10,23, 20, 25, 0, tzinfo=JST)
+
+    minutes = int((end - start).total_seconds() // 60)  # 59040
+    timestamps = [(start + timedelta(minutes=i)).isoformat(timespec="seconds")
+                  for i in range(minutes - 1, -1, -1)]
+
+    # 注意必须使用域名
+    url = "http://yamaguti.ngrok.io/AppleStockChecker/purchasing-time-analyses/dispatch_ts/"
+    # url = "https://yamaguti.ngrok.io/AppleStockChecker/purchasing-time-analyses/dispatch_ts/"
+
+    for i, ts in enumerate(timestamps, 1):
+        payload = json.dumps({"timestamp_iso": ts})
+        out = subprocess.check_output(
+            ["curl", "-sS", "-X", "POST", url,
+             "-H", "Content-Type: application/json",
+             "-d", payload],
+            stderr=subprocess.STDOUT
+        ).decode("utf-8", "replace")
+        print(f"[{i}/{len(timestamps)}] {ts}\n{out}\n")
+        if i%100 == 0:
+            time.sleep(60)
+        time.sleep(5)
+
+    ---------------------------------------------
+    :param request:
+    :return:
+    """
     body = request.data or {}
     job_id = body.get("job_id") or uuid4().hex
     async_res = batch_generate_psta_same_ts.apply_async(

@@ -1,9 +1,24 @@
 import re
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
-from .models import Iphone, OfficialStore, InventoryRecord
-from .models import SecondHandShop, PurchasingShopPriceRecord
-from .models import PurchasingShopTimeAnalysis
+from .models import (
+    SecondHandShop,
+    PurchasingShopPriceRecord,
+    Iphone,
+    OfficialStore,
+    InventoryRecord,
+    PurchasingShopTimeAnalysis,
+    OverallBar,
+    FeatureSnapshot,
+    ModelArtifact,
+    ForecastSnapshot,
+    Cohort,
+    CohortMember,
+    CohortBar,
+    ShopWeightProfile,
+    ShopWeightItem,
+)
+
 User = get_user_model()
 
 class UserSerializer(serializers.ModelSerializer):
@@ -50,10 +65,12 @@ class IphoneSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("JAN 必须是 13 位数字")
         return s
 
+
 class OfficialStoreSerializer(serializers.ModelSerializer):
     class Meta:
         model = OfficialStore
         fields = ["id", "name", "address"]
+
 
 class InventoryRecordSerializer(serializers.ModelSerializer):
     # 便于前端显示的只读衍生字段
@@ -95,6 +112,7 @@ class TrendStoreSeriesSerializer(serializers.Serializer):
     median = serializers.ListField(child=serializers.IntegerField())
     latest = serializers.ListField(child=serializers.IntegerField())
 
+
 class BasicIphoneInfoSerializer(serializers.Serializer):
     part_number = serializers.CharField()
     model_name = serializers.CharField()
@@ -107,14 +125,13 @@ class BasicIphoneInfoSerializer(serializers.Serializer):
         gb = obj.get("capacity_gb")
         return f"{gb // 1024}TB" if gb and gb % 1024 == 0 else f"{gb}GB"
 
+
 class TrendResponseByPNSerializer(serializers.Serializer):
     part_number = serializers.CharField()
     iphone = BasicIphoneInfoSerializer(required=False)
     recorded_after = serializers.DateTimeField(allow_null=True, required=False)
     recorded_before = serializers.DateTimeField(allow_null=True, required=False)
     stores = TrendStoreSeriesSerializer(many=True)
-
-
 
 
 class SecondHandShopSerializer(serializers.ModelSerializer):
@@ -249,5 +266,133 @@ class PSTACompactSerializer(serializers.ModelSerializer):
             "shop", "iphone",           # 读友好
             "shop_id", "iphone_id",     # 写/查友好
             "New_Product_Price",
-            "Alignment_Time_Difference",
+            # "Alignment_Time_Difference",
         ]
+
+
+# ======== 基础工具 ========
+class D4DecimalField(serializers.DecimalField):
+    """
+    保留1位小数的Decimal输出，结合 settings.REST_FRAMEWORK["COERCE_DECIMAL_TO_STRING"]=False
+    可直接输出为数字；否则为字符串。
+    """
+    def __init__(self, **kwargs):
+        kwargs.setdefault("max_digits", 12)
+        kwargs.setdefault("decimal_places", 1)
+        kwargs.setdefault("coerce_to_string", False)
+        super().__init__(**kwargs)
+
+# ======== OverallBar ========
+class OverallBarSerializer(serializers.ModelSerializer):
+    """
+    前端友好：统一输出 iphone_id（即使模型里字段名为 iphone FK 或不存在该字段）
+    """
+    iphone_id = serializers.SerializerMethodField()
+
+    mean = D4DecimalField()
+    median = D4DecimalField()
+    std = D4DecimalField(allow_null=True)
+    dispersion = D4DecimalField(allow_null=True)
+
+    class Meta:
+        model = OverallBar
+        fields = [
+            "bucket",
+            "iphone_id",    # 统一返回id（不存在则为null）
+            "mean", "median", "std", "shop_count", "dispersion",
+            "is_final", "updated_at",
+        ]
+
+    def get_iphone_id(self, obj):
+        # 兼容：若模型有 iphone 外键则返回其id；没有则返回 None
+        return getattr(obj, "iphone_id", None)
+
+
+class OverallBarPointSerializer(serializers.ModelSerializer):
+    """
+    专供图表：只返回 t(时间) + v(值) + 维度 id
+    """
+    t = serializers.DateTimeField(source="bucket")
+    v = D4DecimalField(source="mean")
+    iphone_id = serializers.SerializerMethodField()
+
+    class Meta:
+        model = OverallBar
+        fields = ["t", "v", "iphone_id", "shop_count", "is_final"]
+
+    def get_iphone_id(self, obj):
+        return getattr(obj, "iphone_id", None)
+
+
+# ======== CohortBar ========
+class CohortBarSerializer(serializers.ModelSerializer):
+    cohort_id = serializers.IntegerField(source="cohort.id", read_only=True)
+    cohort_slug = serializers.CharField(source="cohort.slug", read_only=True)
+
+    mean = D4DecimalField()
+    median = D4DecimalField(allow_null=True)
+    std = D4DecimalField(allow_null=True)
+    dispersion = D4DecimalField(allow_null=True)
+
+    class Meta:
+        model = CohortBar
+        fields = [
+            "bucket",
+            "cohort_id", "cohort_slug",
+            "mean", "median", "std", "dispersion",
+            "n_models", "shop_count_agg",
+            "is_final", "updated_at",
+        ]
+
+
+class CohortBarPointSerializer(serializers.ModelSerializer):
+    t = serializers.DateTimeField(source="bucket")
+    v = D4DecimalField(source="mean")
+    cohort_id = serializers.IntegerField(source="cohort.id", read_only=True)
+    cohort_slug = serializers.CharField(source="cohort.slug", read_only=True)
+
+    class Meta:
+        model = CohortBar
+        fields = ["t", "v", "cohort_id", "cohort_slug", "n_models", "is_final"]
+
+
+# ======== FeatureSnapshot（四种组合）=======
+class FeatureSnapshotSerializer(serializers.ModelSerializer):
+    """
+    通用：用于列表/调试；scope 形如：
+      shop:17|iphone:21
+      shopcohort:trusted|iphone:21
+      shop:17|cohort:17PM_set
+      shopcohort:trusted|cohort:17PM_set
+    """
+    value = serializers.FloatField()
+
+    class Meta:
+        model = FeatureSnapshot
+        fields = ["bucket", "scope", "name", "value", "version", "is_final"]
+
+
+class FeaturePointSerializer(serializers.ModelSerializer):
+    """
+    图表点：t(时间) + v(值) + scope + name（比如 mean/median/std/dispersion/count）
+    """
+    t = serializers.DateTimeField(source="bucket")
+    v = serializers.FloatField(source="value")
+
+    class Meta:
+        model = FeatureSnapshot
+        fields = ["t", "v", "scope", "name", "is_final"]
+
+
+# ======== 可选：Cohort、店铺组合定义 ========
+# 方便前端拉组合列表
+class CohortSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    slug = serializers.CharField()
+    title = serializers.CharField()
+
+
+class ShopWeightProfileSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    slug = serializers.CharField()
+    title = serializers.CharField()

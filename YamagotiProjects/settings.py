@@ -506,6 +506,51 @@ SIMPLEUI_CONFIG = {
                                  'icon': 'fa-solid fa-chart-line',
                                  'url': '/AppleStockChecker/resale-trend-colors-merged/',
                                  },
+                                {'name': '间隔',
+                                 'icon': 'fa-solid fa-chart-line',
+                                 'url': '/admin/django_celery_beat/intervalschedule/',
+                                 },
+                                {'name': '计划任务',
+                                 'icon': 'fa-solid fa-chart-line',
+                                 'url': '/admin/django_celery_beat/crontabschedule/',
+                                 },
+                                {'name': '日程时间',
+                                 'icon': 'fa-solid fa-chart-line',
+                                 'url': '/admin/django_celery_beat/solarschedule/',
+                                 },
+                                {'name': '定时',
+                                 'icon': 'fa-solid fa-chart-line',
+                                 'url': '/admin/django_celery_beat/clockedschedule/',
+                                 },
+
+                                {'name': '周期性任务',
+                                 'icon': 'fa-solid fa-chart-line',
+                                 'url': '/admin/django_celery_beat/periodictask/',
+                                 },
+                                {'name': '用户',
+                                 'icon': 'fa-solid fa-chart-line',
+                                 'url': '/admin/auth/user/',
+                                 },
+                                {'name': '组',
+                                 'icon': 'fa-solid fa-chart-line',
+                                 'url': '/admin/auth/group/',
+                                 },
+                                {'name': 'iphone组合',
+                                 'icon': 'fa-solid fa-chart-line',
+                                 'url': '/admin/AppleStockChecker/cohort/',
+                                 },
+                                {'name': 'iphone组合成员',
+                                 'icon': 'fa-solid fa-chart-line',
+                                 'url': '/admin/AppleStockChecker/cohortmember/',
+                                 },
+                                {'name': '店铺组合',
+                                 'icon': 'fa-solid fa-chart-line',
+                                 'url': '/admin/AppleStockChecker/shopweightprofile/',
+                                 },
+                                {'name': '店铺组合成员',
+                                 'icon': 'fa-solid fa-chart-line',
+                                 'url': '/admin/AppleStockChecker/shopweightitem/',
+                                 },
                             ]
                             },
                            ]
@@ -534,6 +579,7 @@ else:
         ],
     }
 
+
 DJANGO_EASY_AUDIT_WATCH_MODEL_EVENTS = True
 DJANGO_EASY_AUDIT_WATCH_AUTH_EVENTS = True
 DJANGO_EASY_AUDIT_WATCH_REQUEST_EVENTS = False
@@ -550,7 +596,7 @@ SHOP_DISPLAY_ORDER = [
     "買取商店",
     "海峡通信",  # shop2　　　      ２
     "買取一丁目",  # shop3         ３
-    "モバイルミックス",  # shop4         4
+    "モバイルミックス",  # shop4    4
     "森森買取",  # shop5           ５
     "買取ルデヤ",  # shop6         ６
     "買取wiki",  # shop8          ７
@@ -563,8 +609,8 @@ SHOP_DISPLAY_ORDER = [
     "買取楽園",  # shop14           14
     "買取当番",  # shop15           15
     "携帯空間",  # shop16           16
-    "ゲストモバイル",  # shop17               17
-    "買取オク",  # shop18               18
+    "ゲストモバイル",  # shop17      17
+    "買取オク",  # shop18            18
     "毎日買取",  # shop20           20
 ]
 
@@ -610,3 +656,4 @@ CHANNEL_LAYERS = {
 
 ASGI_APPLICATION = "config.asgi.application"
 DATA_UPLOAD_MAX_MEMORY_SIZE=10 * 1024 * 1024
+

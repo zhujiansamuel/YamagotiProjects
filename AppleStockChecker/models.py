@@ -3,6 +3,7 @@ from django.db import models
 from django.db.models import Q, F
 from django.core.validators import RegexValidator
 
+
 class Iphone(models.Model):
     """
     iPhone 机型变体（型号 x 容量 x 颜色），以 Apple Part Number 作为唯一编码
@@ -20,7 +21,7 @@ class Iphone(models.Model):
     part_number = models.CharField(
         "唯一编码(Part Number)",
         max_length=32,
-        unique=True,              # 数据库层面唯一
+        unique=True,  # 数据库层面唯一
         help_text="Apple 部件号，如 MTLX3J/A",
     )
 
@@ -57,6 +58,7 @@ class Iphone(models.Model):
         )
         return f"{self.part_number} · {self.model_name} {cap} {self.color}"
 
+
 class OfficialStore(models.Model):
     """
     Apple 官方门店（或授权店）
@@ -74,6 +76,7 @@ class OfficialStore(models.Model):
 
     def __str__(self) -> str:
         return self.name
+
 
 class InventoryRecord(models.Model):
     """
@@ -160,7 +163,8 @@ class SecondHandShop(models.Model):
         ]
 
     def __str__(self) -> str:
-        return self.name
+        return f"{self.name} @ {self.pk}"
+
 
 
 class PurchasingShopPriceRecord(models.Model):
@@ -176,16 +180,15 @@ class PurchasingShopPriceRecord(models.Model):
         help_text="一次导入/任务的批次标识（uuid4）"
     )
 
-
     shop = models.ForeignKey(
         "SecondHandShop",
-        on_delete=models.PROTECT,        # 保留历史记录，防止误删门店
+        on_delete=models.PROTECT,  # 保留历史记录，防止误删门店
         related_name="price_records",
         verbose_name="二手店",
     )
     iphone = models.ForeignKey(
         "Iphone",
-        on_delete=models.PROTECT,        # 同理，保留历史
+        on_delete=models.PROTECT,  # 同理，保留历史
         related_name="purchase_price_records",
         verbose_name="iPhone",
     )
@@ -216,27 +219,28 @@ class PurchasingShopPriceRecord(models.Model):
         return f"[{self.recorded_at:%Y-%m-%d %H:%M}] {self.shop} · {self.iphone} · 新品¥{self.price_new:,}"
 
 
-
 class PurchasingShopTimeAnalysis(models.Model):
     Batch_ID = models.UUIDField(
         "批次ID",
         null=True, blank=True, db_index=True, editable=False,
         help_text="一次导入/任务的批次标识（uuid4）",
-        db_column = "batch_id",
+        db_column="batch_id",
     )
-    Job_ID = models.CharField("Job_ID",max_length=255, editable=False,db_column = "job_id")
+    Job_ID = models.CharField("Job_ID", max_length=255, editable=False, db_column="job_id")
 
-
-    Original_Record_Time_Zone = models.CharField("原始记录时区",max_length=10,db_column = "original_record_time_zone")
-    Timestamp_Time_Zone = models.CharField("时间戳时区",max_length=10,null=False, blank=False,db_column = "timestamp_time_zone")
-    Record_Time = models.DateTimeField("原始记录时间", null=False,blank=False,db_column = "record_time")
-    Timestamp_Time = models.DateTimeField("时间戳时间", null=False,blank=False, db_index=True,db_column = "timestamp_time")
-    Alignment_Time_Difference = models.IntegerField("对齐时间差（s）", null=False,blank=False,db_column = "alignment_time_difference")
-    Update_Count = models.IntegerField("更新次数",default=0,db_column = "update_count")
+    Original_Record_Time_Zone = models.CharField("原始记录时区", max_length=10, db_column="original_record_time_zone")
+    Timestamp_Time_Zone = models.CharField("时间戳时区", max_length=10, null=False, blank=False,
+                                           db_column="timestamp_time_zone")
+    Record_Time = models.DateTimeField("原始记录时间", null=False, blank=False, db_column="record_time")
+    Timestamp_Time = models.DateTimeField("时间戳时间", null=False, blank=False, db_index=True,
+                                          db_column="timestamp_time")
+    Alignment_Time_Difference = models.IntegerField("对齐时间差（s）", null=False, blank=False,
+                                                    db_column="alignment_time_difference")
+    Update_Count = models.IntegerField("更新次数", default=0, db_column="update_count")
 
     shop = models.ForeignKey(
         "SecondHandShop",
-        on_delete=models.PROTECT,        # 保留历史记录，防止误删门店
+        on_delete=models.PROTECT,  # 保留历史记录，防止误删门店
         related_name="purchasing_time_analysis",
         verbose_name="二手店",
         db_index=True,
@@ -248,10 +252,10 @@ class PurchasingShopTimeAnalysis(models.Model):
         verbose_name="iPhone",
         db_index=True,
     )
-    New_Product_Price = models.PositiveIntegerField("新品卖取价格(円)",db_column = "new_product_price")
-    Price_A = models.PositiveIntegerField("A品卖取价格(円)", null=True, blank=True,db_column = "price_a")
-    Price_B = models.PositiveIntegerField("B品卖取价格(円)", null=True, blank=True,db_column = "price_b")
-    Warehouse_Receipt_Time = models.DateTimeField("落库时间", auto_now_add=True,db_column = "warehouse_receipt_time")
+    New_Product_Price = models.PositiveIntegerField("新品卖取价格(円)", db_column="new_product_price")
+    Price_A = models.PositiveIntegerField("A品卖取价格(円)", null=True, blank=True, db_column="price_a")
+    Price_B = models.PositiveIntegerField("B品卖取价格(円)", null=True, blank=True, db_column="price_b")
+    Warehouse_Receipt_Time = models.DateTimeField("落库时间", auto_now_add=True, db_column="warehouse_receipt_time")
 
     class Meta:
         verbose_name = "二手店回收价格记录对齐表"
@@ -268,12 +272,136 @@ class PurchasingShopTimeAnalysis(models.Model):
                 name="uniq_shop_iphone_Timestamp_Time",
             )
         ]
-
+        db_table = 'AppleStockChecker_purchasingshoptimeanalysis'
 
     def save(self, *args, **kwargs):
-
         super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return f"[{self.Timestamp_Time:%Y-%m-%d %H:%M}] {self.shop} · {self.iphone} · 新品¥{self.New_Product_Price:,}"
+
+
+class OverallBar(models.Model):
+    # 基础聚合统计（跨店统计/机型单体）
+    bucket = models.DateTimeField(db_index=True)  # 对齐后的时间戳（1/5/15分钟），建议UTC存储 + 展示时换时区
+    iphone = models.ForeignKey('Iphone', on_delete=models.PROTECT, related_name='overall_bars')
+    mean = models.DecimalField(max_digits=12, decimal_places=4)  # 跨店聚合后
+    median = models.DecimalField(max_digits=12, decimal_places=4)  # 跨店聚合后
+    std = models.DecimalField(max_digits=12, decimal_places=4, null=True)  # 跨店聚合后
+    shop_count = models.IntegerField()  # 该桶参与聚合的店铺数（稀疏/异常时用于过滤）。
+    dispersion = models.DecimalField(max_digits=12, decimal_places=4,
+                                     null=True)  # 离散度（常用 p90 - p10 或 MAD 等稳健指标；你这里用一个通用小数保存）
+    is_final = models.BooleanField(default=False)  # 超出 watermark（如 now-5min）就锁定，避免迟到数据频繁改写下游
+    updated_at = models.DateTimeField(auto_now=True)  # 幂等 upsert 后自动更新时间
+
+    class Meta:
+        unique_together = (('bucket', 'iphone'),)
+        indexes = [
+            models.Index(fields=['iphone', 'bucket']),
+            models.Index(fields=['bucket']),
+        ]
+
+
+class FeatureSnapshot(models.Model):
+    # 特征仓
+    bucket = models.DateTimeField(db_index=True)
+    scope = models.CharField(max_length=64, db_index=True)  # 作用域
+    name = models.CharField(max_length=64, db_index=True)  # 特征名（如 ema_15, rv_60, z_60, bb_upper, cusum_pos 等）
+    value = models.FloatField()  # 浮点值
+    version = models.CharField(max_length=16, default='v1')#特征计算版本（窗口、平滑方式、预处理逻辑变化时+1）
+    is_final = models.BooleanField(default=False)# 超出 watermark（如 now-5min）就锁定，避免迟到数据频繁改写下游
+
+    class Meta:
+        unique_together = ('bucket', 'scope', 'name', 'version')
+        indexes = [models.Index(fields=['scope', 'name', 'bucket'])]
+
+
+class ModelArtifact(models.Model):
+    #训练产物
+    model_name = models.CharField(max_length=64, db_index=True)
+    version = models.CharField(max_length=32, db_index=True)
+    trained_at = models.DateTimeField() # 产物生成时间
+    params_blob = models.BinaryField()  # pickle / json / onnx
+    metrics_json = models.JSONField()#记录离线评估（MAE、AUC、回测 IR、CV 细节）、训练时间窗、特征版本、数据版本、git_commit 等
+
+
+class ForecastSnapshot(models.Model):
+    #在线推理
+    bucket = models.DateTimeField(db_index=True)  # 预测发生的基准时间（通常对齐到桶）
+    model_name = models.CharField(max_length=64, db_index=True)#来源模型
+    version = models.CharField(max_length=32)#来源模型
+    horizon_min = models.IntegerField(default=1)#预测视野（1/5/15…分钟后）
+    yhat = models.FloatField()#点预测与不确定性（或用上下分位）
+    yhat_var = models.FloatField(null=True)#点预测与不确定性（或用上下分位）
+    is_final = models.BooleanField(default=False)#保持与 OverallBar 同步的最终化语义
+
+    class Meta:
+        unique_together = (('bucket', 'model_name', 'version', 'horizon_min'),)
+        indexes = [models.Index(fields=['bucket', 'model_name', 'version'])]
+
+
+class ShopWeightProfile(models.Model):
+    slug = models.SlugField(max_length=64, unique=True)
+    title = models.CharField(max_length=128, blank=True, default="")
+    display_index = models.IntegerField(default=1, blank=True)
+    def __str__(self):
+        return self.title or self.slug
+
+class ShopWeightItem(models.Model):
+    profile = models.ForeignKey(ShopWeightProfile, on_delete=models.CASCADE, related_name='items')
+    shop = models.ForeignKey('SecondHandShop', on_delete=models.CASCADE)
+    weight = models.FloatField(default=1.0)
+    display_index = models.IntegerField(default=1, blank=True)
+    class Meta:
+        unique_together = (('profile','shop'),)
+
+
+class Cohort(models.Model):
+    #机型组合定义
+    slug = models.SlugField(max_length=64, unique=True)  # 如 '3picks_A'
+    title = models.CharField(max_length=128, blank=True, default="")
+    note = models.TextField(blank=True, default="")
+    display_index = models.IntegerField(default=1,blank=True)
+    shop_weight_profile = models.ForeignKey(ShopWeightProfile, on_delete=models.SET_NULL, null=True, blank=True)
+
+    def __str__(self):
+        return self.title or self.slug
+
+
+class CohortMember(models.Model):
+    cohort = models.ForeignKey('Cohort', on_delete=models.CASCADE, related_name='members')
+    iphone = models.ForeignKey('Iphone', on_delete=models.CASCADE)
+    weight = models.FloatField(default=1.0)# 组合权重（默认等权=1.0），可与覆盖（shop_count）相乘做联合权重
+
+    class Meta:
+        unique_together = (('cohort', 'iphone'),)
+
+    def __str__(self):
+        return f"{self.cohort.slug}/{self.iphone_id} (w={self.weight})"
+
+
+class CohortBar(models.Model):
+    # 机型组合的分钟级聚合条
+    bucket = models.DateTimeField(db_index=True)
+    cohort = models.ForeignKey('Cohort', on_delete=models.CASCADE, related_name='bars')
+    mean = models.DecimalField(max_digits=12, decimal_places=4)# 组合层的集中趋势
+    median = models.DecimalField(max_digits=12, decimal_places=4, null=True)# 组合层的集中趋势
+    std = models.DecimalField(max_digits=12, decimal_places=4, null=True)# 组合层的集中趋势
+    n_models = models.IntegerField()# 参与机型数（该桶里实际有值的成员数）
+    shop_count_agg = models.IntegerField()# 覆盖指标：汇总店铺数（可理解为权重或规模，求和/均值任选其一，这里用求和）
+    dispersion = models.DecimalField(max_digits=12, decimal_places=4, null=True)# 跨机型离散度（常用 p90-p10 或 MAD）
+
+    is_final = models.BooleanField(default=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = (('bucket', 'cohort'),)
+        indexes = [
+            models.Index(fields=['cohort', 'bucket']),
+            models.Index(fields=['bucket']),
+        ]
+
+    def __str__(self):
+        return f"{self.cohort.slug} @ {self.bucket.isoformat()}"
+
 

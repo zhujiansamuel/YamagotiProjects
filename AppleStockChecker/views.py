@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from uuid import uuid4
-from rest_framework_simplejwt.authentication import JWTAuthentication
 from .models import Iphone, OfficialStore, InventoryRecord
 from .serializers import OfficialStoreSerializer, InventoryRecordSerializer, IphoneSerializer
 from .serializers import UserSerializer
@@ -13,7 +12,7 @@ from drf_spectacular.utils import (
 from datetime import datetime, date
 from .serializers import SecondHandShopSerializer, PurchasingShopPriceRecordSerializer
 from math import ceil
-import csv, io, re
+import csv
 from django.http import HttpResponse
 from django.db import transaction, IntegrityError
 from datetime import datetime
@@ -26,57 +25,72 @@ from django.db.models import Q
 from celery.result import AsyncResult
 from AppleStockChecker.utils.external_ingest.webscraper import fetch_webscraper_export_sync, to_dataframe_from_request
 from AppleStockChecker.tasks.webscraper_tasks import task_process_webscraper_job,task_process_xlsx
-from django.conf import settings
 from datetime import timedelta
 from rest_framework.views import APIView
 
-from rest_framework.parsers import JSONParser, FormParser, MultiPartParser, FileUploadParser
+from rest_framework.parsers import FileUploadParser
 from rest_framework.parsers import BaseParser
-from rest_framework import permissions, status
+from rest_framework import permissions
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
-from rest_framework.decorators import action, parser_classes, authentication_classes, permission_classes
+from rest_framework.decorators import parser_classes
 from rest_framework.parsers import JSONParser
 from rest_framework.permissions import AllowAny
-from django.views.decorators.csrf import csrf_exempt
-from django.utils.decorators import method_decorator
 from AppleStockChecker.tasks.webscraper_tasks import task_ingest_json_shop1
-from rest_framework import viewsets, mixins
 from rest_framework.permissions import IsAuthenticatedOrReadOnly
-from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework.filters import OrderingFilter
 from .models import PurchasingShopTimeAnalysis
-from .serializers import PurchasingShopTimeAnalysisSerializer, PSTACompactSerializer
+from .serializers import (
+    PurchasingShopTimeAnalysisSerializer,
+    PSTACompactSerializer,
+    OverallBarSerializer,
+    OverallBarPointSerializer,
+    CohortBarSerializer,
+    CohortBarPointSerializer,
+    FeatureSnapshotSerializer,
+    FeaturePointSerializer,
+    CohortSerializer,
+    ShopWeightProfileSerializer
+)
 from .filters import PurchasingShopTimeAnalysisFilter
 import io
 import re
 import uuid
-from typing import Optional, Dict, Any
-
 from django.utils import timezone
 from django.utils.decorators import method_decorator
-from django.views.decorators.csrf import csrf_exempt
 from rest_framework.decorators import action, authentication_classes, permission_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework import status, viewsets
+from rest_framework import status
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from AppleStockChecker.utils.external_ingest.registry import get_cleaner, run_cleaner
-from AppleStockChecker.models import SecondHandShop, Iphone, PurchasingShopPriceRecord
-
-import tweepy
-from django.http import JsonResponse
+from AppleStockChecker.utils.external_ingest.registry import get_cleaner
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_POST
-import base64
-import tempfile
-import os
 from django.conf import settings
-import os
 from dotenv import load_dotenv
 
-# 复用你先前实现过的入库主流程（此处假设已存在；若文件不同模块，请调整导入）
+from rest_framework import viewsets, mixins
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import OrderingFilter
+
 from AppleStockChecker.services.external_ingest_service import ingest_external_dataframe
+
+from .models import (
+    SecondHandShop,
+    PurchasingShopPriceRecord,
+    Iphone,
+    OfficialStore,
+    InventoryRecord,
+    PurchasingShopTimeAnalysis,
+    OverallBar,
+    FeatureSnapshot,
+    ModelArtifact,
+    ForecastSnapshot,
+    Cohort,
+    CohortMember,
+    CohortBar,
+    ShopWeightProfile,
+    ShopWeightItem,
+)
+
 
 
 class PlainTextParser(BaseParser):
@@ -812,7 +826,17 @@ class SecondHandShopViewSet(viewsets.ModelViewSet):
         return [permissions.IsAdminUser()]
 
 
-# —— 回收价格记录 —— #
+
+
+
+#-----------------------------------------------------
+#--------------------------------------------------------
+#-----------------------------------------------------------
+#---------------------------------------------------------------
+#-----------------------------------------------------------
+#--------------------------------------------------------
+#-----------------------------------------------------
+# 回收价格的原始记录 #
 @extend_schema_view(
     list=extend_schema(
         tags=["Resale / Price"],
@@ -850,6 +874,10 @@ class SecondHandShopViewSet(viewsets.ModelViewSet):
     destroy=extend_schema(tags=["Resale / Price"], summary="删除回收价格记录"),
 )
 class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
+    """
+    回收价格的原始记录
+    只在历史数据灌入，实时数据入库时使用
+    """
     queryset = PurchasingShopPriceRecord.objects.select_related("shop", "iphone").all()
     serializer_class = PurchasingShopPriceRecordSerializer
 
@@ -1241,10 +1269,6 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
 
 
 
-    # @csrf_exempt
-    # @authentication_classes([JWTAuthentication])             # ← 用 JWT，不触发 CSRF
-    # @permission_classes([permissions.IsAdminUser])
-
     @extend_schema(  # ← 你的原注解可保留
         tags=["Resale / Price"],
         summary="导入二手店回收价（清洗逻辑已抽到 utils）——每次上传新增记录",
@@ -1470,9 +1494,6 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
 
 
 
-
-
-
     @extend_schema(
         tags=["Resale / Price"],
         summary="从外部平台 GET 一组 CSV → 清洗 → 以 PN 定位 iPhone → 新增回收价格记录",
@@ -1522,98 +1543,6 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
 
 
 
-
-
-    #
-    # @extend_schema(
-    #     tags=["Resale / Price"],
-    #     summary="WebScraper Webhook/直传（非 Celery，同步清洗与落库）",
-    #     description=(
-    #             "两种用法：\n"
-    #             "1) Webhook 通知：POST 里带 scrapingjob_id/job_id；我们同步用 API 拉取导出 → 清洗器 → 落库；\n"
-    #             "   - URL 可用 ?t=<token>（短参），或 Header: X-Webhook-Token: <token>，或 Path Token（见下方变体）\n"
-    #             "   - source：优先 body/query；否则 sitemap_name/custom_id 走 settings.WEB_SCRAPER_SOURCE_MAP 映射\n"
-    #             "2) 直传数据：CSV/JSON 正文 + source=shopX，同步清洗并落库（用于调试或其它来源直接推送）。\n"
-    #             "通用：?dry_run=1 仅预览不落库。"
-    #     ),
-    #     parameters=[
-    #         OpenApiParameter("dry_run", OpenApiTypes.BOOL, required=False),
-    #         OpenApiParameter("t", OpenApiTypes.STR, required=False, description="短 token（可替代 token）"),
-    #         OpenApiParameter("source", OpenApiTypes.STR, required=False),
-    #     ],
-    #     request=OpenApiTypes.BYTE,
-    #     responses={200: OpenApiTypes.OBJECT}
-    # )
-    # @action(
-    #     detail=False, methods=["post"],
-    #     url_path="ingest-webscraper",
-    #     permission_classes=[AllowAny],  # 外部回调需匿名可达，用 token 校验
-    # )
-    # @parser_classes([JSONParser, FormParser, MultiPartParser, FileUploadParser, PlainTextParser, TextCsvParser])
-    # def ingest_webscraper_csv(self, request):
-    #     dry_run = str(request.query_params.get("dry_run") or "").lower() in {"1", "true", "t", "yes", "y"}
-    #     if not _check_token(request, path_token=None):
-    #         return Response({"detail": "Webhook token 不匹配"}, status=status.HTTP_403_FORBIDDEN)
-    #
-    #     ct = (request.content_type or "").lower()
-    #     is_direct = ("csv" in ct) or ("json" in ct) or ct.startswith("text/plain") or ct.startswith(
-    #         "multipart/form-data")
-    #     # A) 直传 CSV/JSON → 同步处理
-    #     if ("csv" in ct) or ("json" in ct) or ct.startswith("text/plain"):
-    #         source_name = _resolve_source(request)
-    #         if not source_name:
-    #             return Response({"detail": "直传数据必须提供 source（或通过 sitemap/custom_id 映射）"},
-    #                             status=status.HTTP_400_BAD_REQUEST)
-    #         # 校验清洗器存在
-    #         try:
-    #             get_cleaner(source_name)
-    #         except Exception:
-    #             return Response({"detail": f"未知清洗器: {source_name}"}, status=status.HTTP_400_BAD_REQUEST)
-    #
-    #         try:
-    #             df = to_dataframe_from_request(request.content_type, request.body or b"")
-    #         except Exception as e:
-    #             return Response({"detail": f"载入数据失败: {e}"}, status=status.HTTP_400_BAD_REQUEST)
-    #
-    #         result = ingest_external_dataframe(source_name, df, dry_run=dry_run, pn_only=True, create_shop=True)
-    #         return Response({"mode": "direct", "dry_run": dry_run, "source": source_name, **result},
-    #                         status=status.HTTP_200_OK)
-    #
-    #     # B) Webhook 通知 → job_id + source → 同步拉取导出并处理
-    #
-    #     job_id = request.data.get("scrapingjob_id") or request.data.get("job_id")
-    #     source_name = _resolve_source(request)
-    #     if not job_id or not source_name:
-    #         return Response({"detail": "Webhook 需要 job_id(scrapingjob_id) 与 source（或提供映射）"},
-    #                         status=status.HTTP_400_BAD_REQUEST)
-    #
-    #     try:
-    #         get_cleaner(source_name)
-    #     except Exception:
-    #         return Response({"detail": f"未知清洗器: {source_name}"}, status=status.HTTP_400_BAD_REQUEST)
-    #
-    #     try:
-    #         content = fetch_webscraper_export_sync(str(job_id), format="csv")
-    #         df = pd.read_csv(io.BytesIO(content), encoding="utf-8-sig")
-    #     except Exception as e:
-    #         return Response({"detail": f"拉取导出失败: {e}"}, status=status.HTTP_502_BAD_GATEWAY)
-    #
-    #     result = ingest_external_dataframe(source_name, df, dry_run=dry_run, pn_only=True, create_shop=True)
-    #     return Response({"mode": "webhook", "dry_run": dry_run, "job_id": job_id, "source": source_name, **result},
-    #                     status=status.HTTP_200_OK)
-    #
-    # # —— Path Token 版（更短的 URL）：/ingest-webscraper/<token>/ —— #
-    # # 最短路径：/.../ingest-webscraper/<token>/
-    # @action(detail=False, methods=["post"],
-    #         url_path=r"ingest-webscraper/(?P<ptoken>[-A-Za-z0-9_]+)",
-    #         permission_classes=[AllowAny])
-    # @parser_classes([JSONParser, FormParser, MultiPartParser, FileUploadParser, PlainTextParser, TextCsvParser])
-    # def ingest_webscraper_csv_with_path_token(self, request, ptoken=""):
-    #     if not _check_token(request, path_token=ptoken):
-    #         return Response({"detail": "Webhook token 不匹配"}, status=403)
-    #     return self.ingest_webscraper_csv(request)  # 复用主体逻辑
-
-    #
     # —— Webhook/直传入口（异步：Webhook 入队；直传：仍同步） —— #
     @extend_schema(
         tags=["Resale / Price"],
@@ -1697,13 +1626,6 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
                          "batch_id": str(batch_uuid)}, status=202)
 
 
-
-
-
-
-
-
-
     # —— 极短 URL：/ingest-webscraper/<token>/ —— #
     @extend_schema(tags=["Resale / Price"], summary="Webhook（Path Token 版）")
     @action(detail=False, methods=["post"], url_path=r"ingest-webscraper/(?P<ptoken>[-A-Za-z0-9_]+)",
@@ -1713,10 +1635,6 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
         if not _check_token(request, path_token=ptoken):
             return Response({"detail": "Webhook token 不匹配"}, status=status.HTTP_403_FORBIDDEN)
         return self.ingest_webscraper(request)
-
-
-
-
 
 
     # —— 任务查询 —— #
@@ -1734,15 +1652,6 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
         elif res.state == "FAILURE":
             data["error"] = str(res.result)
         return Response(data, status=status.HTTP_200_OK)
-
-
-
-
-
-
-
-
-
 
 
     @extend_schema(
@@ -1819,11 +1728,13 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
         return Response({"accepted": True, "task_id": task.id, "batch_id": str(batch_uuid)},
                         status=status.HTTP_202_ACCEPTED)
 
-
-
-
-
-
+#-----------------------------------------------------
+#--------------------------------------------------------
+#-----------------------------------------------------------
+#---------------------------------------------------------------
+#-----------------------------------------------------------
+#--------------------------------------------------------
+#-----------------------------------------------------
 
 
 class PurchasingShopTimeAnalysisViewSet(
@@ -1832,6 +1743,9 @@ class PurchasingShopTimeAnalysisViewSet(
     mixins.ListModelMixin,
     viewsets.GenericViewSet,
 ):
+    """
+    可以给出数据不过累赘当时临时弃用
+    """
     queryset = (PurchasingShopTimeAnalysis.objects
                 .select_related("shop", "iphone")
                 .all())
@@ -1858,6 +1772,10 @@ class PurchasingShopTimeAnalysisPSTACompactViewSet(
     mixins.ListModelMixin,
     viewsets.GenericViewSet,
 ):
+    """
+    实际向前台提供数据的接口
+    （没有做机种聚合，没有店铺聚合，没有统计信息，只用分钟对齐）
+    """
     queryset = (PurchasingShopTimeAnalysis.objects
                 .select_related("shop", "iphone")
                 .all())
@@ -1877,6 +1795,83 @@ class PurchasingShopTimeAnalysisPSTACompactViewSet(
     ordering = ["-Timestamp_Time"]
 
 
+#-----------------------------------------------------
+#--------------------------------------------------------
+#-----------------------------------------------------------
+#--------------统计信息数据提取----------------------------------
+#-----------------------------------------------------------
+#--------------------------------------------------------
+#-----------------------------------------------------
+
+class OverallBarViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
+    queryset = OverallBar.objects.all().order_by("bucket")
+    serializer_class = OverallBarSerializer
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    # 支持 ?bucket__gte=&bucket__lte=&iphone_id=&ordering=bucket
+    filterset_fields = {"bucket": ["gte", "lte", "gt", "lt", "exact"]}
+    ordering_fields = ["bucket", "updated_at"]
+
+class OverallBarPointsViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
+    queryset = OverallBar.objects.all().order_by("bucket")
+    serializer_class = OverallBarPointSerializer
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    filterset_fields = {"bucket": ["gte", "lte", "gt", "lt", "exact"]}
+    ordering_fields = ["bucket"]
+
+class CohortBarViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
+    queryset = CohortBar.objects.select_related("cohort").all().order_by("bucket")
+    serializer_class = CohortBarSerializer
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    filterset_fields = {"bucket": ["gte", "lte"], "cohort__slug": ["exact"], "cohort": ["exact"]}
+    ordering_fields = ["bucket", "updated_at"]
+
+class CohortBarPointsViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
+    queryset = CohortBar.objects.select_related("cohort").all().order_by("bucket")
+    serializer_class = CohortBarPointSerializer
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    filterset_fields = {"bucket": ["gte", "lte"], "cohort__slug": ["exact"], "cohort": ["exact"]}
+    ordering_fields = ["bucket"]
+
+class FeatureSnapshotViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
+    queryset = FeatureSnapshot.objects.all().order_by("bucket")
+    serializer_class = FeatureSnapshotSerializer
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    # 支持 ?scope=shop:17|iphone:21&name=mean&bucket__gte=...
+    filterset_fields = {"bucket": ["gte", "lte"], "scope": ["exact", "in"], "name": ["exact", "in"], "version": ["exact"]}
+    ordering_fields = ["bucket", "name"]
+
+class FeaturePointsViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
+    queryset = FeatureSnapshot.objects.all().order_by("bucket")
+    serializer_class = FeaturePointSerializer
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    filterset_fields = {"bucket": ["gte", "lte"], "scope": ["exact"], "name": ["exact"], "version": ["exact"]}
+    ordering_fields = ["bucket"]
+
+# 可选：组合列表（下拉）
+class CohortListViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
+    queryset = Cohort.objects.all().order_by("id")
+    serializer_class = CohortSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["slug"]
+
+class ShopWeightProfileListViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
+    queryset = ShopWeightProfile.objects.all().order_by("id")
+    serializer_class = ShopWeightProfileSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["slug"]
+
+
+
+
+
+#-----------------------------------------------------
+#--------------------------------------------------------
+#-----------------------------------------------------------
+#---------------------------------------------------------------
+#-----------------------------------------------------------
+#--------------------------------------------------------
+#-----------------------------------------------------
+# 以下使用X Api向X发送图片推特，Api权限限制，暂时废止
 load_dotenv()
 
 import os
@@ -2066,3 +2061,11 @@ def _safe_json_or_text(resp):
         return resp.json()
     except Exception:
         return resp.text or ''
+
+#-----------------------------------------------------
+#--------------------------------------------------------
+#-----------------------------------------------------------
+#---------------------------------------------------------------
+#-----------------------------------------------------------
+#--------------------------------------------------------
+#-----------------------------------------------------
