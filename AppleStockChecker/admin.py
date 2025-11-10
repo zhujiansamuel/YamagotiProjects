@@ -15,6 +15,7 @@ from .models import (
     CohortBar,
     ShopWeightProfile,
     ShopWeightItem,
+    FeatureSpec,
 )
 
 
@@ -164,3 +165,8 @@ class ShopWeightItemAdmin(admin.ModelAdmin):
     list_display = ("id", "profile","shop","display_index", "weight")
     list_filter = ("profile","shop","weight")
 
+@admin.register(FeatureSpec)
+class FeatureSpecAdmin(admin.ModelAdmin):
+    list_display = ("id","slug","family","base_name","active","version","created_at")
+    list_filter = ("family","base_name","active","version")
+    search_fields = ("slug","note")

@@ -551,6 +551,10 @@ SIMPLEUI_CONFIG = {
                                  'icon': 'fa-solid fa-chart-line',
                                  'url': '/admin/AppleStockChecker/shopweightitem/',
                                  },
+                                {'name': '统计参数',
+                                 'icon': 'fa-solid fa-chart-line',
+                                 'url': '/admin/AppleStockChecker/featurespec/',
+                                 },
                             ]
                             },
                            ]

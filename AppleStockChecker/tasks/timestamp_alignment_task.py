@@ -63,10 +63,13 @@ MAX_PUSH_POINTS = 20000             # 本次广播给前端的 point 总上限�
 # -----------------------------------------------
 @shared_task(name="AppleStockChecker.tasks.psta_process_minute_bucket")
 def psta_process_minute_bucket(
-    *,
-    ts_iso: str,
-    rows: List[Dict[str, Any]],
-    job_id: str
+        *,
+        ts_iso: str,
+        rows: List[Dict[str, Any]],
+        job_id: str,
+        do_agg: bool = True,
+        agg_start_iso: Optional[str] = None,
+        agg_minutes: int = 1
 ) -> Dict[str, Any]:
     """
     为某分钟桶生成/更新 PSTA。
@@ -197,6 +200,15 @@ def psta_process_minute_bucket(
     err_counter = Counter()
 
     ts_dt = _to_aware(ts_iso)
+    bucket_start = _to_aware(agg_start_iso) if (agg_minutes and agg_start_iso) else ts_dt
+    bucket_end = bucket_start + timezone.timedelta(minutes=agg_minutes or 1)
+    # 仅用于debug
+    agg_ctx = {
+        "do_agg": bool(do_agg),
+        "bucket_start": bucket_start.isoformat(),
+        "bucket_end": bucket_end.isoformat(),
+        "agg_minutes": int(agg_minutes or 1),
+    }
     ts_tz = _tz_offset_str(ts_dt)
     orig_tz = "+09:00"
 
@@ -312,17 +324,29 @@ def psta_process_minute_bucket(
     # -----------------------------------------------------------
     # --------------------------------------------------------
     # -----------------------------------------------------
-    if ok > 0:
+    if ok > 0 and do_agg:
         from statistics import median
+        from collections import defaultdict
 
         WATERMARK_MINUTES = 5
         now = timezone.now()
         is_final_bar = ts_dt <= (now - timezone.timedelta(minutes=WATERMARK_MINUTES))
 
-        # 1) OverallBar（全部店 × 各 iPhone）
+        # --- 聚合窗口（1分钟：用 ts_dt；>1分钟：用 [bucket_start, bucket_end) 窗口） ---
+        bucket_start = _to_aware(agg_start_iso) if (agg_minutes and agg_start_iso) else ts_dt
+        bucket_end = bucket_start + timezone.timedelta(minutes=agg_minutes or 1)
+        use_window = (agg_minutes or 1) > 1
+        agg_ctx = {
+            "do_agg": True,
+            "agg_minutes": int(agg_minutes or 1),
+            "bucket_start": bucket_start.isoformat(),
+            "bucket_end": bucket_end.isoformat(),
+        }
+
+        # ================= 1) OverallBar（全部店 × 各 iPhone） =================
         # 自动探测 OverallBar 是否含 iphone 外键；若没有，跳过以免 unique(bucket) 冲突
         ob_has_iphone = any(getattr(f, "name", "") == "iphone" for f in OverallBar._meta.get_fields())
-        overallbar_debug = {"bucket": ts_iso, "iphones": [], "skipped": False}
+        overallbar_debug = {"agg": agg_ctx, "iphones": [], "skipped": False}
 
         try:
             if not ob_has_iphone:
@@ -330,28 +354,41 @@ def psta_process_minute_bucket(
             else:
                 bucket_iphone_ids = sorted({int(r.get("iphone_id")) for r in rows if r.get("iphone_id")})
                 for ipid in bucket_iphone_ids:
-                    qs_prices = PurchasingShopTimeAnalysis.objects.filter(
-                        Timestamp_Time=ts_dt, iphone_id=ipid
-                    ).values_list("New_Product_Price", flat=True)
+                    if use_window:
+                        # 窗口内：每店最后一条（PG 的 distinct on 语义：order_by 先分组键，再时间倒序）
+                        qs_latest = (PurchasingShopTimeAnalysis.objects
+                                     .filter(iphone_id=ipid,
+                                             Timestamp_Time__gte=bucket_start,
+                                             Timestamp_Time__lt=bucket_end)
+                                     .order_by("shop_id", "-Timestamp_Time")
+                                     .distinct("shop_id"))
+                        prices = [float(p) for p in qs_latest.values_list("New_Product_Price", flat=True) if
+                                  p is not None]
+                        shop_cnt = qs_latest.values("shop_id").count()
+                        ob_bucket = bucket_start
+                    else:
+                        qs_prices = (PurchasingShopTimeAnalysis.objects
+                                     .filter(Timestamp_Time=ts_dt, iphone_id=ipid)
+                                     .values_list("New_Product_Price", flat=True))
+                        prices = [float(p) for p in qs_prices if p is not None]
+                        shop_cnt = (PurchasingShopTimeAnalysis.objects
+                                    .filter(Timestamp_Time=ts_dt, iphone_id=ipid)
+                                    .values("shop_id").distinct().count())
+                        ob_bucket = ts_dt
 
-                    prices = [float(p) for p in qs_prices if p is not None]
                     if not prices:
                         continue
-
-                    shop_cnt = PurchasingShopTimeAnalysis.objects.filter(
-                        Timestamp_Time=ts_dt, iphone_id=ipid
-                    ).values("shop_id").distinct().count()
 
                     vals = sorted(prices)
                     m_mean = sum(vals) / len(vals)
                     m_median = float(median(vals))
                     m_std = _pop_std(vals)
-                    p10 = _quantile(vals, 0.10);
+                    p10 = _quantile(vals, 0.10)
                     p90 = _quantile(vals, 0.90)
                     dispersion = (p90 - p10) if (p10 is not None and p90 is not None) else 0.0
 
                     OverallBar.objects.update_or_create(
-                        bucket=ts_dt, iphone_id=ipid,
+                        bucket=ob_bucket, iphone_id=ipid,
                         defaults=dict(
                             mean=_d4(m_mean),
                             median=_d4(m_median),
@@ -370,6 +407,7 @@ def psta_process_minute_bucket(
                             "median": round(m_median, 4),
                             "std": (round(m_std, 4) if m_std is not None else None),
                             "dispersion": round(dispersion, 4),
+                            "bucket": ob_bucket.isoformat(),
                             "is_final": is_final_bar,
                         })
 
@@ -387,12 +425,13 @@ def psta_process_minute_bucket(
                     "type": "overallbar_error",
                     "bucket": ts_iso,
                     "error": repr(e),
+                    "agg": agg_ctx,
                 })
             except Exception:
                 pass
 
-        # 2) CohortBar（全部店 × 组合 iPhone）
-        cohort_debug = {"bucket": ts_iso, "cohorts": []}
+        # ================ 2) CohortBar（全部店 × 组合 iPhone） ================
+        cohort_debug = {"agg": agg_ctx, "bucket": ts_iso, "cohorts": []}
         try:
             if ob_has_iphone:
                 cohorts = list(Cohort.objects.all())
@@ -403,15 +442,16 @@ def psta_process_minute_bucket(
                     member_ids = [m["iphone_id"] for m in members]
                     weight_map = {m["iphone_id"]: float(m.get("weight") or 1.0) for m in members}
 
+                    # 读取上一步写好的 OverallBar（同一个 ob_bucket）
+                    ob_bucket = bucket_start if use_window else ts_dt
                     ob_rows = list(
-                        OverallBar.objects.filter(bucket=ts_dt, iphone_id__in=member_ids)
+                        OverallBar.objects.filter(bucket=ob_bucket, iphone_id__in=member_ids)
                         .values("iphone_id", "mean", "shop_count")
                     )
                     vals = [float(r["mean"]) for r in ob_rows if r.get("mean") is not None]
                     if not vals:
                         continue
 
-                    # 机型加权（成员权重 × 覆盖），无可用权重时退化为等权
                     denom = 0.0
                     num = 0.0
                     for r in ob_rows:
@@ -426,14 +466,14 @@ def psta_process_minute_bucket(
                     vals_sorted = sorted(vals)
                     c_median = float(median(vals_sorted))
                     c_std = _pop_std(vals_sorted)
-                    p10 = _quantile(vals_sorted, 0.10);
+                    p10 = _quantile(vals_sorted, 0.10)
                     p90 = _quantile(vals_sorted, 0.90)
                     c_disp = (p90 - p10) if (p10 is not None and p90 is not None) else 0.0
                     n_models = len(vals_sorted)
                     shop_count_agg = sum(int(r.get("shop_count") or 0) for r in ob_rows)
 
                     CohortBar.objects.update_or_create(
-                        bucket=ts_dt, cohort=coh,
+                        bucket=ob_bucket, cohort=coh,
                         defaults=dict(
                             mean=_d4(c_mean),
                             median=_d4(c_median),
@@ -454,6 +494,7 @@ def psta_process_minute_bucket(
                             "median": round(c_median, 4),
                             "std": (round(c_std, 4) if c_std is not None else None),
                             "dispersion": round(c_disp, 4),
+                            "bucket": ob_bucket.isoformat(),
                             "is_final": is_final_bar,
                         })
 
@@ -470,7 +511,8 @@ def psta_process_minute_bucket(
                     notify_progress_all(data={
                         "type": "cohortbar_skipped",
                         "bucket": ts_iso,
-                        "reason": "OverallBar lacks iphone dimension; skip CohortBar to avoid collisions."
+                        "reason": "OverallBar lacks iphone dimension; skip CohortBar to avoid collisions.",
+                        "agg": agg_ctx,
                     })
                 except Exception:
                     pass
@@ -480,23 +522,34 @@ def psta_process_minute_bucket(
                     "type": "cohortbar_error",
                     "bucket": ts_iso,
                     "error": repr(e),
+                    "agg": agg_ctx,
                 })
             except Exception:
                 pass
 
-        # 3) 四类组合统计：写入 FeatureSnapshot
+        # =========== 3) 四类组合统计：写入 FeatureSnapshot（窗口去重版） ===========
         try:
             # —— 准备桶内 (shop, iphone) 样本 —— #
             shops_seen = sorted({int(r.get("shop_id")) for r in rows if r.get("shop_id")})
             iphones_seen = sorted({int(r.get("iphone_id")) for r in rows if r.get("iphone_id")})
 
-            qs_all = (PurchasingShopTimeAnalysis.objects
-                      .filter(Timestamp_Time=ts_dt,
-                              shop_id__in=shops_seen, iphone_id__in=iphones_seen)
-                      .values('shop_id', 'iphone_id', 'New_Product_Price'))
+            if use_window:
+                base_qs = (PurchasingShopTimeAnalysis.objects
+                           .filter(Timestamp_Time__gte=bucket_start, Timestamp_Time__lt=bucket_end,
+                                   shop_id__in=shops_seen, iphone_id__in=iphones_seen)
+                           .order_by("shop_id", "iphone_id", "-Timestamp_Time")
+                           .distinct("shop_id", "iphone_id")
+                           .values("shop_id", "iphone_id", "New_Product_Price"))
+                feature_bucket = bucket_start
+            else:
+                base_qs = (PurchasingShopTimeAnalysis.objects
+                           .filter(Timestamp_Time=ts_dt,
+                                   shop_id__in=shops_seen, iphone_id__in=iphones_seen)
+                           .values("shop_id", "iphone_id", "New_Product_Price"))
+                feature_bucket = ts_dt
 
             price_by_si = defaultdict(list)  # (shop, iphone) -> [price,...]
-            for rec in qs_all:
+            for rec in base_qs:
                 p = rec.get('New_Product_Price')
                 if p is None:
                     continue
@@ -512,7 +565,6 @@ def psta_process_minute_bucket(
                 vals = sorted(values)
                 n = len(vals)
                 mean_v = sum(vals) / n
-                # 中位数（偶数取两中间平均）
                 med_v = vals[n // 2] if n % 2 else 0.5 * (vals[n // 2 - 1] + vals[n // 2])
                 std_v = _pop_std(vals)
                 p10 = _quantile(vals, 0.10);
@@ -522,11 +574,12 @@ def psta_process_minute_bucket(
 
             def upsert_feature(scope: str, name: str, value: float, *, is_final: bool, version: str = 'v1'):
                 FeatureSnapshot.objects.update_or_create(
-                    bucket=ts_dt, scope=scope, name=name, version=version,
+                    bucket=feature_bucket, scope=scope, name=name, version=version,
                     defaults=dict(value=float(value), is_final=is_final)
                 )
 
             combo_debug = {
+                "agg": agg_ctx,
                 "bucket": ts_iso,
                 "case1_shop_iphone": 0,
                 "case2_shopcohort_iphone": 0,
@@ -676,6 +729,7 @@ def psta_process_minute_bucket(
                         combo_debug["case4_shopcohort_cohortiphone"] += 1
                         if len(combo_debug["samples"]) < 5:
                             combo_debug["samples"].append({"case": 4, "scope": scope, "n": n, "mean": round(mean_w, 4)})
+
             else:
                 combo_debug["skipped"].append("case4: no ShopWeightProfile defined")
 
@@ -689,18 +743,19 @@ def psta_process_minute_bucket(
                         "case3_shop_cohortiphone": combo_debug["case3_shop_cohortiphone"],
                         "case4_shopcohort_cohortiphone": combo_debug["case4_shopcohort_cohortiphone"],
                         "skipped": combo_debug["skipped"],
+                        "agg": agg_ctx,
                     },
                     "samples": combo_debug["samples"],
                 })
             except Exception:
                 pass
-
         except Exception as e:
             try:
                 notify_progress_all(data={
                     "type": "feature_snapshot_error",
                     "bucket": ts_iso,
                     "error": repr(e),
+                    "agg": agg_ctx,
                 })
             except Exception:
                 pass
@@ -922,6 +977,15 @@ def psta_finalize_buckets(
 # -----------------------------------------------
 # 父任务：chord 并行 + 回调（保持你已有写法）
 # -----------------------------------------------
+
+AGG_STEP_MINUTES = 15        # 想切 5 分钟就改成 5
+DO_AGG_ON_BOUNDARY_ONLY = True  # True=仅在整步长分钟做聚合；False=每个1min都聚合（你当前逻辑）
+
+
+def _floor_to_step(dt: timezone.datetime, step: int) -> timezone.datetime:
+    return dt - timedelta(minutes=dt.minute % step,
+                          seconds=dt.second, microseconds=dt.microsecond)
+
 @shared_task(bind=True, name="AppleStockChecker.tasks.batch_generate_psta_same_ts")
 def batch_generate_psta_same_ts(
     self,
@@ -934,6 +998,9 @@ def batch_generate_psta_same_ts(
     shop_ids: Optional[List[int]] = None,
     iphone_ids: Optional[List[int]] = None,
     max_items: Optional[int] = None,
+    do_agg: bool = True,
+    agg_start_iso: Optional[str] = None,
+    agg_minutes: int = 1
 ) -> Dict[str, Any]:
     """
     总体作用:
@@ -1002,11 +1069,27 @@ def batch_generate_psta_same_ts(
                         "recorded_at": r.get("recorded_at"),
                         "price_new": r.get("price_new", r.get("New_Product_Price")),
                     })
-        if minute_rows:
-            # 一分钟桶一个子任务
-            subtasks.append(
-                psta_process_minute_bucket.s(ts_iso=minute_iso, rows=minute_rows, job_id=task_job_id)
+        if not minute_rows:
+            continue
+
+        # === 是否是 15 分钟边界？ ===
+        mdt = _to_aware(minute_iso)
+        step0 = _floor_to_step(mdt, AGG_STEP_MINUTES)
+        is_boundary = (mdt == step0)
+
+        # 只在边界时做聚合；否则只做PSTA写入/图表点，不跑重聚合
+        do_agg = (not DO_AGG_ON_BOUNDARY_ONLY) or is_boundary
+
+        subtasks.append(
+            psta_process_minute_bucket.s(
+                ts_iso=minute_iso,
+                rows=minute_rows,
+                job_id=task_job_id,
+                do_agg=do_agg,
+                agg_start_iso=step0.isoformat(),
+                agg_minutes=AGG_STEP_MINUTES
             )
+        )
 
     total_buckets = len(subtasks)
 

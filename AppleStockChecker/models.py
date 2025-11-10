@@ -405,3 +405,20 @@ class CohortBar(models.Model):
         return f"{self.cohort.slug} @ {self.bucket.isoformat()}"
 
 
+class FeatureSpec(models.Model):
+    """
+    不强制修改 FeatureSnapshot 结构。约定：
+    对于派生特征（EMA/WMA 等），name = family（如 "ema"、"wma_linear"），
+    version = FeatureSpec.slug（如 "ema15"、"wma15"）。
+    """
+    slug = models.SlugField(max_length=64, unique=True)   # 参数组合的稳定标识，如 ema15 / ema60 / wma15
+    family = models.CharField(max_length=32, db_index=True)  # 'ema' | 'wma_linear' | 'sma' | ...
+    base_name = models.CharField(max_length=32, default='mean', db_index=True)
+    params = models.JSONField(default=dict)  # 例如: {"window": 15, "alpha": 0.2, "half_life": null}
+    version = models.CharField(max_length=16, default='v1', db_index=True)  # 代码/实现版本
+    active = models.BooleanField(default=True)
+    note = models.CharField(max_length=256, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.family}:{self.slug}"

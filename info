@@ -1,47 +1,3 @@
-https://www.1-chome.com/api/keitai/listPage
-    ?accCode=
-    &page=2
-    &size=24
-    &keyword=
-    &isImpo=false
-    &isCampaign=false
-    &cateCode=sqwDCccRt4Woon0R
-    &kbNames=
-    &isImpoCate=false
-
-https://www.1-chome.com/api/keitai/listPage
-    ?accCode=
-    &page=1
-    &size=24
-    &keyword=
-    &isImpo=false
-    &isCampaign=false
-    &cateCode=RGNg976kptBN7UjF
-    &kbNames=
-    &isImpoCate=true
-
-
-https://www.1-chome.com/api/index/getPopularCategories
-{
-    "code": 200,
-    "msg": "success",
-    "data": {
-        "categoryIphone": "RGNg976kptBN7UjF",
-        "categoryAndroid": "WkCcKCxwC6NInC5c",
-        "categoryEarphone": "10000004",
-        "categoryApple": "20030007",
-        "categoryGame": "10000005",
-        "categoryTablet": "20030016",
-        "categoryCamera": "10000001",
-        "categoryWhiskey": "30010001"
-    }
-}
-
-https://www.1-chome.com/api/keitai/getAllCateTreeList?cateCode=R0000001
-
-AppleStockChecker
-
-
 
 http://127.0.0.1:8080/AppleStockChecker/auth/token/
 http://127.0.0.1:8080/AppleStockChecker/import-iphone-csv/
@@ -66,18 +22,6 @@ http://localhost:8080/AppleStockChecker/auth/token/
 
 git clone https://github.com/zhujiansamuel/YamagotiProjects.git src
 scp ./db.sqlite3 root@47.111.136.177:/opt/apple/db/db.sqlite3
-
-
-
-
-显示效果好极了。现在我有一系列新的改进需求，我将一一告知你，请给出最终可用的完整代码，在相应地方添加详细注释说明为满足需求而修改的地方。
-需求1，现在的图标之上增加一个新的图表，它的绘制方法是将同一二手店的同一型号的不同颜色的价格取平均值之后作图，同样给出平均值。
-需求2-1，平均值曲线可以选择分割桶的间隔（30分钟，1小时，10小时，24小时），当然也保留可以选择那些店铺进行计算的原有功能。
-需求2-2，可以更改平均值曲线的粗细，可以更改颜色，可以修改线的类型(实线，虚线，点线等)。
-需求2-3，这样的平均值曲线需要3条，代码中允许我修改他们默认的属性（分割桶的间隔，粗细，颜色，计算包含的二手店铺）
-需求3，纵坐标放在图的右边。
-需求4，在曲线的最右边增加一个标注，显示距离纵坐标轴最近的点（曲线的最右点）的数值（各个二手店价格以及各个平均价格）
-需求5，横坐标只标注日期，位置在每天的0点。
 
 
 说明 & 可调参数汇总
@@ -148,6 +92,27 @@ docker compose logs -f celery
 docker compose logs -f nginx
 
 docker compose up -d --scale worker=6
+
+
+sudo tee /etc/systemd/system/ngrok.service >/dev/null <<'UNIT'
+[Unit]
+Description=ngrok (custom domains -> localhost)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/ngrok start app metabase mindsdb --config=/root/.config/ngrok/ngrok.yml --region=jp
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
 
 
 docker ps -a
@@ -533,3 +498,7 @@ https://docs.google.com/spreadsheets/d/e/2PACX-1vTHgVMpH0FnvdAmk2sqEUVkexuuo5oA5
 
                 <th class="shop-col shop-head shop-買取ホムラ">買取<br>ホムラ
                 <th class="shop-col shop-head shop-ドラゴンモバイル-">ドラゴン<br>モバイル
+
+
+
+git switch -c feature/psta-overallbar-cohortbar
