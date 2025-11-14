@@ -72,72 +72,7 @@ def psta_process_minute_bucket(
         agg_minutes: int = 1
 ) -> Dict[str, Any]:
     """
-    为某分钟桶生成/更新 PSTA。
-    返回：
-      - 错误详情与直方图（便于定位 why ok=0 failed>0）
-      - chart_points：给 finalize 汇总后推送到前端的图表增量（去重由前端做）
 
-
-    总体作用
-    - 这是一个 Celery 子任务（名为 AppleStockChecker.tasks.psta_process_minute_bucket），处理“某一个分钟桶”的数据写入与统计。
-    - 输入的 rows 是该分钟内按店铺与机型聚合好的轻量行；任务会对每条进行校验、入库（存在则更新、否则创建），并收集可用于前端绘图的“图表点”。
-    - 返回该分钟桶的处理摘要（成功/失败计数、错误直方图、错误样例）以及图表增量列表 chart_points。后续由 psta_finalize_buckets 回调聚合，并通过 notify_progress_all 推送前端。
-
-    关键输入
-    - ts_iso：该“分钟桶”的时间（ISO 字符串）。
-    - rows：行列表，每行至少应包含 shop_id、iphone_id、recorded_at，以及 price_new 或 New_Product_Price。
-    - job_id：本次任务流水号，便于审计与幂等追踪。
-
-    处理流程
-    1) 初始化上下文
-    - 把 ts_iso 转为有时区的 datetime（ts_dt），同时计算该时间的时区偏移字符串 ts_tz（如 +09:00）。
-    - 固定源记录时区 orig_tz = +09:00。
-    - 预备计数器 ok/failed、错误样本 errors 和错误类型直方图 err_counter，以及前端图表用的 chart_points。
-
-    2) 逐行校验与入库（事务+行锁）
-    - 轻量校验：必须有 shop_id、iphone_id。
-    - 外键存在性检查：SecondHandShop 与 Iphone 若不存在会抛 DoesNotExist（便于排错）。
-    - 解析 recorded_at 为 aware datetime（rec_dt）。
-    - 价格 new_price 从 price_new 或 New_Product_Price 取值，缺失则报错。
-    - 计算 align_diff = (rec_dt - ts_dt) 的秒差，便于对齐误差诊断。
-    - 在 transaction.atomic 中，对 (shop_id, iphone_id, Timestamp_Time=ts_dt) 做 select_for_update()：
-      - 若已存在：更新 Job_ID、时区、Record_Time、Alignment_Time_Difference、New_Product_Price，并将 Update_Count +1。
-      - 若不存在：创建一条新记录（Update_Count=0）。
-    - 成功一条 ok += 1。
-
-    3) 收集图表增量
-    - 每次成功写库后，若 chart_points 未超过 MAX_BUCKET_CHART_POINTS，则追加一个点：
-      - {id: 数据库主键, t: ts_iso, iphone_id, shop_id, price: new_price, recorded_at: rec_dt.isoformat()}
-    - 这些点只作为“真实点”传给回调聚合使用；回调可能再补“影子点”保证时间轴连续。
-
-    4) 错误处理与桶级报警
-    - 针对常见异常（DoesNotExist、ValidationError、IntegrityError、TypeError、ValueError）：
-      - failed += 1，err_counter 记录异常类名，errors 收集有限条样例（含简要 item 字段）。
-    - 兜底 Exception 同样计入 failed/err_counter，并收集精简样例。
-    - 若本桶有失败，发送一个 bucket_errors 调试通知（携带 ts_iso、总数、ok/failed、错误直方图、前 5 条样例），通知异常会被忽略不阻断主流程。
-
-    返回结果
-    - 返回一个字典：
-      - ts_iso、ok、failed、total
-      - error_hist：异常类名到次数的直方图
-      - errors：失败样例（不超过 MAX_BUCKET_ERROR_SAMPLES）
-      - chart_points：成功写库的图表点（用于后续 finalize 聚合与前端增量刷新）
-
-    设计意图与特点
-    - 幂等与并发安全：按 (shop, iphone, minute) 做行级锁 + 唯一约束，避免重复与竞争。
-    - 轻重分离：子任务只做 upsert 与点收集；复杂的汇总、裁剪、影子点补齐等留给 psta_finalize_buckets。
-    - 诊断友好：详细的错误直方图与样例，让“ok=0、failed>0”的问题能被快速定位。
-    - 时区与对齐：所有时间使用 aware datetime 计算；Alignment_Time_Difference 使“记录发生时间”与“桶时间”对齐偏差一目了然。
-
-
-
-    全部店 × 各 iPhone → 写 OverallBar(bucket, iphone)（若你的 OverallBar 尚未加 iphone 外键，会自动跳过并输出 debug）。
-
-    全部店 × 组合 iPhone → 写 CohortBar(bucket, cohort)。
-
-    各店/店铺组合 × 各 iPhone → 写入 FeatureSnapshot(scope=..., name=...)。
-
-    各店/店铺组合 × 组合 iPhone → 写入 FeatureSnapshot(scope=..., name=...)。
 
     """
     # -----------------------------------------------------
@@ -171,7 +106,7 @@ def psta_process_minute_bucket(
     def _d4(x):
         if x is None:
             return None
-        return (Decimal(str(x))).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+        return (Decimal(str(x))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     def _quantile(sorted_vals, p: float):
         """最近邻分位数（sorted_vals 必须升序）。"""
@@ -193,6 +128,36 @@ def psta_process_minute_bucket(
         s2 = sum((v - mu) ** 2 for v in vals) / n
         return (s2 ** 0.5)
 
+    def _pop_std(vals):
+        """总体标准差；N<=1 返回 0."""
+        n = len(vals)
+        if n <= 1:
+            return 0.0
+        mu = sum(vals) / n
+        s2 = sum((v - mu) ** 2 for v in vals) / n
+        return (s2 ** 0.5)
+
+    def _filter_outliers_by_mean_band(vals, lower_factor=0.5, upper_factor=1.5):
+        """
+        按“相对平均值”过滤异常值：
+        - 先算原始均值 m；
+        - 保留 [m*lower_factor, m*upper_factor] 区间内的值；
+        - 如果全部被过滤掉，则回退到原始列表。
+        返回 (filtered_vals, m, low, high)。
+        """
+        if not vals:
+            return [], None, None, None
+        m = sum(vals) / len(vals)
+        if m <= 0:
+            # 极端情况（不太会发生），直接不滤
+            return list(vals), m, None, None
+        low = m * lower_factor
+        high = m * upper_factor
+        filtered = [v for v in vals if low <= v <= high]
+        if not filtered:
+            # 全被判成异常，就用原始值，避免整组丢失
+            return list(vals), m, low, high
+        return filtered, m, low, high
 
     ok = 0
     failed = 0
@@ -324,7 +289,8 @@ def psta_process_minute_bucket(
     # -----------------------------------------------------------
     # --------------------------------------------------------
     # -----------------------------------------------------
-    if ok > 0 and do_agg:
+    if do_agg:
+
         from statistics import median
         from collections import defaultdict
 
@@ -367,19 +333,41 @@ def psta_process_minute_bucket(
                         shop_cnt = qs_latest.values("shop_id").count()
                         ob_bucket = bucket_start
                     else:
-                        qs_prices = (PurchasingShopTimeAnalysis.objects
-                                     .filter(Timestamp_Time=ts_dt, iphone_id=ipid)
-                                     .values_list("New_Product_Price", flat=True))
-                        prices = [float(p) for p in qs_prices if p is not None]
-                        shop_cnt = (PurchasingShopTimeAnalysis.objects
-                                    .filter(Timestamp_Time=ts_dt, iphone_id=ipid)
-                                    .values("shop_id").distinct().count())
-                        ob_bucket = ts_dt
+                        if use_window:
+                            qs_latest = (
+                                PurchasingShopTimeAnalysis.objects
+                                .filter(iphone_id=ipid, Timestamp_Time__gte=bucket_start, Timestamp_Time__lt=bucket_end)
+                                .order_by("shop_id", "-Timestamp_Time")
+                                .distinct("shop_id")
+                                .values("shop_id", "New_Product_Price", "Timestamp_Time")
+                            )
+                            prices = [float(r["New_Product_Price"]) for r in qs_latest if
+                                      r["New_Product_Price"] is not None]
+                            shop_cnt = qs_latest.values("shop_id").count()
+                            ob_bucket = bucket_start
+                        else:
+                            qs_latest = (
+                                PurchasingShopTimeAnalysis.objects
+                                .filter(iphone_id=ipid, Timestamp_Time=ts_dt)
+                                .values("shop_id", "New_Product_Price")
+                            )
+                            prices = [float(r["New_Product_Price"]) for r in qs_latest if
+                                      r["New_Product_Price"] is not None]
+                            shop_cnt = qs_latest.values("shop_id").distinct().count()
+                            ob_bucket = ts_dt
 
                     if not prices:
                         continue
 
-                    vals = sorted(prices)
+                    # 先按“平均值 ±50%”过滤异常值，再计算统计量
+                    vals_raw = [float(p) for p in prices]
+                    vals_filtered, m0, low_band, high_band = _filter_outliers_by_mean_band(vals_raw)
+
+                    if not vals_filtered:
+                        # 极端情况：全被过滤，直接跳过这一组（也可以选择回退 vals_raw）
+                        continue
+
+                    vals = sorted(vals_filtered)
                     m_mean = sum(vals) / len(vals)
                     m_median = float(median(vals))
                     m_std = _pop_std(vals)
@@ -527,47 +515,58 @@ def psta_process_minute_bucket(
             except Exception:
                 pass
 
-        # =========== 3) 四类组合统计：写入 FeatureSnapshot（窗口去重版） ===========
+        # =========== 3) 四类组合统计：写入 FeatureSnapshot（窗口去重 + 时效权） ===========
         try:
-            # —— 准备桶内 (shop, iphone) 样本 —— #
+            from django.conf import settings
+            # —— 预取本桶出现过的 shop/iphone —— #
             shops_seen = sorted({int(r.get("shop_id")) for r in rows if r.get("shop_id")})
             iphones_seen = sorted({int(r.get("iphone_id")) for r in rows if r.get("iphone_id")})
 
             if use_window:
-                base_qs = (PurchasingShopTimeAnalysis.objects
-                           .filter(Timestamp_Time__gte=bucket_start, Timestamp_Time__lt=bucket_end,
-                                   shop_id__in=shops_seen, iphone_id__in=iphones_seen)
-                           .order_by("shop_id", "iphone_id", "-Timestamp_Time")
-                           .distinct("shop_id", "iphone_id")
-                           .values("shop_id", "iphone_id", "New_Product_Price"))
+                base_qs = (
+                    PurchasingShopTimeAnalysis.objects
+                    .filter(Timestamp_Time__gte=bucket_start, Timestamp_Time__lt=bucket_end,
+                            shop_id__in=shops_seen, iphone_id__in=iphones_seen)
+                    .order_by("shop_id", "iphone_id", "-Timestamp_Time")
+                    .distinct("shop_id", "iphone_id")
+                    .values("shop_id", "iphone_id", "New_Product_Price", "Timestamp_Time")
+                )
                 feature_bucket = bucket_start
             else:
-                base_qs = (PurchasingShopTimeAnalysis.objects
-                           .filter(Timestamp_Time=ts_dt,
-                                   shop_id__in=shops_seen, iphone_id__in=iphones_seen)
-                           .values("shop_id", "iphone_id", "New_Product_Price"))
+                base_qs = (
+                    PurchasingShopTimeAnalysis.objects
+                    .filter(Timestamp_Time=ts_dt,
+                            shop_id__in=shops_seen, iphone_id__in=iphones_seen)
+                    .values("shop_id", "iphone_id", "New_Product_Price", "Timestamp_Time")
+                )
                 feature_bucket = ts_dt
 
-            price_by_si = defaultdict(list)  # (shop, iphone) -> [price,...]
+            # (shop, iphone) -> (last_price, last_ts)
+            data_by_si: Dict[tuple, tuple] = {}
             for rec in base_qs:
-                p = rec.get('New_Product_Price')
+                p = rec.get("New_Product_Price");
+                t = rec.get("Timestamp_Time")
                 if p is None:
                     continue
-                s = int(rec['shop_id']);
-                i = int(rec['iphone_id']);
-                v = float(p)
-                price_by_si[(s, i)].append(v)
+                s = int(rec["shop_id"]);
+                i = int(rec["iphone_id"])
+                data_by_si[(s, i)] = (float(p), t)
 
+            # —— 统计与落库工具 —— #
             def _stats(values):
-                """返回 (mean, median, std, dispersion, count)。"""
+                """"返回 (mean, median, std, dispersion, count)，自动按平均值过滤异常值。"""
                 if not values:
                     return None
-                vals = sorted(values)
+                vals_raw = [float(v) for v in values]
+                vals_filtered, m0, low_band, high_band = _filter_outliers_by_mean_band(vals_raw)
+                if not vals_filtered:
+                    return None
+                vals = sorted(vals_filtered)
                 n = len(vals)
                 mean_v = sum(vals) / n
                 med_v = vals[n // 2] if n % 2 else 0.5 * (vals[n // 2 - 1] + vals[n // 2])
                 std_v = _pop_std(vals)
-                p10 = _quantile(vals, 0.10);
+                p10 = _quantile(vals, 0.10)
                 p90 = _quantile(vals, 0.90)
                 disp_v = (p90 - p10) if (p10 is not None and p90 is not None) else 0.0
                 return mean_v, med_v, std_v, disp_v, n
@@ -575,8 +574,29 @@ def psta_process_minute_bucket(
             def upsert_feature(scope: str, name: str, value: float, *, is_final: bool, version: str = 'v1'):
                 FeatureSnapshot.objects.update_or_create(
                     bucket=feature_bucket, scope=scope, name=name, version=version,
-                    defaults=dict(value=float(value), is_final=is_final)
+                    defaults=dict(value=float(_d4(value)), is_final=is_final)
                 )
+
+            # —— 时效权重（AGE_CAP + 半衰期/线性） —— #
+            AGE_CAP_MIN = float(getattr(settings, "PSTA_AGE_CAP_MIN", 12.0))  # 超过则不计
+            RECENCY_HALF_LIFE_MIN = float(getattr(settings, "PSTA_RECENCY_HALF_LIFE_MIN", 6.0))  # 指数半衰期
+            RECENCY_DECAY = str(getattr(settings, "PSTA_RECENCY_DECAY", "exp")).lower()  # 'exp'|'linear'
+
+            import math
+            def recency_weight(last_ts, ref_end):
+                if last_ts is None:
+                    return 0.0, None
+                age_min = (ref_end - last_ts).total_seconds() / 60.0
+                if age_min < 0:
+                    age_min = 0.0
+                if age_min > AGE_CAP_MIN:
+                    return 0.0, age_min
+                if RECENCY_DECAY == "linear":
+                    w = max(0.0, 1.0 - (age_min / max(AGE_CAP_MIN, 1e-6)))
+                else:
+                    lam = math.log(2.0) / max(RECENCY_HALF_LIFE_MIN, 1e-6)
+                    w = math.exp(-lam * age_min)
+                return float(w), age_min
 
             combo_debug = {
                 "agg": agg_ctx,
@@ -589,9 +609,9 @@ def psta_process_minute_bucket(
                 "samples": [],
             }
 
-            # === CASE 1: 各店 × 各 iPhone ===
-            for (sid, iid), vals in price_by_si.items():
-                s = _stats(vals)
+            # === CASE 1: 各店 × 各 iPhone（单值；用于原始曲线） ===
+            for (sid, iid), (v, t) in data_by_si.items():
+                s = _stats([v])
                 if not s:
                     continue
                 m, med, st, disp, n = s
@@ -603,7 +623,7 @@ def psta_process_minute_bucket(
                 upsert_feature(scope, "count", float(n), is_final=is_final_bar)
                 combo_debug["case1_shop_iphone"] += 1
                 if len(combo_debug["samples"]) < 5:
-                    combo_debug["samples"].append({"case": 1, "scope": scope, "n": n, "mean": round(m, 4)})
+                    combo_debug["samples"].append({"case": 1, "scope": scope, "mean": round(m, 4)})
 
             # 预取店铺组合（ShopWeightProfile）
             profiles = list(ShopWeightProfile.objects.all())
@@ -614,7 +634,15 @@ def psta_process_minute_bucket(
             }
             has_shop_profile = any(bool(prof_items.get(p.id)) for p in profiles)
 
-            # === CASE 2: 组合店 × 各 iPhone ===
+            # 预取机型组合（Cohort）
+            cohorts = list(Cohort.objects.all())
+            cmembers = {
+                coh.id: {m['iphone_id']: float(m.get('weight') or 1.0)
+                         for m in CohortMember.objects.filter(cohort=coh).values('iphone_id', 'weight')}
+                for coh in cohorts
+            }
+
+            # === CASE 2: 组合店 × 各 iPhone（店权 × 时效权） ===
             if has_shop_profile:
                 for prof in profiles:
                     sw = prof_items.get(prof.id, {})
@@ -624,21 +652,28 @@ def psta_process_minute_bucket(
                     if not shops_in:
                         continue
                     for iid in iphones_seen:
-                        vals = []
-                        wnum = wden = 0.0
+                        vals, ages = [], []
+                        wnum = wden = w2 = 0.0
                         for sid in shops_in:
-                            vlist = price_by_si.get((int(sid), int(iid)))
-                            if not vlist:
+                            pair = data_by_si.get((int(sid), int(iid)))
+                            if not pair:
                                 continue
-                            v = float(vlist[-1])
-                            w = float(sw.get(sid, 1.0))
+                            v, t = pair
+                            w_rec, age = recency_weight(t, bucket_end)
+                            if w_rec <= 0.0:
+                                continue
+                            w_shop = float(sw.get(sid, 1.0))
+                            w = w_shop * w_rec
                             vals.append(v)
-                            wnum += w * v
-                            wden += w
+                            if age is not None:
+                                ages.append(age)
+                            wnum += w * v;
+                            wden += w;
+                            w2 += w * w
                         if not vals:
                             continue
-                        m, med, st, disp, n = _stats(vals)
-                        mean_w = (wnum / wden) if wden > 0 else m
+                        m_unw, med, st, disp, n = _stats(vals)
+                        mean_w = (wnum / wden) if wden > 0 else m_unw
                         scope = f"shopcohort:{prof.slug}|iphone:{iid}"
                         upsert_feature(scope, "mean", mean_w, is_final=is_final_bar)
                         upsert_feature(scope, "median", med, is_final=is_final_bar)
@@ -647,38 +682,41 @@ def psta_process_minute_bucket(
                         upsert_feature(scope, "count", float(n), is_final=is_final_bar)
                         combo_debug["case2_shopcohort_iphone"] += 1
                         if len(combo_debug["samples"]) < 5:
-                            combo_debug["samples"].append({"case": 2, "scope": scope, "n": n, "mean": round(mean_w, 4)})
+                            combo_debug["samples"].append({
+                                "case": 2, "scope": scope, "n": n,
+                                "mean_w": round(mean_w, 4),
+                                "age_p50": (round(_quantile(sorted(ages), 0.5), 2) if ages else None)
+                            })
             else:
                 combo_debug["skipped"].append("case2: no ShopWeightProfile defined")
 
-            # 预取机型组合（Cohort）
-            cohorts = list(Cohort.objects.all())
-            cmembers = {
-                coh.id: {m['iphone_id']: float(m.get('weight') or 1.0)
-                         for m in CohortMember.objects.filter(cohort=coh).values('iphone_id', 'weight')}
-                for coh in cohorts
-            }
-
-            # === CASE 3: 各店 × 组合 iPhone ===
+            # === CASE 3: 各店 × 组合 iPhone（机型权 × 时效权） ===
             for sid in shops_seen:
                 for coh in cohorts:
                     iw = cmembers.get(coh.id, {})
                     if not iw:
                         continue
-                    vals = []
-                    wnum = wden = 0.0
-                    for iid, w in iw.items():
-                        vlist = price_by_si.get((int(sid), int(iid)))
-                        if not vlist:
+                    vals, ages = [], []
+                    wnum = wden = w2 = 0.0
+                    for iid, w_phone in iw.items():
+                        pair = data_by_si.get((int(sid), int(iid)))
+                        if not pair:
                             continue
-                        v = float(vlist[-1])
+                        v, t = pair
+                        w_rec, age = recency_weight(t, bucket_end)
+                        if w_rec <= 0.0:
+                            continue
+                        w = float(w_phone) * w_rec
                         vals.append(v)
-                        wnum += float(w) * v
-                        wden += float(w)
+                        if age is not None:
+                            ages.append(age)
+                        wnum += w * v;
+                        wden += w;
+                        w2 += w * w
                     if not vals:
                         continue
-                    m, med, st, disp, n = _stats(vals)
-                    mean_w = (wnum / wden) if wden > 0 else m
+                    m_unw, med, st, disp, n = _stats(vals)
+                    mean_w = (wnum / wden) if wden > 0 else m_unw
                     scope = f"shop:{sid}|cohort:{coh.slug}"
                     upsert_feature(scope, "mean", mean_w, is_final=is_final_bar)
                     upsert_feature(scope, "median", med, is_final=is_final_bar)
@@ -687,9 +725,13 @@ def psta_process_minute_bucket(
                     upsert_feature(scope, "count", float(n), is_final=is_final_bar)
                     combo_debug["case3_shop_cohortiphone"] += 1
                     if len(combo_debug["samples"]) < 5:
-                        combo_debug["samples"].append({"case": 3, "scope": scope, "n": n, "mean": round(mean_w, 4)})
+                        combo_debug["samples"].append({
+                            "case": 3, "scope": scope, "n": n,
+                            "mean_w": round(mean_w, 4),
+                            "age_p50": (round(_quantile(sorted(ages), 0.5), 2) if ages else None)
+                        })
 
-            # === CASE 4: 组合店 × 组合 iPhone ===
+            # === CASE 4: 组合店 × 组合 iPhone（店权 × 机型权 × 时效权） ===
             if has_shop_profile:
                 for prof in profiles:
                     sw = prof_items.get(prof.id, {})
@@ -702,24 +744,30 @@ def psta_process_minute_bucket(
                         iw = cmembers.get(coh.id, {})
                         if not iw:
                             continue
-                        vals = []
-                        wnum = wden = 0.0
+                        vals, ages = [], []
+                        wnum = wden = w2 = 0.0
                         for sid, w_shop in sw.items():
                             if int(sid) not in shops_in:
                                 continue
                             for iid, w_phone in iw.items():
-                                vlist = price_by_si.get((int(sid), int(iid)))
-                                if not vlist:
+                                pair = data_by_si.get((int(sid), int(iid)))
+                                if not pair:
                                     continue
-                                v = float(vlist[-1])
+                                v, t = pair
+                                w_rec, age = recency_weight(t, bucket_end)
+                                if w_rec <= 0.0:
+                                    continue
+                                w = float(w_shop) * float(w_phone) * w_rec
                                 vals.append(v)
-                                w = float(w_shop) * float(w_phone)
-                                wnum += w * v
-                                wden += w
+                                if age is not None:
+                                    ages.append(age)
+                                wnum += w * v;
+                                wden += w;
+                                w2 += w * w
                         if not vals:
                             continue
-                        m, med, st, disp, n = _stats(vals)
-                        mean_w = (wnum / wden) if wden > 0 else m
+                        m_unw, med, st, disp, n = _stats(vals)
+                        mean_w = (wnum / wden) if wden > 0 else m_unw
                         scope = f"shopcohort:{prof.slug}|cohort:{coh.slug}"
                         upsert_feature(scope, "mean", mean_w, is_final=is_final_bar)
                         upsert_feature(scope, "median", med, is_final=is_final_bar)
@@ -728,8 +776,11 @@ def psta_process_minute_bucket(
                         upsert_feature(scope, "count", float(n), is_final=is_final_bar)
                         combo_debug["case4_shopcohort_cohortiphone"] += 1
                         if len(combo_debug["samples"]) < 5:
-                            combo_debug["samples"].append({"case": 4, "scope": scope, "n": n, "mean": round(mean_w, 4)})
-
+                            combo_debug["samples"].append({
+                                "case": 4, "scope": scope, "n": n,
+                                "mean_w": round(mean_w, 4),
+                                "age_p50": (round(_quantile(sorted(ages), 0.5), 2) if ages else None)
+                            })
             else:
                 combo_debug["skipped"].append("case4: no ShopWeightProfile defined")
 
@@ -749,6 +800,7 @@ def psta_process_minute_bucket(
                 })
             except Exception:
                 pass
+
         except Exception as e:
             try:
                 notify_progress_all(data={
@@ -759,6 +811,294 @@ def psta_process_minute_bucket(
                 })
             except Exception:
                 pass
+
+        # ================= 4) 时间序列派生指标：SMA / WMA / EMA（按 FeatureSpec） =================
+        from django.apps import apps
+        FeatureSpec = apps.get_model('AppleStockChecker', 'FeatureSpec')
+
+        # 本次派生指标的“锚点时间”：与 FeatureSnapshot(mean, …) 一致
+        anchor_bucket = bucket_start if use_window else ts_dt
+        # Overall/Cohort 的基值写入了 ob_bucket；派生时也需要读取该时间的“当前基值”
+        ob_bucket = bucket_start if use_window else ts_dt
+
+        timefeat_debug = {"bucket": ts_iso, "computed": 0, "skipped": [], "samples": []}
+
+        try:
+            # 取出所有激活的时序类指标
+            specs = list(
+                FeatureSpec.objects
+                .filter(active=True, family__in=["sma", "ema", "wma"])
+                .values("slug", "family", "base_name", "params", "version")
+            )
+
+            # —— 收集“当前锚点”的基值 x_t：scope -> x_t —— #
+            base_now: Dict[str, float] = {}
+
+            # 4.a 四类组合（FeatureSnapshot.mean@anchor_bucket）
+            for row in FeatureSnapshot.objects.filter(
+                bucket=anchor_bucket, name="mean"
+            ).values("scope", "value"):
+                if row["value"] is not None:
+                    base_now[row["scope"]] = float(row["value"])
+
+            # 4.b OverallBar.mean -> overall:iphone:<id>（@ob_bucket）
+            if ob_has_iphone:
+                for row in OverallBar.objects.filter(bucket=ob_bucket).values("iphone_id", "mean"):
+                    if row["mean"] is not None:
+                        base_now[f"overall:iphone:{row['iphone_id']}"] = float(row["mean"])
+
+            # 4.c CohortBar.mean -> cohort:<slug>（@ob_bucket）
+            for row in (CohortBar.objects.filter(bucket=ob_bucket)
+                        .select_related("cohort").values("cohort__slug", "mean")):
+                if row["mean"] is not None and row["cohort__slug"]:
+                    base_now[f"cohort:{row['cohort__slug']}"] = float(row["mean"])
+
+            # —— 工具：回写派生值 —— #
+            def upsert_feat(scope: str, name: str, version: str, value: float):
+                FeatureSnapshot.objects.update_or_create(
+                    bucket=anchor_bucket, scope=scope, name=name, version=version,
+                    defaults=dict(value=float(_d4(value)), is_final=is_final_bar)
+                )
+
+            # —— 工具：取历史“基值”序列（不包含当前 x_t），按时间从新到旧取 limit 条 —— #
+            def fetch_prev_base(scope: str, base_name: str, base_version: str, limit: int, anchor_dt):
+                # overall:iphone:<id> -> 读 OverallBar.mean
+                if scope.startswith("overall:iphone:"):
+                    ipid = int(scope.rsplit(":", 1)[-1])
+                    rows = (OverallBar.objects
+                            .filter(iphone_id=ipid, bucket__lt=anchor_dt)
+                            .order_by("-bucket").values_list("mean", flat=True)[:limit])
+                    return [float(v) for v in rows if v is not None]
+                # cohort:<slug> -> 读 CohortBar.mean
+                if scope.startswith("cohort:"):
+                    slug = scope.split(":", 1)[1]
+                    rows = (CohortBar.objects
+                            .filter(cohort__slug=slug, bucket__lt=anchor_dt)
+                            .order_by("-bucket").values_list("mean", flat=True)[:limit])
+                    return [float(v) for v in rows if v is not None]
+                # 其它 scope -> 读 FeatureSnapshot(base_name)
+                rows = (FeatureSnapshot.objects
+                        .filter(scope=scope, name=base_name, version=base_version, bucket__lt=anchor_dt)
+                        .order_by("-bucket").values_list("value", flat=True)[:limit])
+                return [float(v) for v in rows if v is not None]
+
+            # —— 数学器 —— #
+            def _ema_from_series(series_old_to_new: list, alpha: float) -> float:
+                ema = float(series_old_to_new[0])
+                for v in series_old_to_new[1:]:
+                    ema = alpha * float(v) + (1.0 - alpha) * ema
+                return ema
+
+            def _sma(series_old_to_new: list, W: int) -> Optional[float]:
+                if not series_old_to_new:
+                    return None
+                s = series_old_to_new[-W:] if W < len(series_old_to_new) else series_old_to_new
+                return sum(s) / float(len(s))
+
+            def _wma_linear(series_old_to_new: list, W: int) -> Optional[float]:
+                if not series_old_to_new:
+                    return None
+                s = series_old_to_new[-W:] if W < len(series_old_to_new) else series_old_to_new
+                n = len(s)
+                weights = list(range(1, n + 1))  # 越新权重越大
+                denom = float(sum(weights))
+                return sum(v * w for v, w in zip(s, weights)) / denom if denom > 0 else None
+
+            def _alpha_from_params(p: dict) -> float:
+                if p is None: p = {}
+                if p.get("alpha") is not None:
+                    a = float(p["alpha"])
+                    return max(0.0, min(1.0, a))
+                if p.get("window") is not None:
+                    W = max(1, int(p["window"]))
+                    return 2.0 / (W + 1.0)
+                if p.get("half_life") is not None:
+                    hl = float(p["half_life"])
+                    return 1.0 - 0.5 ** (1.0 / max(hl, 1e-9))
+                return 2.0 / (15.0 + 1.0)  # 默认
+
+            # —— 逐 spec × scope 计算 —— #
+            for sp in specs:
+                family = (sp["family"] or "").lower()
+                spec_slug = sp["slug"]
+                base_name = sp.get("base_name") or "mean"
+                params = sp.get("params") or {}
+                base_version = params.get("base_version", sp.get("version") or "v1")
+
+                # 统一窗口/最小样本数
+                W = int(params.get("window", 15))
+                min_count = int(params.get("min_count", params.get("min_periods", 1)))
+                weights_mode = str(params.get("weights", "linear")).lower()
+
+                for scope, x_t in base_now.items():
+                    # 拉取历史基值（新->旧），再转为旧->新，并在末尾追加当前 x_t
+                    prev_vals = fetch_prev_base(scope, base_name, base_version, W - 1, anchor_bucket)
+                    series_old_to_new = list(reversed(prev_vals)) + [float(x_t)]
+
+                    # 样本数校验
+                    if len(series_old_to_new) < max(1, min_count):
+                        timefeat_debug["skipped"].append(f"{family}:{spec_slug}@{scope}:insufficient({len(series_old_to_new)}<{min_count})")
+                        continue
+
+                    try:
+                        if family == "ema":
+                            alpha = _alpha_from_params(params)
+                            val = _ema_from_series(series_old_to_new, alpha)
+                            upsert_feat(scope, "ema", spec_slug, val)
+                            timefeat_debug["computed"] += 1
+
+                        elif family in ("wma", "wma_linear"):
+                            if weights_mode == "linear":
+                                val = _wma_linear(series_old_to_new, W)
+                            else:
+                                # 其它权重模式暂未实现 -> 后备为 SMA
+                                val = _sma(series_old_to_new, W)
+                            if val is None:
+                                timefeat_debug["skipped"].append(f"wma:{spec_slug}@{scope}:no_series")
+                                continue
+                            upsert_feat(scope, "wma", spec_slug, val)
+                            timefeat_debug["computed"] += 1
+
+                        elif family == "sma":
+                            val = _sma(series_old_to_new, W)
+                            if val is None:
+                                timefeat_debug["skipped"].append(f"sma:{spec_slug}@{scope}:no_series")
+                                continue
+                            upsert_feat(scope, "sma", spec_slug, val)
+                            timefeat_debug["computed"] += 1
+
+                        if len(timefeat_debug["samples"]) < 6:
+                            timefeat_debug["samples"].append({
+                                "scope": scope, "family": family, "spec": spec_slug,
+                                "W": W, "x": round(float(x_t), 2), "y": round(float(val), 2)
+                            })
+                    except Exception as _e:
+                        timefeat_debug["skipped"].append(f"{family}:{spec_slug}@{scope}:{repr(_e)}")
+
+            try:
+                notify_progress_all(data={
+                    "type": "feature_time_series_update",
+                    "bucket": ts_iso,
+                    "summary": {k: v for k, v in timefeat_debug.items() if k != "samples"},
+                    "samples": timefeat_debug["samples"],
+                })
+            except Exception:
+                pass
+        except Exception as e:
+            try:
+                notify_progress_all(data={
+                    "type": "feature_time_series_error",
+                    "bucket": ts_iso,
+                    "error": repr(e),
+                })
+            except Exception:
+                pass
+
+        # ================= 5) 布林带（Bollinger Bands，支持 center_mode="sma" / "ema" / "sma60" 等） =================
+        boll_debug = {"bucket": ts_iso, "computed": 0, "skipped": [], "samples": []}
+        try:
+            specs_boll = list(
+                FeatureSpec.objects
+                .filter(active=True, family__in=["boll", "bollinger"])
+                .values("slug", "base_name", "params", "version")
+            )
+
+            if not specs_boll:
+                boll_debug["skipped"].append("no_active_bollinger_spec")
+            else:
+                # 复用 base_now（见 Step 4）
+                # 若上面 Step 4 被跳过，你可以在此重新构造 base_now（略）
+
+                def _parse_center_mode(params: dict, default_W: int):
+                    cm = str(params.get("center_mode", "sma")).lower()
+                    # 支持 "sma" / "ema" / "sma60" / "ema30" 这种写法
+                    import re
+                    m = re.match(r"^(sma|ema)(\d+)?$", cm)
+                    if m:
+                        mode = m.group(1)
+                        w = int(m.group(2)) if m.group(2) else default_W
+                        return mode, w
+                    # 其它写法退化到 sma
+                    return "sma", default_W
+
+                for sp in specs_boll:
+                    spec_slug = sp["slug"]
+                    base_name = sp.get("base_name") or "mean"
+                    params = sp.get("params") or {}
+                    base_version = params.get("base_version", sp.get("version") or "v1")
+
+                    W = max(1, int(params.get("window", 20)))
+                    k = float(params.get("k", 2.0))
+                    min_periods = int(params.get("min_periods", W))
+                    center_mode, center_W = _parse_center_mode(params, W)
+
+                    for scope, x_t in base_now.items():
+                        # 最近 W-1 条历史 + 当前 x_t
+                        prev_vals = fetch_prev_base(scope, base_name, base_version, W - 1, anchor_bucket)
+                        series_old_to_new = list(reversed(prev_vals)) + [float(x_t)]
+                        if len(series_old_to_new) < max(1, min_periods):
+                            boll_debug["skipped"].append(
+                                f"{spec_slug}@{scope}:insufficient({len(series_old_to_new)}<{min_periods})")
+                            continue
+
+                        # 中轨
+                        if center_mode == "ema":
+                            alpha = 2.0 / (center_W + 1.0)
+                            mid = _ema_from_series(series_old_to_new, alpha)
+                        else:
+                            mid = _sma(series_old_to_new, center_W)
+
+                        # 标准差用总体（与你的 _pop_std 保持一致；series_old_to_new 已是旧->新）
+                        std = _pop_std(series_old_to_new) or 0.0
+                        up = mid + k * std
+                        low = mid - k * std
+                        width = up - low
+
+                        FeatureSnapshot.objects.update_or_create(
+                            bucket=anchor_bucket, scope=scope, name="boll_mid", version=spec_slug,
+                            defaults=dict(value=float(_d4(mid)), is_final=is_final_bar)
+                        )
+                        FeatureSnapshot.objects.update_or_create(
+                            bucket=anchor_bucket, scope=scope, name="boll_up", version=spec_slug,
+                            defaults=dict(value=float(_d4(up)), is_final=is_final_bar)
+                        )
+                        FeatureSnapshot.objects.update_or_create(
+                            bucket=anchor_bucket, scope=scope, name="boll_low", version=spec_slug,
+                            defaults=dict(value=float(_d4(low)), is_final=is_final_bar)
+                        )
+                        FeatureSnapshot.objects.update_or_create(
+                            bucket=anchor_bucket, scope=scope, name="boll_width", version=spec_slug,
+                            defaults=dict(value=float(_d4(width)), is_final=is_final_bar)
+                        )
+
+                        boll_debug["computed"] += 1
+                        if len(boll_debug["samples"]) < 6:
+                            boll_debug["samples"].append({
+                                "scope": scope, "spec": spec_slug, "W": W, "center": f"{center_mode}{center_W}",
+                                "mid": round(mid, 2), "up": round(up, 2), "low": round(low, 2)
+                            })
+
+            try:
+                notify_progress_all(data={
+                    "type": "feature_boll_update",
+                    "bucket": ts_iso,
+                    "summary": {k: v for k, v in boll_debug.items() if k != "samples"},
+                    "samples": boll_debug["samples"],
+                })
+            except Exception:
+                pass
+        except Exception as e:
+            try:
+                notify_progress_all(data={
+                    "type": "feature_boll_error",
+                    "bucket": ts_iso,
+                    "error": repr(e),
+                })
+            except Exception:
+                pass
+
+
+
     return {
         "ts_iso": ts_iso,
         "ok": ok,
@@ -783,7 +1123,8 @@ def psta_process_minute_bucket(
 def psta_finalize_buckets(
     results: List[Dict[str, Any]],
     job_id: str,
-    ts_iso: str
+    ts_iso: str,
+    agg_ctx: Optional[dict] = None,
 ) -> Dict[str, Any]:
     """
     - 作用：在一批“按分钟对齐”的子任务完成后，汇总每个分钟桶的结果，生成给前端的图表增量（真实点 + 必要的“影子点”），并通过通知通道广播最终 done 消息。
@@ -835,6 +1176,12 @@ def psta_finalize_buckets(
       - 返回 payload，便于链路调试或上层任务使用。
     """
     from collections import defaultdict, Counter
+
+    # --- 标准化 results（有时不是 list） ---
+    if isinstance(results, dict):
+        results = [results]
+    elif results is None:
+        results = []
     # === 汇总计数 ===
     total_buckets = len(results or [])
     total_ok = sum(int(r.get("ok", 0)) for r in results or [])
@@ -978,88 +1325,77 @@ def psta_finalize_buckets(
 # 父任务：chord 并行 + 回调（保持你已有写法）
 # -----------------------------------------------
 
-AGG_STEP_MINUTES = 15        # 想切 5 分钟就改成 5
-DO_AGG_ON_BOUNDARY_ONLY = True  # True=仅在整步长分钟做聚合；False=每个1min都聚合（你当前逻辑）
 
 
-def _floor_to_step(dt: timezone.datetime, step: int) -> timezone.datetime:
-    return dt - timedelta(minutes=dt.minute % step,
-                          seconds=dt.second, microseconds=dt.microsecond)
+def _to_aware(s: str) -> timezone.datetime:
+    from django.utils.dateparse import parse_datetime
+    from django.utils.timezone import make_aware, is_naive
+    dt = parse_datetime(s)
+    if dt is None:
+        raise ValueError(f"bad datetime iso: {s}")
+    return make_aware(dt) if is_naive(dt) else dt
+
+def _floor_to_step(dt: timezone.datetime, step_min: int) -> timezone.datetime:
+    return dt - timezone.timedelta(minutes=dt.minute % step_min, seconds=dt.second, microseconds=dt.microsecond)
+
+def _rolling_start(dt: timezone.datetime, step_min: int) -> timezone.datetime:
+    return dt.replace(second=0, microsecond=0) - timezone.timedelta(minutes=max(step_min - 1, 0))
+
+
 
 @shared_task(bind=True, name="AppleStockChecker.tasks.batch_generate_psta_same_ts")
 def batch_generate_psta_same_ts(
     self,
     *,
     job_id: Optional[str] = None,
-    items: Optional[List[Dict[str, Any]]] = None,   # 兼容
+    items: Optional[List[Dict[str, Any]]] = None,
     timestamp_iso: Optional[str] = None,
-    chunk_size: int = 200,                          # 兼容
+    chunk_size: int = 200,
     query_window_minutes: int = 15,
     shop_ids: Optional[List[int]] = None,
     iphone_ids: Optional[List[int]] = None,
     max_items: Optional[int] = None,
-    do_agg: bool = True,
-    agg_start_iso: Optional[str] = None,
-    agg_minutes: int = 1
+    # ✅ 新：聚合控制
+    agg_minutes: int = 15,                 # 聚合步长
+    agg_mode: str = "boundary",            # 'boundary'|'rolling'|'off'
+    force_agg: bool = False,               # 强制本轮聚合
 ) -> Dict[str, Any]:
-    """
-    总体作用:
-    - 这是一个 Celery 编排任务（父任务），按同一“分钟时间戳”对齐回收价数据，切分为“按分钟的子任务”并行处理，最后用回调汇总结果并通过广播通知前端。
 
-    主要步骤:
-    1) 任务标识与目标时间
-       - job_id 取入参或当前任务 id。
-       - ts_iso 取入参 timestamp_iso，若无则用 nearest_past_minute_iso()（最近的整分钟）。
-
-    2) 收集待处理数据
-       - 调 collect_items_for_psta(...)，得到打包结果 pack。
-       - 其中 rows 是轻量数据列表；bucket_minute_key 是“分钟 → key 映射 → 行索引”的桶结构。
-
-    3) 构建子任务列表（按分钟桶）
-       - 遍历 bucket_minute_key 中的每个分钟 minute_iso。
-       - 根据索引收集该分钟对应的行，抽取必要字段：shop_id、iphone_id、recorded_at、price_new。
-       - 为该分钟创建一个子任务 psta_process_minute_bucket.s(...)。
-       - 每个分钟桶对应一个子任务，形成 subtasks 列表。
-
-    4) 广播开始进度（可选）
-       - notify_progress_all 发送 status=running，包含桶数与基准时间。
-
-    5) 无任务时的快速返回
-       - 若 subtasks 为空：广播一个 done（空摘要和空图表增量），并直接返回该空摘要。
-
-    6) 并行执行与回调汇总
-       - 使用 chord(subtasks)(callback) 并行执行所有分钟子任务。
-       - callback 为 psta_finalize_buckets.s(task_job_id, ts_iso)：
-         - 汇总每桶的 ok/failed 与错误直方图；
-         - 聚合图表点，并在 ts_iso 补“影子点”（某序列该分钟没有真实点时，用最近真实价格补一条仅用于前端展示的点）；
-         - 通过 notify_progress_all 广播最终 done + chart_delta。
-
-    7) 返回编排信息
-       - 立即返回 {timestamp, total_buckets, job_id, chord_id}，前端可用 chord_id 跟踪，最终结果依赖广播消息。
-
-    要点:
-    - 使用 Celery chord 实现“并行子任务 + 汇总回调”的扇出/汇合，不阻塞等待结果（不调用 .get()）。
-    - 按分钟分桶，有利于并行与数据库行级锁的分散。
-    - 广播环节 try/except 防御，避免通知失败影响主流程。
-    """
     task_job_id = job_id or self.request.id
     ts_iso = timestamp_iso or nearest_past_minute_iso()
+    MODE = (agg_mode or "boundary").lower()
 
-    pack = collect_items_for_psta(
+    pack = (collect_items_for_psta(
         window_minutes=query_window_minutes,
         timestamp_iso=ts_iso,
         shop_ids=shop_ids,
         iphone_ids=iphone_ids,
         max_items=max_items,
-    )[0]
-    rows = pack["rows"]
-    bucket_minute_key = pack.get("bucket_minute_key") or {}
+    ) or [{}])[0]
 
-    # 按“分钟桶”构建子任务列表
+    rows = pack.get("rows") or []
+    bucket_minute_key: Dict[str, Dict[str, List[int]]] = pack.get("bucket_minute_key") or {}
+
+    # 广播聚合上下文（便于在前端/日志中确认）
+    dt0 = _to_aware(ts_iso)
+    step0 = _floor_to_step(dt0, int(agg_minutes))
+    ctx = {
+        "agg_minutes": int(agg_minutes),
+        "agg_mode": MODE,
+        "force_agg": bool(force_agg),
+        "bucket_start": step0.isoformat(),
+        "bucket_end": (step0 + timezone.timedelta(minutes=int(agg_minutes))).isoformat(),
+    }
+    try:
+        notify_progress_all(data={"type":"agg_ctx","timestamp":ts_iso,"job_id":task_job_id,"ctx":ctx})
+    except Exception:
+        pass
+
+    # 构建子任务（注意：即使该分钟无行，但需要聚合，也要下发“空行聚合”任务）
     subtasks: List = []
     for minute_iso, key_map in bucket_minute_key.items():
         minute_rows: List[Dict[str, Any]] = []
-        for _, idx_list in key_map.items():
+        for _, idx_list in (key_map or {}).items():
             for i in idx_list:
                 if 0 <= i < len(rows):
                     r = rows[i]
@@ -1069,69 +1405,53 @@ def batch_generate_psta_same_ts(
                         "recorded_at": r.get("recorded_at"),
                         "price_new": r.get("price_new", r.get("New_Product_Price")),
                     })
-        if not minute_rows:
-            continue
 
-        # === 是否是 15 分钟边界？ ===
         mdt = _to_aware(minute_iso)
-        step0 = _floor_to_step(mdt, AGG_STEP_MINUTES)
-        is_boundary = (mdt == step0)
+        boundary = _floor_to_step(mdt, int(agg_minutes))
+        is_boundary = (mdt == boundary)
 
-        # 只在边界时做聚合；否则只做PSTA写入/图表点，不跑重聚合
-        do_agg = (not DO_AGG_ON_BOUNDARY_ONLY) or is_boundary
+        if MODE == "off":
+            do_agg_local = False
+            agg_start_iso = None
+        elif MODE == "rolling":
+            do_agg_local = True
+            agg_start_iso = _rolling_start(mdt, int(agg_minutes)).isoformat()
+        else:  # boundary
+            do_agg_local = bool(force_agg) or is_boundary
+            agg_start_iso = boundary.isoformat()
 
-        subtasks.append(
-            psta_process_minute_bucket.s(
-                ts_iso=minute_iso,
-                rows=minute_rows,
-                job_id=task_job_id,
-                do_agg=do_agg,
-                agg_start_iso=step0.isoformat(),
-                agg_minutes=AGG_STEP_MINUTES
+        # 若 minute_rows 空，但 do_agg_local=True（例如边界分钟），仍然下发“仅聚合”的子任务
+        if minute_rows or do_agg_local:
+            subtasks.append(
+                psta_process_minute_bucket.s(
+                    ts_iso=minute_iso,
+                    rows=minute_rows,
+                    job_id=task_job_id,
+                    do_agg=do_agg_local,
+                    agg_start_iso=agg_start_iso,
+                    agg_minutes=int(agg_minutes),
+                )
             )
-        )
 
-    total_buckets = len(subtasks)
-
-    # 开始广播（可选）
     try:
-        notify_progress_all(data={
-            "status": "running",
-            "step": "dispatch_buckets",
-            "progress": 0,
-            "buckets": total_buckets,
-            "timestamp": ts_iso
-        })
+        notify_progress_all(data={"status":"running","step":"dispatch_buckets","buckets":len(subtasks),"timestamp":ts_iso,"agg":ctx})
     except Exception:
         pass
 
     if not subtasks:
-        # 无桶可处理，直接返回空摘要
         empty = {"timestamp": ts_iso, "total_buckets": 0, "ok": 0, "failed": 0, "by_bucket": []}
         try:
             notify_progress_all(data={
-                "status": "done",
-                "progress": 100,
-                "summary": empty,
-                "chart_delta": {"job_id": task_job_id, "timestamp": ts_iso, "series_delta": [], "meta": {"total_points": 0, "clipped": False}}
+                "status":"done","progress":100,"summary":empty,
+                "chart_delta":{"job_id":task_job_id,"timestamp":ts_iso,"series_delta":[],"meta":{"total_points":0,"shadow_points":0,"clipped":False}}
             })
         except Exception:
             pass
         return empty
 
-    # ★ 使用 chord 并行执行 + 汇总回调，不要 .get()
-    callback = psta_finalize_buckets.s(task_job_id, ts_iso)
+    callback = psta_finalize_buckets.s(job_id=task_job_id, ts_iso=ts_iso, agg_ctx=ctx)   # 可把 ctx 传给回调（可选）
     chord_result = chord(subtasks)(callback)
-
-    # 返回“编排任务”信息；前端通过广播拿最终 summary+chart_delta
-    return {
-        "timestamp": ts_iso,
-        "total_buckets": total_buckets,
-        "job_id": task_job_id,
-        "chord_id": chord_result.id,
-    }
-
-
+    return {"timestamp": ts_iso, "total_buckets": len(subtasks), "job_id": task_job_id, "chord_id": chord_result.id}
 #-----------------------------------------------------
 #--------------------------------------------------------
 #-----------------------------------------------------------

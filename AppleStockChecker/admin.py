@@ -104,39 +104,71 @@ class PurchasingShopTimeAnalysisAdmin(admin.ModelAdmin):
     autocomplete_fields = ("shop", "iphone")
 
 #
-# @admin.register(OverallBar)
-# class OverallBarAdmin(admin.ModelAdmin):
-#     list_display = (
-#         "bucket",
-#         "mean",
-#         "median",
-#
-#     )
+@admin.register(OverallBar)
+class OverallBarAdmin(admin.ModelAdmin):
+    list_display = (
+        "bucket",
+        "iphone",
+        "mean",
+        "median",
+        "std",
+        "shop_count",
+        "dispersion",
+        "is_final",
+        "updated_at"
+    )
+    list_filter = ("bucket","iphone", "is_final", "updated_at")
 
-# @admin.register(FeatureSnapshot)
-# class FeatureSnapshotAdmin(admin.ModelAdmin):
-#     list_display = (
-#
-#     )
-#
-#
-#
-# @admin.register(FeatureSnapshot)
-# class FeatureSnapshotAdmin(admin.ModelAdmin):
-#     list_display = (
-#
-#     )
 
-# @admin.register(ModelArtifact)
-# class ModelArtifactAdmin(admin.ModelAdmin):
-#     list_display = (
-#
-#     )
-# @admin.register(ForecastSnapshot)
-# class ForecastSnapshotAdmin(admin.ModelAdmin):
-#     list_display = (
-#
-#     )
+
+@admin.register(FeatureSnapshot)
+class FeatureSnapshotAdmin(admin.ModelAdmin):
+    list_display = ("bucket", "scope", "name", "value", "version", "is_final")
+    # 1) 明确使用合适的过滤器类：
+    list_filter = (
+        ("bucket", admin.DateFieldListFilter),          # DateTime -> DateFieldListFilter
+        ("scope", admin.AllValuesFieldListFilter),      # 精确匹配 scope
+        ("name", admin.AllValuesFieldListFilter),       # 'mean' / 'ema' / 'wma_linear' / ...
+        ("version", admin.AllValuesFieldListFilter),    # 使用你在 FeatureSpec.slug 的版本
+        "is_final",
+    )
+    # 2) 搜索（常用）
+    search_fields = ("scope", "name", "version")
+    # 3) 日期层级（支持按日跳转）
+    date_hierarchy = "bucket"
+
+    # 4) 如需修正“今天/过去7天”与 UTC 的错位，可重写 queryset 或增加一个后台时区提示
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        # 如果你的 TIME_ZONE='UTC' 但想按 JST 理解 bucket 的“日”，可以在前端过滤里用绝对时间。
+        # 这里不做强制转换，保留默认（Django 会按当前 TIME_ZONE 做 __date 过滤）
+        return qs
+
+
+@admin.register(ModelArtifact)
+class ModelArtifactAdmin(admin.ModelAdmin):
+    list_display = (
+        "model_name",
+        "version",
+        "trained_at",
+        "params_blob",
+        "metrics_json",
+    )
+    list_filter = ("model_name", "version", "trained_at")
+
+@admin.register(ForecastSnapshot)
+class ForecastSnapshotAdmin(admin.ModelAdmin):
+    list_display = (
+        "bucket",
+        "model_name",
+        "version",
+        "horizon_min",
+        "yhat",
+        "yhat_var",
+        "is_final"
+    )
+    list_filter = ("bucket", "model_name", "version","is_final")
+
 
 @admin.register(Cohort)
 class CohortAdmin(admin.ModelAdmin):
@@ -149,11 +181,22 @@ class CohortMemberAdmin(admin.ModelAdmin):
     list_filter = ("cohort",)
     search_fields = ("cohort__slug", "iphone__part_number")
 
-# @admin.register(CohortBar)
-# class CohortBarAdmin(admin.ModelAdmin):
-#     list_display = (
-#"id", "cohort", "iphone", "weight"
-#     )
+@admin.register(CohortBar)
+class CohortBarAdmin(admin.ModelAdmin):
+    list_display = (
+        "bucket",
+        "cohort",
+        "mean",
+        "median",
+        "std",
+        "n_models",
+        "shop_count_agg",
+        "dispersion",
+        "is_final",
+        "updated_at"
+    )
+    list_filter = ("bucket","n_models","shop_count_agg","is_final","updated_at")
+
 
 @admin.register(ShopWeightProfile)
 class ShopWeightProfileAdmin(admin.ModelAdmin):

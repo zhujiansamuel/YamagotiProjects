@@ -347,6 +347,7 @@ class ShopWeightProfile(models.Model):
     def __str__(self):
         return self.title or self.slug
 
+
 class ShopWeightItem(models.Model):
     profile = models.ForeignKey(ShopWeightProfile, on_delete=models.CASCADE, related_name='items')
     shop = models.ForeignKey('SecondHandShop', on_delete=models.CASCADE)

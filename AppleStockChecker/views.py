@@ -30,14 +30,16 @@ from rest_framework.views import APIView
 
 from rest_framework.parsers import FileUploadParser
 from rest_framework.parsers import BaseParser
-from rest_framework import permissions
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 from rest_framework.decorators import parser_classes
 from rest_framework.parsers import JSONParser
 from rest_framework.permissions import AllowAny
 from AppleStockChecker.tasks.webscraper_tasks import task_ingest_json_shop1
 from rest_framework.permissions import IsAuthenticatedOrReadOnly
-from .models import PurchasingShopTimeAnalysis
+from django.db import transaction
+from django.db.models import Count
+from rest_framework import viewsets, permissions, decorators, response, status, filters
+
 from .serializers import (
     PurchasingShopTimeAnalysisSerializer,
     PSTACompactSerializer,
@@ -48,7 +50,9 @@ from .serializers import (
     FeatureSnapshotSerializer,
     FeaturePointSerializer,
     CohortSerializer,
-    ShopWeightProfileSerializer
+    ShopWeightProfileSerializer,
+
+
 )
 from .filters import PurchasingShopTimeAnalysisFilter
 import io
@@ -1859,6 +1863,24 @@ class ShopWeightProfileListViewSet(mixins.ListModelMixin, viewsets.GenericViewSe
     serializer_class = ShopWeightProfileSerializer
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["slug"]
+
+class ShopWeightItemListViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
+    queryset = ShopWeightItem.objects.all().order_by("id")
+    serializer_class = ShopWeightProfileSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["slug"]
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

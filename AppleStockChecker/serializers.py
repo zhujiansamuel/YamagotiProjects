@@ -396,3 +396,162 @@ class ShopWeightProfileSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     slug = serializers.CharField()
     title = serializers.CharField()
+
+
+# —— 一些展示用的小工具 —— #
+def _cap_label_from_gb(cap_gb) -> str:
+    try:
+        return f"{int(cap_gb)}GB"
+    except Exception:
+        return ""
+
+def _slug_to_title(slug: str) -> str:
+    if not slug:
+        return ""
+    # 例：iphone_17_pro_max_256 -> Iphone 17 Pro Max 256
+    return slug.replace("_", " ").replace("-", " ").title()
+
+
+# # ---- iPhone 选项 ----
+# class IphoneOptionSerializer(serializers.ModelSerializer):
+#     capacity_label = serializers.SerializerMethodField()
+#     label = serializers.SerializerMethodField()
+#
+#     class Meta:
+#         model = Iphone
+#         fields = ("id", "part_number", "model_name", "capacity_gb", "capacity_label", "color", "label")
+#
+#     def get_capacity_label(self, obj):
+#         return f"{obj.capacity_gb}GB" if obj.capacity_gb is not None else None
+#
+#     def get_label(self, obj):
+#         parts = [obj.part_number, obj.model_name, self.get_capacity_label(obj), obj.color]
+#        return " ｜ ".join([p for p in parts if p])
+
+# ---- 单店选项 ----
+class ShopOptionSerializer(serializers.ModelSerializer):
+    label = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SecondHandShop
+        fields = ("id", "name", "label")
+
+    def get_label(self, obj):
+        return obj.name or f"Shop#{obj.id}"
+
+# ---- 店铺组合（Profile）及条目 ----
+class ShopWeightItemOptionSerializer(serializers.ModelSerializer):
+    shop_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ShopWeightItem
+        fields = ("shop_id", "weight", "display_index", "shop_name")
+
+    def get_shop_name(self, obj):
+        return getattr(obj.shop, "name", None)
+
+# ---- Cohort（iPhone 组合）及成员 ----
+class CohortMemberOptionSerializer(serializers.ModelSerializer):
+    iphone_label = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CohortMember
+        fields = ("iphone_id", "weight", "iphone_label")
+
+    def get_iphone_label(self, obj):
+        ip = obj.iphone
+        if not ip:
+            return None
+        cap = f"{ip.capacity_gb}GB" if ip.capacity_gb is not None else None
+        parts = [ip.part_number, ip.model_name, cap, ip.color]
+        return " ｜ ".join([p for p in parts if p])
+
+# ===== iPhone 下拉项 =====
+class IphoneOptionSerializer(serializers.ModelSerializer):
+    label = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Iphone
+        fields = ("id", "part_number", "model_name", "capacity_gb", "color", "label")
+
+    def get_label(self, obj: Iphone) -> str:
+        # 例：iPhone 17 Pro Max 256GB ｜ MG864J/A ｜ Natural
+        model = obj.model_name or ""
+        cap   = _cap_label_from_gb(obj.capacity_gb)
+        pn    = obj.part_number or ""
+        color = obj.color or ""
+        pieces = [p for p in [model, cap] if p]
+        left = " ".join(pieces) if pieces else pn
+        if pn and pn not in left:
+            left = f"{left} ｜ {pn}"
+        if color:
+            left = f"{left} ｜ {color}"
+        return left or f"#{obj.id}"
+
+# ===== ShopWeightProfile.items 的嵌套项 =====
+class ShopWeightItemInlineSerializer(serializers.ModelSerializer):
+    shop_id    = serializers.IntegerField(source="shop.id", read_only=True)
+    shop_name  = serializers.CharField(source="shop.name", read_only=True)
+
+    class Meta:
+        model = ShopWeightItem
+        fields = ("shop_id", "shop_name", "weight", "display_index")
+
+# ===== ShopWeightProfile 顶层（带 items[]） =====
+class ShopWeightProfileOptionSerializer(serializers.ModelSerializer):
+    label = serializers.SerializerMethodField()
+    items = ShopWeightItemInlineSerializer(many=True)
+
+    class Meta:
+        model  = ShopWeightProfile
+        fields = ("id", "slug", "title", "label", "items")
+
+    def get_label(self, obj: ShopWeightProfile) -> str:
+        return (obj.title or obj.slug)
+
+# ===== Cohort.members 的嵌套项 =====
+class CohortMemberInlineSerializer(serializers.ModelSerializer):
+    iphone_id    = serializers.IntegerField(source="iphone.id", read_only=True)
+    part_number  = serializers.CharField(source="iphone.part_number", read_only=True)
+    model_name   = serializers.CharField(source="iphone.model_name", read_only=True)
+    capacity_gb  = serializers.IntegerField(source="iphone.capacity_gb", read_only=True)
+    color        = serializers.CharField(source="iphone.color", read_only=True)
+    label        = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = CohortMember
+        fields = ("iphone_id", "part_number", "model_name", "capacity_gb", "color", "weight", "label")
+
+    def get_label(self, obj: CohortMember) -> str:
+        cap = _cap_label_from_gb(getattr(obj.iphone, "capacity_gb", None))
+        pn  = getattr(obj.iphone, "part_number", "") or ""
+        clr = getattr(obj.iphone, "color", "") or ""
+        base = " ".join([p for p in [obj.iphone.model_name, cap] if p])
+        if pn:
+            base = f"{base} ｜ {pn}"
+        if clr:
+            base = f"{base} ｜ {clr}"
+        return base.strip() or f"iphone:{obj.iphone_id}"
+
+# ===== Cohort 顶层（带 members[]） =====
+class CohortOptionSerializer(serializers.ModelSerializer):
+    # 有些项目里 Cohort 可能没有 title 字段，这里统一兜底
+    title = serializers.SerializerMethodField()
+    label = serializers.SerializerMethodField()
+    members = CohortMemberInlineSerializer(many=True)
+
+    class Meta:
+        model  = Cohort
+        fields = ("id", "slug", "title", "label", "members")
+
+    def get_title(self, obj: Cohort) -> str:
+        return getattr(obj, "title", None) or _slug_to_title(obj.slug)
+
+    def get_label(self, obj: Cohort) -> str:
+        # 例：iPhone 17 Pro Max 256GB（根据你的 title 或 slug 生成）
+        return self.get_title(obj)
+
+
+
+
+

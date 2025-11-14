@@ -85,65 +85,66 @@ def dispatch_psta_batch_same_ts(request):
     '''
     body = request.data or {}
     job_id = body.get("job_id") or uuid4().hex
+
     async_res = batch_generate_psta_same_ts.apply_async(
         kwargs={
-            "job_id": job_id,                                 # ← 任务参数
-            "items": body.get("items"),                       # 可为 None：任务内 collect_items_for_psta
-            "timestamp_iso": body.get("timestamp_iso"),       # 可省略：任务内取最近过去整分钟
-            "chunk_size": body.get("chunk_size", 200),        # 兼容旧签名（并行桶版不会用到）
+            "job_id": job_id,
+            "items": body.get("items"),
+            "timestamp_iso": body.get("timestamp_iso"),
+            "chunk_size": body.get("chunk_size", 200),
             "query_window_minutes": body.get("query_window_minutes", 15),
             "shop_ids": body.get("shop_ids"),
             "iphone_ids": body.get("iphone_ids"),
             "max_items": body.get("max_items"),
+
+            # ✅ 新参数（统一用这三个）
+            "agg_minutes": int(body.get("agg_minutes", 15)),  # 聚合步长（1/5/15）
+            "agg_mode": (body.get("agg_mode") or "boundary").lower(),  # 'boundary' | 'rolling' | 'off'
+            "force_agg": bool(body.get("force_agg", False)),  # 强制本轮聚合
         },
-        task_id=job_id,                                       # ← Celery 的 task_id 与 job_id 一致
+        task_id=job_id,
     )
-
-    # 3) 返回：task_id 与 job_id 相同，便于前端订阅 /ws/task/<job_id>/ 或记录追踪
-    return Response(
-        {"task_id": async_res.id, "job_id": job_id},
-        status=status.HTTP_202_ACCEPTED,
-    )
+    return Response({"task_id": async_res.id, "job_id": job_id}, status=status.HTTP_202_ACCEPTED)
 
 
-@api_view(["POST"])
-@permission_classes([AllowAny])
-def dispatch_psta_range(request):
-    """
-    POST body:
-      {
-        "start": "2025-10-01T00:00:00+09:00",
-        "end":   "2025-11-01T00:00:00+09:00",
-        "shop_ids": [...],         # 可选
-        "iphone_ids": [...],       # 可选
-        "step_minutes": 1,         # 可选；15分钟桶可以传15
-        "query_window_minutes": 15,# 拉取窗口
-        "max_items": 1000          # 限流
-      }
-    """
-    body = request.data or {}
-    job_id = body.get("job_id") or uuid4().hex
-    start = _to_aware(body["start"])
-    end   = _to_aware(body["end"])
-    step  = int(body.get("step_minutes", 1))
-    # 生成时间序列（建议倒序），并发控制交给 Celery
-    ts_list = []
-    cur = end
-    while cur >= start:
-        ts_list.append(cur.isoformat(timespec="seconds"))
-        cur = cur - timezone.timedelta(minutes=step)
-
-    # 组装并发子任务（或分批次多次 apply_async）
-    subtasks = [
-        batch_generate_psta_same_ts.s(
-            job_id=job_id,
-            timestamp_iso=ts_iso,
-            query_window_minutes=body.get("query_window_minutes", 15),
-            shop_ids=body.get("shop_ids"),
-            iphone_ids=body.get("iphone_ids"),
-            max_items=body.get("max_items"),
-        ) for ts_iso in ts_list
-    ]
-    # 并发数可用 chord+chunks 控制；或者逐批次 apply_async
-    chord_res = chord(subtasks)(psta_finalize_buckets.s(job_id, ts_list[0]))
-    return Response({"job_id": job_id, "count": len(ts_list), "chord_id": chord_res.id}, status=202)
+# @api_view(["POST"])
+# @permission_classes([AllowAny])
+# def dispatch_psta_range(request):
+#     """
+#     POST body:
+#       {
+#         "start": "2025-10-01T00:00:00+09:00",
+#         "end":   "2025-11-01T00:00:00+09:00",
+#         "shop_ids": [...],         # 可选
+#         "iphone_ids": [...],       # 可选
+#         "step_minutes": 1,         # 可选；15分钟桶可以传15
+#         "query_window_minutes": 15,# 拉取窗口
+#         "max_items": 1000          # 限流
+#       }
+#     """
+#     body = request.data or {}
+#     job_id = body.get("job_id") or uuid4().hex
+#     start = _to_aware(body["start"])
+#     end   = _to_aware(body["end"])
+#     step  = int(body.get("step_minutes", 1))
+#     # 生成时间序列（建议倒序），并发控制交给 Celery
+#     ts_list = []
+#     cur = end
+#     while cur >= start:
+#         ts_list.append(cur.isoformat(timespec="seconds"))
+#         cur = cur - timezone.timedelta(minutes=step)
+#
+#     # 组装并发子任务（或分批次多次 apply_async）
+#     subtasks = [
+#         batch_generate_psta_same_ts.s(
+#             job_id=job_id,
+#             timestamp_iso=ts_iso,
+#             query_window_minutes=body.get("query_window_minutes", 15),
+#             shop_ids=body.get("shop_ids"),
+#             iphone_ids=body.get("iphone_ids"),
+#             max_items=body.get("max_items"),
+#         ) for ts_iso in ts_list
+#     ]
+#     # 并发数可用 chord+chunks 控制；或者逐批次 apply_async
+#     chord_res = chord(subtasks)(psta_finalize_buckets.s(job_id, ts_list[0]))
+#     return Response({"job_id": job_id, "count": len(ts_list), "chord_id": chord_res.id}, status=202)

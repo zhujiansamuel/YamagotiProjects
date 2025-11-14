@@ -49,3 +49,7 @@ class TemplateChartjsView(TemplateView):
 
 class AnalysisDashboardView(TemplateView):
     template_name = "apple_stock/analysis_dashboard.html"
+
+
+class StatisticalDataSummaryView(TemplateView):
+    template_name = "apple_stock/EChart.html"
