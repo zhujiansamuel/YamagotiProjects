@@ -512,6 +512,15 @@
     const ONE_DAY = 24 * 3600 * 1000;
 
 
+
+const JST_OFFSET_MS = 9 * 60 * 60 * 1000; // +09:00
+
+// 把“UTC 时间戳 ms”转换成“JST 对应的 Date”
+// 再用 getUTC* 读出年月日，避免受到浏览器本地时区影响
+function utcMsToJstDate(ms) {
+    return new Date(ms + JST_OFFSET_MS);
+}
+
     // ★ Y 轴随缩放自适应（带留白，可选软钳制）
     const YPAD_RATIO = 0.1; // 上下各 6% 视觉留白
 
@@ -695,10 +704,12 @@ function adjustGridTopForLegend(inst) {
         return Math.floor(d.getTime() / 60000) * 60000;
     }
 
-    function toIsoLocal(dtStr) {
-        if (!dtStr || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dtStr)) return '';
-        return `${dtStr}:00+09:00`;
-    }
+function toIsoLocal(dtStr) {
+    // dtStr 形如 "2025-10-20T10:00"，我们认为它是 JST 的本地时间
+    if (!dtStr || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dtStr)) return '';
+    // 加上 +09:00 让 JS 当成 JST 来解析，再用 toISOString() 变成 UTC
+    return new Date(`${dtStr}:00+09:00`).toISOString().replace('.000Z', 'Z');
+}
 
     function toMillis(s) {
         const t = new Date(s).valueOf();
@@ -706,10 +717,12 @@ function adjustGridTopForLegend(inst) {
     }
 
     function verticalTickFormatter(ms) {
-        const d = new Date(ms);
-        const m = d.getMonth() + 1, day = d.getDate(), w = WDAY[d.getDay()];
-        return `${m}\n月\n${day}日\n（${w}）`;
-    }
+    const d = utcMsToJstDate(ms);  // ← 固定按 JST 看这条时间线
+    const m = d.getUTCMonth() + 1;
+    const day = d.getUTCDate();
+    const w = WDAY[d.getUTCDay()];
+    return `${m}\n月\n${day}日\n（${w}）`;
+}
 
     // === 统计图：初始化 ===
     const statsChart = echarts.init(document.getElementById('chart_stats'));
@@ -2444,30 +2457,34 @@ function adjustGridTopForLegend(inst) {
     });
 
     /* 自动把 end 输入同步到“当前最近整分钟（JST）”，若页面存在这些输入框 */
-    function floorToMinute(date = new Date()) {
-        return new Date(Math.floor(date.getTime() / 60000) * 60000);
-    }
 
-    function toInputValueJST(date) {
-        const tzOffsetMin = date.getTimezoneOffset(), jstOffsetMin = 9 * 60;
-        const jstTime = new Date(date.getTime() + (jstOffsetMin + tzOffsetMin) * 60000);
-        const y = jstTime.getUTCFullYear(), m = String(jstTime.getUTCMonth() + 1).padStart(2, '0'),
-            d = String(jstTime.getUTCDate()).padStart(2, '0'), hh = String(jstTime.getUTCHours()).padStart(2, '0'),
-            mm = String(jstTime.getUTCMinutes()).padStart(2, '0');
-        return `${y}-${m}-${d}T${hh}:${mm}`;
-    }
 
-    function nearestPastMinuteInputValueJST() {
-        return toInputValueJST(floorToMinute(new Date()));
-    }
+    function toInputValueJST(dateUtc) {
+    const msJst = dateUtc.getTime() + JST_OFFSET_MS;
+    const d = new Date(msJst);
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(d.getUTCDate()).padStart(2, '0');
+    const hh = String(d.getUTCHours()).padStart(2, '0');
+    const mm = String(d.getUTCMinutes()).padStart(2, '0');
+    return `${y}-${m}-${day}T${hh}:${mm}`;
+}
+function floorToMinute(date = new Date()) {
+    return new Date(Math.floor(date.getTime() / 60000) * 60000);
+}
+
+function nearestPastMinuteInputValueJST() {
+    const flooredUtc = floorToMinute(new Date());  // 这个 Date 代表“当前这一刻”，独立于时区
+    return toInputValueJST(flooredUtc);            // 强制转成 JST 文本
+}
 
     function syncAllEndToNow() {
-        const v = nearestPastMinuteInputValueJST();
-        ['end', 's2-end', 's3-end', 's4-end', 's5-end'].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.value = v;
-        });
-    }
+    const v = nearestPastMinuteInputValueJST();
+    ['end', 's2-end', 's3-end', 's4-end', 's5-end'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = v;
+    });
+}
 
     let END_AUTO_TIMER = null;
 

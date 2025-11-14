@@ -440,127 +440,152 @@ SIMPLEPRO_FK_ASYNC_DATA = True
 # SIMPLEUI_HOME_PAGE = "/admin-home"
 SIMPLEUI_HOME_ICON = 'fa fa-user'
 
-# SIMPLEUI_CONFIG = {
-#     'system_keep': True,
-#     'dynamic': False,
-#     'menu_display': ['iPhone関連データ', ],
-#     'menus':
-#         [
-#             {
-#                 'name': 'iPhone関連データ',
-#                 'icon': 'fa-solid fa-mobile-screen-button',
-#                 'models': [{'name': '中古店価格推移(',
-#                             'icon': 'fa-solid fa-chart-line',
-#                             'url': '/AppleStockChecker/analysis-dashboard/',
-#                             },
-#                            {'name': '实时图表',
-#                             'icon': 'fa-solid fa-store',
-#                             'url': '/AppleStockChecker/template-chartjs/',
-#                             },
-#                            {'name': '中古店価格ボード',
-#                             'icon': 'fa-solid fa-table-columns',
-#                             'url': '/AppleStockChecker/price-matrix/',
-#                             },
-#                            {'name': 'iPhone公式在庫表',
-#                             'icon': 'fa-solid fa-warehouse',
-#                             'url': '/AppleStockChecker/price-matrix/',
-#                             },
-#
-#                            {'name': '中古店価格メタデータ',
-#                             'icon': 'fa-solid fa-database',
-#                             'models': [{'name': 'iPhoneモデル',
-#                                         'icon': 'fa-solid fa-mobile-button',
-#                                         'url': '/admin/AppleStockChecker/iphone/',
-#                                         },
-#                                        {'name': '中古店',
-#                                         'icon': 'fa-solid fa-shop',
-#                                         'url': '/admin/AppleStockChecker/secondhandshop/'
-#                                         },
-#                                        {'name': '中古店価格記録',
-#                                         'icon': 'fa-solid fa-money-check-dollar',
-#                                         'url': '/admin/AppleStockChecker/purchasingshoppricerecord/'
-#                                         },
-#                                        {'name': '价格整形记录',
-#                                         'icon': 'fa-solid fa-money-check-dollar',
-#                                         'url': '/admin/AppleStockChecker/purchasingshoptimeanalysis/'
-#                                         },
-#
-#                                        ]
-#                             },
-#                            {'name': 'iPhone公式在庫メタデータ',
-#                             'icon': 'fa-solid fa-file-contract',
-#                             'models': [{'name': 'Apple公式ストア',
-#                                         'icon': 'fa-solid fa-store',
-#                                         'url': '/admin/AppleStockChecker/officialstore/',
-#                                         },
-#                                        {'name': 'iphone官方在库記録',
-#                                         'icon': 'fa-solid fa-truck-ramp-box',
-#                                         'url': '/admin/AppleStockChecker/inventoryrecord/'
-#                                         },
-#                                        ]
-#                             },
-#                            {'name': '临时页面',
-#                             'icon': 'fa-solid fa-file-contract',
-#                             'models': [
-#                                 {'name': '価格推移(Model別)',
-#                                  'icon': 'fa-solid fa-chart-line',
-#                                  'url': '/AppleStockChecker/resale-trend-colors-merged/',
-#                                  },
-#                                 {'name': '间隔',
-#                                  'icon': 'fa-solid fa-chart-line',
-#                                  'url': '/admin/django_celery_beat/intervalschedule/',
-#                                  },
-#                                 {'name': '计划任务',
-#                                  'icon': 'fa-solid fa-chart-line',
-#                                  'url': '/admin/django_celery_beat/crontabschedule/',
-#                                  },
-#                                 {'name': '日程时间',
-#                                  'icon': 'fa-solid fa-chart-line',
-#                                  'url': '/admin/django_celery_beat/solarschedule/',
-#                                  },
-#                                 {'name': '定时',
-#                                  'icon': 'fa-solid fa-chart-line',
-#                                  'url': '/admin/django_celery_beat/clockedschedule/',
-#                                  },
-#
-#                                 {'name': '周期性任务',
-#                                  'icon': 'fa-solid fa-chart-line',
-#                                  'url': '/admin/django_celery_beat/periodictask/',
-#                                  },
-#                                 {'name': '用户',
-#                                  'icon': 'fa-solid fa-chart-line',
-#                                  'url': '/admin/auth/user/',
-#                                  },
-#                                 {'name': '组',
-#                                  'icon': 'fa-solid fa-chart-line',
-#                                  'url': '/admin/auth/group/',
-#                                  },
-#                                 {'name': 'iphone组合',
-#                                  'icon': 'fa-solid fa-chart-line',
-#                                  'url': '/admin/AppleStockChecker/cohort/',
-#                                  },
-#                                 {'name': 'iphone组合成员',
-#                                  'icon': 'fa-solid fa-chart-line',
-#                                  'url': '/admin/AppleStockChecker/cohortmember/',
-#                                  },
-#                                 {'name': '店铺组合',
-#                                  'icon': 'fa-solid fa-chart-line',
-#                                  'url': '/admin/AppleStockChecker/shopweightprofile/',
-#                                  },
-#                                 {'name': '店铺组合成员',
-#                                  'icon': 'fa-solid fa-chart-line',
-#                                  'url': '/admin/AppleStockChecker/shopweightitem/',
-#                                  },
-#                                 {'name': '统计参数',
-#                                  'icon': 'fa-solid fa-chart-line',
-#                                  'url': '/admin/AppleStockChecker/featurespec/',
-#                                  },
-#                             ]
-#                             },
-#                            ]
-#             },
-#
-#         ]}
+SIMPLEUI_CONFIG = {
+    'system_keep': True,
+    'dynamic': False,
+    'menu_display': ['iPhone関連データ', ],
+    'menus':
+        [
+            {
+                'name': 'iPhone関連データ',
+                'icon': 'fa-solid fa-mobile-screen-button',
+                'models': [{'name': '中古店価格推移(',
+                            'icon': 'fa-solid fa-chart-line',
+                            'url': '/AppleStockChecker/analysis-dashboard/',
+                            },
+                           {'name': '实时图表',
+                            'icon': 'fa-solid fa-store',
+                            'url': '/AppleStockChecker/statistical-data-summary/',
+                            },
+                           {'name': '中古店価格ボード',
+                            'icon': 'fa-solid fa-table-columns',
+                            'url': '/AppleStockChecker/price-matrix/',
+                            },
+                           {'name': 'iPhone公式在庫表',
+                            'icon': 'fa-solid fa-warehouse',
+                            'url': '/AppleStockChecker/price-matrix/',
+                            },
+
+                           {'name': '中古店価格メタデータ',
+                            'icon': 'fa-solid fa-database',
+                            'models': [{'name': 'iPhoneモデル',
+                                        'icon': 'fa-solid fa-mobile-button',
+                                        'url': '/admin/AppleStockChecker/iphone/',
+                                        },
+                                       {'name': '中古店',
+                                        'icon': 'fa-solid fa-shop',
+                                        'url': '/admin/AppleStockChecker/secondhandshop/'
+                                        },
+                                       {'name': '中古店価格記録',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/purchasingshoppricerecord/'
+                                        },
+                                       {'name': '价格整形记录',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/purchasingshoptimeanalysis/'
+                                        },
+
+                                       {'name': '基础统计featuresnapshot-data',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/featuresnapshot/'
+                                        },
+                                       {'name': '参数空间featurespec-data',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/featurespec/'
+                                        },
+
+                                       {'name': '统计模型modelartifact-data',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/modelartifact/'
+                                        },
+                                       {'name': '预测模型forecastsnapshot-data',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/forecastsnapshot/'
+                                        },
+                                       {'name': 'cohortbar-data',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/cohortbar/'
+                                        },
+
+                                       {'name': 'cohortmember-data',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/cohortmember/'
+                                        },
+                                       {'name': 'cohort-data',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/cohort/'
+                                        },
+                                       {'name': 'overallbar-data',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/overallbar/'
+                                        },
+                                       {'name': 'shopweightitem-data',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/shopweightitem/'
+                                        },
+                                       {'name': 'shopweightprofile-data',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/shopweightprofile/'
+                                        },
+
+
+                                       ]
+                            },
+                           {'name': 'iPhone公式在庫メタデータ',
+                            'icon': 'fa-solid fa-file-contract',
+                            'models': [{'name': 'Apple公式ストア',
+                                        'icon': 'fa-solid fa-store',
+                                        'url': '/admin/AppleStockChecker/officialstore/',
+                                        },
+                                       {'name': 'iphone官方在库記録',
+                                        'icon': 'fa-solid fa-truck-ramp-box',
+                                        'url': '/admin/AppleStockChecker/inventoryrecord/'
+                                        },
+                                       ]
+                            },
+                           {'name': '临时页面',
+                            'icon': 'fa-solid fa-file-contract',
+                            'models': [
+                                {'name': '価格推移(Model別)',
+                                 'icon': 'fa-solid fa-chart-line',
+                                 'url': '/AppleStockChecker/resale-trend-colors-merged/',
+                                 },
+                                {'name': '间隔',
+                                 'icon': 'fa-solid fa-chart-line',
+                                 'url': '/admin/django_celery_beat/intervalschedule/',
+                                 },
+                                {'name': '计划任务',
+                                 'icon': 'fa-solid fa-chart-line',
+                                 'url': '/admin/django_celery_beat/crontabschedule/',
+                                 },
+                                {'name': '日程时间',
+                                 'icon': 'fa-solid fa-chart-line',
+                                 'url': '/admin/django_celery_beat/solarschedule/',
+                                 },
+                                {'name': '定时',
+                                 'icon': 'fa-solid fa-chart-line',
+                                 'url': '/admin/django_celery_beat/clockedschedule/',
+                                 },
+
+                                {'name': '周期性任务',
+                                 'icon': 'fa-solid fa-chart-line',
+                                 'url': '/admin/django_celery_beat/periodictask/',
+                                 },
+                                {'name': '用户',
+                                 'icon': 'fa-solid fa-chart-line',
+                                 'url': '/admin/auth/user/',
+                                 },
+                                {'name': '组',
+                                 'icon': 'fa-solid fa-chart-line',
+                                 'url': '/admin/auth/group/',
+                                 },
+
+                            ]
+                            },
+                           ]
+            },
+
+        ]}
 
 # --- 本地开发：允许 Session 认证 + JWT；生产保持只有 JWT ---
 if os.getenv("DJANGO_ENV", "dev") == "dev":
