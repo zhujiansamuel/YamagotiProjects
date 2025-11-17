@@ -17,11 +17,154 @@ from celery import shared_task, chord
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import transaction, IntegrityError
 from decimal import Decimal, ROUND_HALF_UP
-
-
-
+import os
+import logging
+from typing import Any, Callable, Dict, Iterable, Tuple, Optional, Union
 
 logger = logging.getLogger(__name__)
+
+# 环境开关：参数严格度 & 版本阈值
+PARAM_STRICT = os.getenv("PSTA_PARAM_STRICT", "warn").strip().lower()  # ignore|warn|error
+MIN_ACCEPTED_TASK_VER = int(os.getenv("PSTA_MIN_ACCEPTED_VER", "0"))  # 小于此版本直接报错（可选）
+
+# ---- 小工具：类型转换 ----
+_TRUE = {"1", "true", "t", "y", "yes", "on"}
+_FALSE = {"0", "false", "f", "n", "no", "off"}
+
+
+def to_bool(x: Any) -> bool:
+    if isinstance(x, bool): return x
+    if isinstance(x, (int, float)): return bool(int(x))
+    if isinstance(x, str):
+        s = x.strip().lower()
+        if s in _TRUE: return True
+        if s in _FALSE: return False
+    raise ValueError(f"cannot coerce to bool: {x!r}")
+
+
+def to_int(x: Any) -> int:
+    if x is None: return None  # 允许上层决定是否必填
+    return int(x)
+
+
+def ensure_list(x: Any) -> list:
+    if x is None: return []
+    return list(x) if not isinstance(x, list) else x
+
+
+def _isinstance_soft(val: Any, typ: Union[type, Tuple[type, ...]]) -> bool:
+    # 允许传入 (int, str) 这样的 tuple
+    try:
+        return isinstance(val, typ)
+    except TypeError:
+        # 不做深度校验
+        return True
+
+
+# ---- 守卫核心 ----
+def guard_params(
+        task_name: str,
+        incoming: Dict[str, Any],
+        *,
+        required: Dict[str, Union[type, Tuple[type, ...]]],
+        optional: Dict[str, Union[type, Tuple[type, ...]]] = None,
+        defaults: Dict[str, Any] = None,
+        aliases: Dict[str, str] = None,  # 形参更名：old -> new（仅顶层）
+        coerce: Dict[str, Callable[[Any], Any]] = None,
+        task_ver_field: str = "task_ver",
+        expected_ver: Optional[int] = None,  # 推荐：与 producer 同步填写
+        notify: Optional[Callable[[dict], Any]] = None,  # 例如 notify_progress_all
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """
+    返回 (normalized_kwargs, meta)
+    - 对未知参数按策略 ignore/warn/error 处理
+    - 进行别名迁移、默认值填充、类型转换与校验
+    - 检查 task_ver（若提供）
+    """
+    optional = optional or {}
+    defaults = defaults or {}
+    aliases = aliases or {}
+    coerce = coerce or {}
+
+    kw = dict(incoming)  # 浅拷贝
+
+    # 1) 顶层别名迁移（old->new）
+    used_aliases = {}
+    for old, new in aliases.items():
+        if old in kw and new not in kw:
+            kw[new] = kw.pop(old)
+            used_aliases[old] = new
+
+    # 2) 未知参数处理策略
+    declared = set(required.keys()) | set(optional.keys()) | {task_ver_field}
+    unknown_keys = sorted(k for k in kw.keys() if k not in declared)
+    if unknown_keys:
+        msg = f"[{task_name}] unknown params: {unknown_keys} (strict={PARAM_STRICT})"
+        if PARAM_STRICT == "error":
+            raise TypeError(msg)
+        elif PARAM_STRICT == "warn":
+            logger.warning(msg)
+            if notify:
+                try:
+                    notify({"type": "param_compat_warning", "task": task_name, "unknown": unknown_keys})
+                except Exception:
+                    pass
+        # ignore: 什么也不做
+
+    # 3) 默认值
+    for k, v in defaults.items():
+        if kw.get(k) is None:
+            kw[k] = v
+
+    # 4) 类型转换（coerce）
+    for k, fn in coerce.items():
+        if k in kw and kw[k] is not None:
+            try:
+                kw[k] = fn(kw[k])
+            except Exception as e:
+                raise ValueError(f"[{task_name}] bad param '{k}': {e}")
+
+    # 5) 必填与可选的类型校验
+    for k, typ in required.items():
+        if kw.get(k) is None:
+            raise ValueError(f"[{task_name}] missing required param: '{k}'")
+        if not _isinstance_soft(kw[k], typ):
+            raise TypeError(f"[{task_name}] param '{k}' type error: got {type(kw[k]).__name__}, expect {typ}")
+
+    for k, typ in optional.items():
+        if k in kw and kw[k] is not None and not _isinstance_soft(kw[k], typ):
+            raise TypeError(f"[{task_name}] param '{k}' type error: got {type(kw[k]).__name__}, expect {typ}")
+
+    # 6) 任务版本握手（可选但推荐）
+    tv = kw.get(task_ver_field)
+    ver_meta = {"task_ver": tv, "expected_ver": expected_ver, "min_accepted": MIN_ACCEPTED_TASK_VER}
+    try:
+        if tv is not None:
+            tv = int(tv)
+            kw[task_ver_field] = tv
+            if tv < MIN_ACCEPTED_TASK_VER:
+                raise ValueError(f"[{task_name}] task_ver {tv} < min accepted {MIN_ACCEPTED_TASK_VER}")
+            if expected_ver is not None and tv != expected_ver and PARAM_STRICT != "ignore":
+                msg = f"[{task_name}] task_ver mismatch: got {tv}, expect {expected_ver}"
+                logger.warning(msg)
+                if notify:
+                    try:
+                        notify({"type": "task_version_mismatch", "task": task_name, "got": tv, "expect": expected_ver})
+                    except Exception:
+                        pass
+        else:
+            if PARAM_STRICT == "error":
+                raise ValueError(f"[{task_name}] missing '{task_ver_field}'")
+            elif PARAM_STRICT == "warn":
+                logger.warning(f"[{task_name}] missing '{task_ver_field}'")
+    except Exception as e:
+        # 版本错误直接抛出
+        raise
+
+    # 只回传声明字段（避免把未知字段继续往下传）
+    filtered = {k: kw[k] for k in declared if k in kw}
+    meta = {"unknown": unknown_keys, "aliases_used": used_aliases, "version": ver_meta}
+    return filtered, meta
 
 
 # ---------- 工具：ISO ↔ aware datetime ----------
@@ -48,19 +191,22 @@ def _tz_offset_str(dt: timezone.datetime) -> str:
 
 
 # === 可调参数（根据你们前后端链路容量调节） ===
-MAX_BUCKET_ERROR_SAMPLES = 50       # 单桶保留的 error 明细条数上限
-MAX_BUCKET_CHART_POINTS = 3000      # 单桶打包给回调聚合用的 chart point 上限
-MAX_PUSH_POINTS = 20000             # 本次广播给前端的 point 总上限（超过则裁剪到最近 N 条）
-#-----------------------------------------------------
-#--------------------------------------------------------
-#-----------------------------------------------------------
-#---------------------------------------------------------------
-#-----------------------------------------------------------
-#--------------------------------------------------------
-#-----------------------------------------------------
+MAX_BUCKET_ERROR_SAMPLES = 50  # 单桶保留的 error 明细条数上限
+MAX_BUCKET_CHART_POINTS = 3000  # 单桶打包给回调聚合用的 chart point 上限
+MAX_PUSH_POINTS = 20000  # 本次广播给前端的 point 总上限（超过则裁剪到最近 N 条）
+
+
+# -----------------------------------------------------
+# --------------------------------------------------------
+# -----------------------------------------------------------
+# ---------------------------------------------------------------
+# -----------------------------------------------------------
+# --------------------------------------------------------
+# -----------------------------------------------------
 # -----------------------------------------------
 # 子任务：处理“分钟桶”并返回桶级摘要 + 图表增量
 # -----------------------------------------------
+TASK_VER_PSTA = 2
 @shared_task(name="AppleStockChecker.tasks.psta_process_minute_bucket")
 def psta_process_minute_bucket(
         *,
@@ -69,12 +215,49 @@ def psta_process_minute_bucket(
         job_id: str,
         do_agg: bool = True,
         agg_start_iso: Optional[str] = None,
-        agg_minutes: int = 1
+        agg_minutes: int = 1,
+        task_ver: Optional[int] = None,   # <--- 新增（可选），用于握手
+        **_compat
 ) -> Dict[str, Any]:
     """
 
 
     """
+    # ---------- 参数守卫（放在函数最前） ----------
+    incoming = dict(
+        ts_iso=ts_iso,
+        rows=rows,
+        job_id=job_id,
+        do_agg=do_agg,
+        agg_start_iso=agg_start_iso,
+        agg_minutes=agg_minutes,
+        task_ver=task_ver,
+        **_compat,    # 把未知的也交给守卫决定 warn/ignore/error
+    )
+    normalized, meta = guard_params(
+        "psta_process_minute_bucket",
+        incoming,
+        required={"ts_iso": str, "rows": list, "job_id": str},
+        optional={
+            "do_agg": (bool, int, str),
+            "agg_start_iso": (str, type(None)),
+            "agg_minutes": (int, str),
+            "task_ver": (int, str, type(None)),
+        },
+        defaults={"do_agg": True, "agg_minutes": 1},
+        coerce={"do_agg": to_bool, "agg_minutes": to_int},
+        task_ver_field="task_ver",
+        expected_ver=TASK_VER_PSTA,
+        notify=notify_progress_all,   # 你的通知函数；若没有也可去掉
+    )
+    # 用归一化后的值覆盖本地变量
+    ts_iso = normalized["ts_iso"]
+    rows = normalized["rows"] or []
+    job_id = normalized["job_id"]
+    do_agg = normalized.get("do_agg", True)
+    agg_start_iso = normalized.get("agg_start_iso")
+    agg_minutes = normalized.get("agg_minutes", 1)
+    # ---------------------------------------------
     # -----------------------------------------------------
     # --------------------------------------------------------
     # -----------------------------------------------------------
@@ -836,7 +1019,7 @@ def psta_process_minute_bucket(
 
             # 4.a 四类组合（FeatureSnapshot.mean@anchor_bucket）
             for row in FeatureSnapshot.objects.filter(
-                bucket=anchor_bucket, name="mean"
+                    bucket=anchor_bucket, name="mean"
             ).values("scope", "value"):
                 if row["value"] is not None:
                     base_now[row["scope"]] = float(row["value"])
@@ -849,7 +1032,7 @@ def psta_process_minute_bucket(
 
             # 4.c CohortBar.mean -> cohort:<slug>（@ob_bucket）
             for row in (CohortBar.objects.filter(bucket=ob_bucket)
-                        .select_related("cohort").values("cohort__slug", "mean")):
+                    .select_related("cohort").values("cohort__slug", "mean")):
                 if row["mean"] is not None and row["cohort__slug"]:
                     base_now[f"cohort:{row['cohort__slug']}"] = float(row["mean"])
 
@@ -866,20 +1049,20 @@ def psta_process_minute_bucket(
                 if scope.startswith("overall:iphone:"):
                     ipid = int(scope.rsplit(":", 1)[-1])
                     rows = (OverallBar.objects
-                            .filter(iphone_id=ipid, bucket__lt=anchor_dt)
-                            .order_by("-bucket").values_list("mean", flat=True)[:limit])
+                    .filter(iphone_id=ipid, bucket__lt=anchor_dt)
+                    .order_by("-bucket").values_list("mean", flat=True)[:limit])
                     return [float(v) for v in rows if v is not None]
                 # cohort:<slug> -> 读 CohortBar.mean
                 if scope.startswith("cohort:"):
                     slug = scope.split(":", 1)[1]
                     rows = (CohortBar.objects
-                            .filter(cohort__slug=slug, bucket__lt=anchor_dt)
-                            .order_by("-bucket").values_list("mean", flat=True)[:limit])
+                    .filter(cohort__slug=slug, bucket__lt=anchor_dt)
+                    .order_by("-bucket").values_list("mean", flat=True)[:limit])
                     return [float(v) for v in rows if v is not None]
                 # 其它 scope -> 读 FeatureSnapshot(base_name)
                 rows = (FeatureSnapshot.objects
-                        .filter(scope=scope, name=base_name, version=base_version, bucket__lt=anchor_dt)
-                        .order_by("-bucket").values_list("value", flat=True)[:limit])
+                .filter(scope=scope, name=base_name, version=base_version, bucket__lt=anchor_dt)
+                .order_by("-bucket").values_list("value", flat=True)[:limit])
                 return [float(v) for v in rows if v is not None]
 
             # —— 数学器 —— #
@@ -937,7 +1120,8 @@ def psta_process_minute_bucket(
 
                     # 样本数校验
                     if len(series_old_to_new) < max(1, min_count):
-                        timefeat_debug["skipped"].append(f"{family}:{spec_slug}@{scope}:insufficient({len(series_old_to_new)}<{min_count})")
+                        timefeat_debug["skipped"].append(
+                            f"{family}:{spec_slug}@{scope}:insufficient({len(series_old_to_new)}<{min_count})")
                         continue
 
                     try:
@@ -1097,8 +1281,6 @@ def psta_process_minute_bucket(
             except Exception:
                 pass
 
-
-
     return {
         "ts_iso": ts_iso,
         "ok": ok,
@@ -1109,73 +1291,45 @@ def psta_process_minute_bucket(
         "chart_points": chart_points,  # 传给回调聚合后做图表更新
     }
 
-#-----------------------------------------------------
-#--------------------------------------------------------
-#-----------------------------------------------------------
-#---------------------------------------------------------------
-#-----------------------------------------------------------
-#--------------------------------------------------------
-#-----------------------------------------------------
+
+# -----------------------------------------------------
+# --------------------------------------------------------
+# -----------------------------------------------------------
+# ---------------------------------------------------------------
+# -----------------------------------------------------------
+# --------------------------------------------------------
+# -----------------------------------------------------
 # -----------------------------------------------
 # 回调：聚合所有分钟桶，广播最终“done + 图表增量”
 # -----------------------------------------------
 @shared_task(name="AppleStockChecker.tasks.psta_finalize_buckets")
 def psta_finalize_buckets(
-    results: List[Dict[str, Any]],
-    job_id: str,
-    ts_iso: str,
-    agg_ctx: Optional[dict] = None,
+        results: List[Dict[str, Any]],
+        job_id: str,
+        ts_iso: str,
+        agg_ctx: Optional[dict] = None,
+        **_compat
 ) -> Dict[str, Any]:
     """
-    - 作用：在一批“按分钟对齐”的子任务完成后，汇总每个分钟桶的结果，生成给前端的图表增量（真实点 + 必要的“影子点”），并通过通知通道广播最终 done 消息。
 
-    - 输入参数
-      - results：每个分钟桶的汇总结果列表。每个元素可能包含：
-        - ok、failed：该桶处理成功/失败数
-        - error_hist：该桶的错误直方图
-        - chart_points：写库成功后用于画图的点列表，每个点含 {id,t,price,recorded_at,iphone_id,shop_id}
-      - job_id：本次任务标识
-      - ts_iso：目标分钟时间戳（ISO 字符串）
-
-    - 汇总统计
-      - 计算总桶数、总 ok、总 failed。
-      - 聚合所有桶的 error_hist，得到全局错误直方图 agg_err。
-
-    - 聚合真实点
-      - 以 (iphone_id, shop_id) 作为序列键，收集该序列的真实点到 series_map。
-      - 统计 total_points（仅统计真实点）。
-
-    - 计算每条序列的“已知最后点”与“是否在 ts_iso 有真实点”
-      - last_known：每个序列在 t <= ts_iso 的最后一个真实点。
-      - has_real_at_ts：指示该序列在 ts_iso 是否已有真实点。
-      - 时间比较基于 ISO 字符串（假设格式一致）。
-
-    - 全局裁剪（仅裁真实点，影子点不受限）
-      - 若 total_points 超过 MAX_PUSH_POINTS：
-        - 将所有真实点拍平成时间序列升序，保留最近 MAX_PUSH_POINTS 条；
-        - 重建 series_map；
-        - 标记 clipped = True。
-
-    - 生成图表增量 series_delta
-      - 遍历所有出现过的序列键（保证即便被裁剪为空的序列，也可补影子点）。
-      - 每个序列内按时间排序；
-      - 若该序列在 ts_iso 没有真实点但存在 last_known，则追加一个“影子点”：
-        - 结构：{id: None, t: ts_iso, price: 最近真实点价格, recorded_at: 同源记录时间, shadow: True, src_t: 影子来源的时间}
-      - 记录本次补入的影子点数量 shadow_points_added。
-
-    - 组织返回与广播
-      - summary：包含本次时间戳、job_id、总桶数、ok/failed、全局错误直方图，以及前 100 条桶级摘要。
-      - chart_delta：包含 job_id、timestamp、series_delta 以及 meta：
-        - total_points：min(真实点总数, MAX_PUSH_POINTS)
-        - shadow_points：本次补的影子点数量
-        - clipped：是否发生裁剪
-      - payload：status=done，step=finalize，progress=100，携带上述 summary 与 chart_delta。
-      - 调用 notify_progress_all(data=payload) 广播（异常忽略）。
-
-    - 返回值
-      - 返回 payload，便于链路调试或上层任务使用。
     """
     from collections import defaultdict, Counter
+    incoming = dict(results=results, job_id=job_id, ts_iso=ts_iso,
+                    agg_ctx=agg_ctx, task_ver=task_ver, **_compat)
+    normalized, meta = guard_params(
+        "psta_finalize_buckets",
+        incoming,
+        required={"results": list, "job_id": str, "ts_iso": str},
+        optional={"agg_ctx": (dict, type(None)), "task_ver": (int, str, type(None))},
+        defaults={"agg_ctx": None},
+        task_ver_field="task_ver",
+        expected_ver=TASK_VER_PSTA,
+        notify=notify_progress_all,
+    )
+    results = normalized["results"]
+    job_id  = normalized["job_id"]
+    ts_iso  = normalized["ts_iso"]
+    agg_ctx = normalized.get("agg_ctx")
 
     # --- 标准化 results（有时不是 list） ---
     if isinstance(results, dict):
@@ -1211,8 +1365,8 @@ def psta_finalize_buckets(
     # === 计算每个序列在 ts_iso 之前（含）的最后一个真实点（last-known），以及是否在 ts_iso 有真实点 ===
     # 为避免歧义，这里以 ISO 字符串的时间比较为准（你们上下文里 t 和 ts_iso 的格式一致）。
     # 若担心跨时区 ISO 文本比较的稳定性，可改为 _to_aware 做 datetime 比较。
-    last_known = {}        # key -> dict(point)
-    has_real_at_ts = {}    # key -> bool
+    last_known = {}  # key -> dict(point)
+    has_real_at_ts = {}  # key -> bool
     for key, pts in series_map.items():
         # 找 <= ts_iso 的最大 t
         latest = None
@@ -1238,8 +1392,8 @@ def psta_finalize_buckets(
         for (iphone_id, shop_id), pts in series_map.items():
             for item in pts:
                 flat.append((item["t"], iphone_id, shop_id, item))
-        flat.sort(key=lambda x: x[0])      # 升序
-        flat = flat[-MAX_PUSH_POINTS:]     # 保留最近 N 条
+        flat.sort(key=lambda x: x[0])  # 升序
+        flat = flat[-MAX_PUSH_POINTS:]  # 保留最近 N 条
 
         series_map = defaultdict(list)
         for _, iphone_id, shop_id, item in flat:
@@ -1263,12 +1417,12 @@ def psta_finalize_buckets(
             if not any(p["t"] == ts_iso for p in pts):
                 shadow_points_added += 1
                 pts.append({
-                    "id": None,                 # 影子点不落库，无 id
-                    "t": ts_iso,                # 影子点放在标的时间戳
-                    "price": src["price"],      # 以最近真实点的价格填充
+                    "id": None,  # 影子点不落库，无 id
+                    "t": ts_iso,  # 影子点放在标的时间戳
+                    "price": src["price"],  # 以最近真实点的价格填充
                     "recorded_at": src.get("recorded_at"),
-                    "shadow": True,             # ✅ 标识影子点
-                    "src_t": src["t"],          # 影子来源时间（便于前端 tooltip/样式）
+                    "shadow": True,  # ✅ 标识影子点
+                    "src_t": src["t"],  # 影子来源时间（便于前端 tooltip/样式）
                 })
 
         series_delta.append({
@@ -1302,7 +1456,7 @@ def psta_finalize_buckets(
             "series_delta": series_delta,
             "meta": {
                 "total_points": min(total_points, MAX_PUSH_POINTS),  # 仅真实点计数
-                "shadow_points": shadow_points_added,                # 本次补的影子点数
+                "shadow_points": shadow_points_added,  # 本次补的影子点数
                 "clipped": clipped,
             }
         }
@@ -1314,17 +1468,18 @@ def psta_finalize_buckets(
         pass
 
     return payload
-#-----------------------------------------------------
-#--------------------------------------------------------
-#-----------------------------------------------------------
-#---------------------------------------------------------------
-#-----------------------------------------------------------
-#--------------------------------------------------------
-#-----------------------------------------------------
+
+
+# -----------------------------------------------------
+# --------------------------------------------------------
+# -----------------------------------------------------------
+# ---------------------------------------------------------------
+# -----------------------------------------------------------
+# --------------------------------------------------------
+# -----------------------------------------------------
 # -----------------------------------------------
 # 父任务：chord 并行 + 回调（保持你已有写法）
 # -----------------------------------------------
-
 
 
 def _to_aware(s: str) -> timezone.datetime:
@@ -1335,32 +1490,32 @@ def _to_aware(s: str) -> timezone.datetime:
         raise ValueError(f"bad datetime iso: {s}")
     return make_aware(dt) if is_naive(dt) else dt
 
+
 def _floor_to_step(dt: timezone.datetime, step_min: int) -> timezone.datetime:
     return dt - timezone.timedelta(minutes=dt.minute % step_min, seconds=dt.second, microseconds=dt.microsecond)
+
 
 def _rolling_start(dt: timezone.datetime, step_min: int) -> timezone.datetime:
     return dt.replace(second=0, microsecond=0) - timezone.timedelta(minutes=max(step_min - 1, 0))
 
 
-
 @shared_task(bind=True, name="AppleStockChecker.tasks.batch_generate_psta_same_ts")
 def batch_generate_psta_same_ts(
-    self,
-    *,
-    job_id: Optional[str] = None,
-    items: Optional[List[Dict[str, Any]]] = None,
-    timestamp_iso: Optional[str] = None,
-    chunk_size: int = 200,
-    query_window_minutes: int = 15,
-    shop_ids: Optional[List[int]] = None,
-    iphone_ids: Optional[List[int]] = None,
-    max_items: Optional[int] = None,
-    # ✅ 新：聚合控制
-    agg_minutes: int = 15,                 # 聚合步长
-    agg_mode: str = "boundary",            # 'boundary'|'rolling'|'off'
-    force_agg: bool = False,               # 强制本轮聚合
+        self,
+        *,
+        job_id: Optional[str] = None,
+        items: Optional[List[Dict[str, Any]]] = None,
+        timestamp_iso: Optional[str] = None,
+        chunk_size: int = 200,
+        query_window_minutes: int = 15,
+        shop_ids: Optional[List[int]] = None,
+        iphone_ids: Optional[List[int]] = None,
+        max_items: Optional[int] = None,
+        # ✅ 新：聚合控制
+        agg_minutes: int = 15,  # 聚合步长
+        agg_mode: str = "boundary",  # 'boundary'|'rolling'|'off'
+        force_agg: bool = False,  # 强制本轮聚合
 ) -> Dict[str, Any]:
-
     task_job_id = job_id or self.request.id
     ts_iso = timestamp_iso or nearest_past_minute_iso()
     MODE = (agg_mode or "boundary").lower()
@@ -1387,7 +1542,7 @@ def batch_generate_psta_same_ts(
         "bucket_end": (step0 + timezone.timedelta(minutes=int(agg_minutes))).isoformat(),
     }
     try:
-        notify_progress_all(data={"type":"agg_ctx","timestamp":ts_iso,"job_id":task_job_id,"ctx":ctx})
+        notify_progress_all(data={"type": "agg_ctx", "timestamp": ts_iso, "job_id": task_job_id, "ctx": ctx})
     except Exception:
         pass
 
@@ -1430,11 +1585,16 @@ def batch_generate_psta_same_ts(
                     do_agg=do_agg_local,
                     agg_start_iso=agg_start_iso,
                     agg_minutes=int(agg_minutes),
+                    task_ver=TASK_VER_PSTA,   # <--- 新增
                 )
             )
 
+
+
     try:
-        notify_progress_all(data={"status":"running","step":"dispatch_buckets","buckets":len(subtasks),"timestamp":ts_iso,"agg":ctx})
+        notify_progress_all(
+            data={"status": "running", "step": "dispatch_buckets", "buckets": len(subtasks), "timestamp": ts_iso,
+                  "agg": ctx})
     except Exception:
         pass
 
@@ -1442,21 +1602,21 @@ def batch_generate_psta_same_ts(
         empty = {"timestamp": ts_iso, "total_buckets": 0, "ok": 0, "failed": 0, "by_bucket": []}
         try:
             notify_progress_all(data={
-                "status":"done","progress":100,"summary":empty,
-                "chart_delta":{"job_id":task_job_id,"timestamp":ts_iso,"series_delta":[],"meta":{"total_points":0,"shadow_points":0,"clipped":False}}
+                "status": "done", "progress": 100, "summary": empty,
+                "chart_delta": {"job_id": task_job_id, "timestamp": ts_iso, "series_delta": [],
+                                "meta": {"total_points": 0, "shadow_points": 0, "clipped": False}}
             })
         except Exception:
             pass
         return empty
 
-    callback = psta_finalize_buckets.s(job_id=task_job_id, ts_iso=ts_iso, agg_ctx=ctx)   # 可把 ctx 传给回调（可选）
+    callback = psta_finalize_buckets.s(job_id=task_job_id, ts_iso=ts_iso, agg_ctx=ctx,task_ver=TASK_VER_PSTA )  # 可把 ctx 传给回调（可选）
     chord_result = chord(subtasks)(callback)
     return {"timestamp": ts_iso, "total_buckets": len(subtasks), "job_id": task_job_id, "chord_id": chord_result.id}
-#-----------------------------------------------------
-#--------------------------------------------------------
-#-----------------------------------------------------------
-#---------------------------------------------------------------
-#-----------------------------------------------------------
-#--------------------------------------------------------
-#-----------------------------------------------------
-
+# -----------------------------------------------------
+# --------------------------------------------------------
+# -----------------------------------------------------------
+# ---------------------------------------------------------------
+# -----------------------------------------------------------
+# --------------------------------------------------------
+# -----------------------------------------------------
