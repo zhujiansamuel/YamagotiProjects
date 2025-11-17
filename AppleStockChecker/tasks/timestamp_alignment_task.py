@@ -195,7 +195,6 @@ MAX_BUCKET_ERROR_SAMPLES = 50  # 单桶保留的 error 明细条数上限
 MAX_BUCKET_CHART_POINTS = 3000  # 单桶打包给回调聚合用的 chart point 上限
 MAX_PUSH_POINTS = 20000  # 本次广播给前端的 point 总上限（超过则裁剪到最近 N 条）
 
-
 # -----------------------------------------------------
 # --------------------------------------------------------
 # -----------------------------------------------------------
@@ -207,6 +206,8 @@ MAX_PUSH_POINTS = 20000  # 本次广播给前端的 point 总上限（超过则�
 # 子任务：处理“分钟桶”并返回桶级摘要 + 图表增量
 # -----------------------------------------------
 TASK_VER_PSTA = 2
+
+
 @shared_task(name="AppleStockChecker.tasks.psta_process_minute_bucket")
 def psta_process_minute_bucket(
         *,
@@ -216,7 +217,7 @@ def psta_process_minute_bucket(
         do_agg: bool = True,
         agg_start_iso: Optional[str] = None,
         agg_minutes: int = 1,
-        task_ver: Optional[int] = None,   # <--- 新增（可选），用于握手
+        task_ver: Optional[int] = None,  # <--- 新增（可选），用于握手
         **_compat
 ) -> Dict[str, Any]:
     """
@@ -232,7 +233,7 @@ def psta_process_minute_bucket(
         agg_start_iso=agg_start_iso,
         agg_minutes=agg_minutes,
         task_ver=task_ver,
-        **_compat,    # 把未知的也交给守卫决定 warn/ignore/error
+        **_compat,  # 把未知的也交给守卫决定 warn/ignore/error
     )
     normalized, meta = guard_params(
         "psta_process_minute_bucket",
@@ -248,7 +249,7 @@ def psta_process_minute_bucket(
         coerce={"do_agg": to_bool, "agg_minutes": to_int},
         task_ver_field="task_ver",
         expected_ver=TASK_VER_PSTA,
-        notify=notify_progress_all,   # 你的通知函数；若没有也可去掉
+        notify=notify_progress_all,  # 你的通知函数；若没有也可去掉
     )
     # 用归一化后的值覆盖本地变量
     ts_iso = normalized["ts_iso"]
@@ -1308,6 +1309,7 @@ def psta_finalize_buckets(
         job_id: str,
         ts_iso: str,
         agg_ctx: Optional[dict] = None,
+        task_ver: Optional[int] = None,
         **_compat
 ) -> Dict[str, Any]:
     """
@@ -1327,8 +1329,8 @@ def psta_finalize_buckets(
         notify=notify_progress_all,
     )
     results = normalized["results"]
-    job_id  = normalized["job_id"]
-    ts_iso  = normalized["ts_iso"]
+    job_id = normalized["job_id"]
+    ts_iso = normalized["ts_iso"]
     agg_ctx = normalized.get("agg_ctx")
 
     # --- 标准化 results（有时不是 list） ---
@@ -1585,11 +1587,9 @@ def batch_generate_psta_same_ts(
                     do_agg=do_agg_local,
                     agg_start_iso=agg_start_iso,
                     agg_minutes=int(agg_minutes),
-                    task_ver=TASK_VER_PSTA,   # <--- 新增
+                    task_ver=TASK_VER_PSTA,  # <--- 新增
                 )
             )
-
-
 
     try:
         notify_progress_all(
@@ -1610,7 +1610,8 @@ def batch_generate_psta_same_ts(
             pass
         return empty
 
-    callback = psta_finalize_buckets.s(job_id=task_job_id, ts_iso=ts_iso, agg_ctx=ctx,task_ver=TASK_VER_PSTA )  # 可把 ctx 传给回调（可选）
+    callback = psta_finalize_buckets.s(job_id=task_job_id, ts_iso=ts_iso, agg_ctx=ctx,
+                                       task_ver=TASK_VER_PSTA)  # 可把 ctx 传给回调（可选）
     chord_result = chord(subtasks)(callback)
     return {"timestamp": ts_iso, "total_buckets": len(subtasks), "job_id": task_job_id, "chord_id": chord_result.id}
 # -----------------------------------------------------

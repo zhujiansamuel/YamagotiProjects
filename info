@@ -38,45 +38,6 @@ const AVG_LINES_DEFAULTS = [
 
 
 
-SHOP_DISPLAY_ORDER = [
-  {match:/買取商店/,color:"#DD1133",shop_id:14,order:1},
-  {match:/海峡通信/,color:"#478CD8",shop_id:1,order:2},
-  {match:/買取一丁目/,color:"#B41524",shop_id:8,order:3},
-  {match:/モバイルミックス/,color:"#DD1133",shop_id:13,order:4},
-  {match:/森森買取/,color:"#278C46",shop_id:7,order:5},
-  {match:/買取ルデヤ/,color:"#2DA9E8",shop_id:9,order:6},
-  {match:/買取wiki/,color:"#E71534",shop_id:10,order:7},
-  {match:/買取ホムラ/,color:"#F27474",shop_id:19,order:8},
-  {match:/ドラゴンモバイル/,color:"#3952A6",shop_id:16,order:9},
-  {match:/モバステ/,color:"#E60012",shop_id:18,order:10},
-  {match:/アキモバ/,color:"#20AECC",shop_id:12,order:11},
-  {match:/トゥインクル/,color:"#0EC7D9",shop_id:17,order:12},
-  {match:/家電市場/,color:"#FFF100",shop_id:3,order:13},
-  {match:/買取楽園/,color:"#DA7C66",shop_id:4,order:14},
-  {match:/買取当番/,color:"#1C4473",shop_id:2,order:15},
-  {match:/携帯空間/,color:"#0049A8",shop_id:5,order:16},
-  {match:/ゲストモバイル/,color:"#34C6F6",shop_id:11,order:17},
-  {match:/買取オク/,color:"#033F68",shop_id:6,order:18},
-  {match:/毎日買取/,color:"#C30D23",shop_id:15,order:19},
-  {match:/Mobile Zone/,color:"#f50620",shop_id:20,order:20},
-];
-
-
-
-{id: "iphone-17-pro-max-256", model: "iPhone 17 Pro Max", cap: 256,iphone_id:[20,21,22]},
-{id: "iphone-17-pro-max-512", model: "iPhone 17 Pro Max", cap: 512,iphone_id:[23,24,25]},
-{id: "iphone-17-pro-max-1024", model: "iPhone 17 Pro Max", cap: 1024,iphone_id:},
-{id: "iphone-17-pro-max-2048", model: "iPhone 17 Pro Max", cap: 2048,iphone_id:},
-{id: "iphone-17-pro-256", model: "iPhone 17 Pro", cap: 256,iphone_id:[11,12,13]},
-{id: "iphone-17-pro-512", model: "iPhone 17 Pro", cap: 512,iphone_id:[14,15,16]},
-{id: "iphone-17-pro-1024", model: "iPhone 17 Pro", cap: 1024,iphone_id:[17,18,19]},
-{id: "iphone-Air-256", model: "iPhone Air", cap: 256,iphone_id:[32,33,34,35]},
-{id: "iphone-Air-512", model: "iPhone Air", cap: 512,iphone_id:[36,37,38,39]},
-{id: "iphone-Air-1024", model: "iPhone Air", cap: 1024,iphone_id:[40,41,42,43]},
-{id: "iphone-17-256", model: "iPhone 17", cap: 256,iphone_id:[1,2,3,4,5]},
-{id: "iphone-17-512", model: "iPhone 17", cap: 512,iphone_id:[6,7,8,9,10]},
-
-
 git fetch --all --prune
 git reset --hard origin/master
 git pull origin master
