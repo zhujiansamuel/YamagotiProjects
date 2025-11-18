@@ -20,6 +20,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import os
 import logging
 from typing import Any, Callable, Dict, Iterable, Tuple, Optional, Union
+from AppleStockChecker.features.api import FeatureWriter, FeatureRecord
 
 logger = logging.getLogger(__name__)
 
@@ -227,34 +228,29 @@ def psta_process_minute_bucket(
     from django.db import transaction, IntegrityError
     # ====== 新增：统一的 FeatureSnapshot 安全 upsert ======
     def safe_upsert_feature_snapshot(*, bucket, scope, name, version, value, is_final, max_retries: int = 2):
-        """
-        对 (bucket, scope, name, version) 做幂等写入，处理并发下的唯一约束冲突：
-        - 若不存在：INSERT
-        - 若并发下插入冲突：捕获 IntegrityError，退回再走一次 get/update
-        - 若已经存在：UPDATE value / is_final
-        """
         value = float(_d4(value))
-
         for attempt in range(max_retries + 1):
             try:
                 with transaction.atomic():
-                    obj, created = FeatureSnapshot.objects.update_or_create(
-                        bucket=bucket,
-                        scope=scope,
-                        name=name,
-                        version=version,
-                        defaults={
-                            "value": value,
-                            "is_final": is_final,
-                        },
+                    # 先锁已有行，存在则直接覆盖（LWW）
+                    qs = (FeatureSnapshot.objects
+                          .select_for_update()
+                          .filter(bucket=bucket, scope=scope, name=name, version=version))
+                    obj = qs.first()
+                    if obj:
+                        obj.value = value
+                        obj.is_final = bool(is_final)  # ← 覆盖，而非 OR
+                        obj.save(update_fields=["value", "is_final"])
+                        return obj
+                    # 不存在则创建
+                    return FeatureSnapshot.objects.create(
+                        bucket=bucket, scope=scope, name=name, version=version,
+                        value=value, is_final=bool(is_final)
                     )
-                # 成功就直接返回
-                return obj
             except IntegrityError:
-                # 最后一轮还失败就抛出，让上层 error logger 记录
                 if attempt >= max_retries:
                     raise
-                # 否则简单重试一次（可以视需要加个很小的 sleep）
+                # 并发插入撞唯一键，重试时会读到那行再覆盖
                 continue
 
     # ---------- 参数守卫（放在函数最前） ----------
@@ -515,16 +511,32 @@ def psta_process_minute_bucket(
         now = timezone.now()
         is_final_bar = ts_dt <= (now - timezone.timedelta(minutes=WATERMARK_MINUTES))
 
+
         # --- 聚合窗口（1分钟：用 ts_dt；>1分钟：用 [bucket_start, bucket_end) 窗口） ---
         bucket_start = _to_aware(agg_start_iso) if (agg_minutes and agg_start_iso) else ts_dt
         bucket_end = bucket_start + timezone.timedelta(minutes=agg_minutes or 1)
         use_window = (agg_minutes or 1) > 1
+
+        # === 统一锚点：所有 FeatureSnapshot / 派生指标的 bucket，都用 anchor_bucket ===
+        anchor_bucket = bucket_start if use_window else ts_dt
+
+        # 为兼容现有变量名，保持别名（可选）
+        feature_bucket = anchor_bucket
+        ob_bucket = anchor_bucket
+
         agg_ctx = {
             "do_agg": True,
             "agg_minutes": int(agg_minutes or 1),
             "bucket_start": bucket_start.isoformat(),
             "bucket_end": bucket_end.isoformat(),
         }
+        writer = FeatureWriter(
+            bucket=anchor_bucket,
+            default_version="v1",
+            is_final=is_final_bar,
+            escalate_is_final=False,  # ← 你已确认 LWW（后写覆盖前写）
+        )
+
 
         # ================= 1) OverallBar（全部店 × 各 iPhone） =================
         # 自动探测 OverallBar 是否含 iphone 外键；若没有，跳过以免 unique(bucket) 冲突
@@ -647,8 +659,6 @@ def psta_process_minute_bucket(
                     member_ids = [m["iphone_id"] for m in members]
                     weight_map = {m["iphone_id"]: float(m.get("weight") or 1.0) for m in members}
 
-                    # 读取上一步写好的 OverallBar（同一个 ob_bucket）
-                    ob_bucket = bucket_start if use_window else ts_dt
                     ob_rows = list(
                         OverallBar.objects.filter(bucket=ob_bucket, iphone_id__in=member_ids)
                         .values("iphone_id", "mean", "shop_count")
@@ -748,7 +758,7 @@ def psta_process_minute_bucket(
                     .distinct("shop_id", "iphone_id")
                     .values("shop_id", "iphone_id", "New_Product_Price", "Timestamp_Time")
                 )
-                feature_bucket = bucket_start
+                feature_bucket = anchor_bucket
             else:
                 base_qs = (
                     PurchasingShopTimeAnalysis.objects
@@ -756,7 +766,7 @@ def psta_process_minute_bucket(
                             shop_id__in=shops_seen, iphone_id__in=iphones_seen)
                     .values("shop_id", "iphone_id", "New_Product_Price", "Timestamp_Time")
                 )
-                feature_bucket = ts_dt
+                feature_bucket = anchor_bucket
 
             # (shop, iphone) -> (last_price, last_ts)
             data_by_si: Dict[tuple, tuple] = {}
@@ -837,11 +847,18 @@ def psta_process_minute_bucket(
                     continue
                 m, med, st, disp, n = s
                 scope = f"shop:{sid}|iphone:{iid}"
-                upsert_feature(scope, "mean", m, is_final=is_final_bar)
-                upsert_feature(scope, "median", med, is_final=is_final_bar)
-                upsert_feature(scope, "std", st, is_final=is_final_bar)
-                upsert_feature(scope, "dispersion", disp, is_final=is_final_bar)
-                upsert_feature(scope, "count", float(n), is_final=is_final_bar)
+                writer.write(scope, "mean", m)
+                writer.write(scope, "median", med)
+                writer.write(scope, "std", st)
+                writer.write(scope, "dispersion", disp)
+                writer.write(scope, "count", float(n))
+
+                # upsert_feature(scope, "mean", m, is_final=is_final_bar)
+                # upsert_feature(scope, "median", med, is_final=is_final_bar)
+                # upsert_feature(scope, "std", st, is_final=is_final_bar)
+                # upsert_feature(scope, "dispersion", disp, is_final=is_final_bar)
+                # upsert_feature(scope, "count", float(n), is_final=is_final_bar)
+
                 combo_debug["case1_shop_iphone"] += 1
                 if len(combo_debug["samples"]) < 5:
                     combo_debug["samples"].append({"case": 1, "scope": scope, "mean": round(m, 4)})
@@ -896,11 +913,19 @@ def psta_process_minute_bucket(
                         m_unw, med, st, disp, n = _stats(vals)
                         mean_w = (wnum / wden) if wden > 0 else m_unw
                         scope = f"shopcohort:{prof.slug}|iphone:{iid}"
-                        upsert_feature(scope, "mean", mean_w, is_final=is_final_bar)
-                        upsert_feature(scope, "median", med, is_final=is_final_bar)
-                        upsert_feature(scope, "std", st, is_final=is_final_bar)
-                        upsert_feature(scope, "dispersion", disp, is_final=is_final_bar)
-                        upsert_feature(scope, "count", float(n), is_final=is_final_bar)
+
+                        writer.write(scope, "mean", mean_w)
+                        writer.write(scope, "median", med)
+                        writer.write(scope, "std", st)
+                        writer.write(scope, "dispersion", disp)
+                        writer.write(scope, "count", float(n))
+
+                        # upsert_feature(scope, "mean", mean_w, is_final=is_final_bar)
+                        # upsert_feature(scope, "median", med, is_final=is_final_bar)
+                        # upsert_feature(scope, "std", st, is_final=is_final_bar)
+                        # upsert_feature(scope, "dispersion", disp, is_final=is_final_bar)
+                        # upsert_feature(scope, "count", float(n), is_final=is_final_bar)
+
                         combo_debug["case2_shopcohort_iphone"] += 1
                         if len(combo_debug["samples"]) < 5:
                             combo_debug["samples"].append({
@@ -939,11 +964,20 @@ def psta_process_minute_bucket(
                     m_unw, med, st, disp, n = _stats(vals)
                     mean_w = (wnum / wden) if wden > 0 else m_unw
                     scope = f"shop:{sid}|cohort:{coh.slug}"
-                    upsert_feature(scope, "mean", mean_w, is_final=is_final_bar)
-                    upsert_feature(scope, "median", med, is_final=is_final_bar)
-                    upsert_feature(scope, "std", st, is_final=is_final_bar)
-                    upsert_feature(scope, "dispersion", disp, is_final=is_final_bar)
-                    upsert_feature(scope, "count", float(n), is_final=is_final_bar)
+
+                    writer.write(scope, "mean", mean_w)
+                    writer.write(scope, "median", med)
+                    writer.write(scope, "std", st)
+                    writer.write(scope, "dispersion", disp)
+                    writer.write(scope, "count", float(n))
+
+
+                    # upsert_feature(scope, "mean", mean_w, is_final=is_final_bar)
+                    # upsert_feature(scope, "median", med, is_final=is_final_bar)
+                    # upsert_feature(scope, "std", st, is_final=is_final_bar)
+                    # upsert_feature(scope, "dispersion", disp, is_final=is_final_bar)
+                    # upsert_feature(scope, "count", float(n), is_final=is_final_bar)
+
                     combo_debug["case3_shop_cohortiphone"] += 1
                     if len(combo_debug["samples"]) < 5:
                         combo_debug["samples"].append({
@@ -990,11 +1024,20 @@ def psta_process_minute_bucket(
                         m_unw, med, st, disp, n = _stats(vals)
                         mean_w = (wnum / wden) if wden > 0 else m_unw
                         scope = f"shopcohort:{prof.slug}|cohort:{coh.slug}"
-                        upsert_feature(scope, "mean", mean_w, is_final=is_final_bar)
-                        upsert_feature(scope, "median", med, is_final=is_final_bar)
-                        upsert_feature(scope, "std", st, is_final=is_final_bar)
-                        upsert_feature(scope, "dispersion", disp, is_final=is_final_bar)
-                        upsert_feature(scope, "count", float(n), is_final=is_final_bar)
+
+                        writer.write(scope, "mean", mean_w)
+                        writer.write(scope, "median", med)
+                        writer.write(scope, "std", st)
+                        writer.write(scope, "dispersion", disp)
+                        writer.write(scope, "count", float(n))
+                        #
+                        # upsert_feature(scope, "mean", mean_w, is_final=is_final_bar)
+                        # upsert_feature(scope, "median", med, is_final=is_final_bar)
+                        # upsert_feature(scope, "std", st, is_final=is_final_bar)
+                        # upsert_feature(scope, "dispersion", disp, is_final=is_final_bar)
+                        # upsert_feature(scope, "count", float(n), is_final=is_final_bar)
+
+
                         combo_debug["case4_shopcohort_cohortiphone"] += 1
                         if len(combo_debug["samples"]) < 5:
                             combo_debug["samples"].append({
@@ -1037,10 +1080,7 @@ def psta_process_minute_bucket(
         from django.apps import apps
         FeatureSpec = apps.get_model('AppleStockChecker', 'FeatureSpec')
 
-        # 本次派生指标的“锚点时间”：与 FeatureSnapshot(mean, …) 一致
-        anchor_bucket = bucket_start if use_window else ts_dt
-        # Overall/Cohort 的基值写入了 ob_bucket；派生时也需要读取该时间的“当前基值”
-        ob_bucket = bucket_start if use_window else ts_dt
+
 
         timefeat_debug = {"bucket": ts_iso, "computed": 0, "skipped": [], "samples": []}
 
@@ -1170,7 +1210,8 @@ def psta_process_minute_bucket(
                         if family == "ema":
                             alpha = _alpha_from_params(params)
                             val = _ema_from_series(series_old_to_new, alpha)
-                            upsert_feat(scope, "ema", spec_slug, val)
+                            writer.write(scope, "ema", val, version=spec_slug)
+                            # upsert_feat(scope, "ema", spec_slug, val)
                             timefeat_debug["computed"] += 1
 
                         elif family in ("wma", "wma_linear"):
@@ -1182,7 +1223,9 @@ def psta_process_minute_bucket(
                             if val is None:
                                 timefeat_debug["skipped"].append(f"wma:{spec_slug}@{scope}:no_series")
                                 continue
-                            upsert_feat(scope, "wma", spec_slug, val)
+
+                            writer.write(scope, "wma", val, version=spec_slug)
+                            # upsert_feat(scope, "wma", spec_slug, val)
                             timefeat_debug["computed"] += 1
 
                         elif family == "sma":
@@ -1190,6 +1233,8 @@ def psta_process_minute_bucket(
                             if val is None:
                                 timefeat_debug["skipped"].append(f"sma:{spec_slug}@{scope}:no_series")
                                 continue
+
+
                             upsert_feat(scope, "sma", spec_slug, val)
                             timefeat_debug["computed"] += 1
 
@@ -1280,38 +1325,17 @@ def psta_process_minute_bucket(
                         low = mid - k * std
                         width = up - low
 
-                        safe_upsert_feature_snapshot(
-                            bucket=anchor_bucket,
-                            scope=scope,
-                            name="boll_mid",
-                            version=spec_slug,
-                            value=mid,
-                            is_final=is_final_bar,
-                        )
-                        safe_upsert_feature_snapshot(
-                            bucket=anchor_bucket,
-                            scope=scope,
-                            name="boll_up",
-                            version=spec_slug,
-                            value=up,
-                            is_final=is_final_bar,
-                        )
-                        safe_upsert_feature_snapshot(
-                            bucket=anchor_bucket,
-                            scope=scope,
-                            name="boll_low",
-                            version=spec_slug,
-                            value=low,
-                            is_final=is_final_bar,
-                        )
-                        safe_upsert_feature_snapshot(
-                            bucket=anchor_bucket,
-                            scope=scope,
-                            name="boll_width",
-                            version=spec_slug,
-                            value=width,
-                            is_final=is_final_bar,
-                        )
+                        rows = [
+                            FeatureRecord(bucket=anchor_bucket, scope=scope, name="boll_mid", version=spec_slug,
+                                          value=mid, is_final=is_final_bar),
+                            FeatureRecord(bucket=anchor_bucket, scope=scope, name="boll_up", version=spec_slug,
+                                          value=up, is_final=is_final_bar),
+                            FeatureRecord(bucket=anchor_bucket, scope=scope, name="boll_low", version=spec_slug,
+                                          value=low, is_final=is_final_bar),
+                            FeatureRecord(bucket=anchor_bucket, scope=scope, name="boll_width", version=spec_slug,
+                                          value=width, is_final=is_final_bar),
+                        ]
+                        writer.write_many(rows)
 
                         boll_debug["computed"] += 1
                         if len(boll_debug["samples"]) < 6:
