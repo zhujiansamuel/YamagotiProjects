@@ -9,6 +9,7 @@ from typing import Iterable, List, Optional, Sequence, Tuple
 from django.db import IntegrityError, transaction, connections
 from django.utils import timezone
 from django.db.models import Q
+from datetime import timezone as dt_timezone
 
 from AppleStockChecker.models import FeatureSnapshot
 
@@ -21,11 +22,15 @@ def _quantize_2(x: float | int | str | Decimal | None) -> float | None:
         return None
     return float(Decimal(str(x)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
-def _to_utc_aware(dt: datetime) -> datetime:
-    """确保 bucket 为 UTC-aware datetime。"""
+try:
+    UTC_TZ = timezone.utc          # Django < 5
+except AttributeError:
+    UTC_TZ = dt_timezone.utc       # Django >= 5
+
+def _to_utc_aware(dt):
     if timezone.is_naive(dt):
         dt = timezone.make_aware(dt)
-    return dt.astimezone(timezone.utc)
+    return dt.astimezone(UTC_TZ)
 
 # Feature 的唯一键
 
