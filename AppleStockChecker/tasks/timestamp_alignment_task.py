@@ -224,6 +224,39 @@ def psta_process_minute_bucket(
 
 
     """
+    from django.db import transaction, IntegrityError
+    # ====== 新增：统一的 FeatureSnapshot 安全 upsert ======
+    def safe_upsert_feature_snapshot(*, bucket, scope, name, version, value, is_final, max_retries: int = 2):
+        """
+        对 (bucket, scope, name, version) 做幂等写入，处理并发下的唯一约束冲突：
+        - 若不存在：INSERT
+        - 若并发下插入冲突：捕获 IntegrityError，退回再走一次 get/update
+        - 若已经存在：UPDATE value / is_final
+        """
+        value = float(_d4(value))
+
+        for attempt in range(max_retries + 1):
+            try:
+                with transaction.atomic():
+                    obj, created = FeatureSnapshot.objects.update_or_create(
+                        bucket=bucket,
+                        scope=scope,
+                        name=name,
+                        version=version,
+                        defaults={
+                            "value": value,
+                            "is_final": is_final,
+                        },
+                    )
+                # 成功就直接返回
+                return obj
+            except IntegrityError:
+                # 最后一轮还失败就抛出，让上层 error logger 记录
+                if attempt >= max_retries:
+                    raise
+                # 否则简单重试一次（可以视需要加个很小的 sleep）
+                continue
+
     # ---------- 参数守卫（放在函数最前） ----------
     incoming = dict(
         ts_iso=ts_iso,
@@ -756,9 +789,13 @@ def psta_process_minute_bucket(
                 return mean_v, med_v, std_v, disp_v, n
 
             def upsert_feature(scope: str, name: str, value: float, *, is_final: bool, version: str = 'v1'):
-                FeatureSnapshot.objects.update_or_create(
-                    bucket=feature_bucket, scope=scope, name=name, version=version,
-                    defaults=dict(value=float(_d4(value)), is_final=is_final)
+                safe_upsert_feature_snapshot(
+                    bucket=feature_bucket,
+                    scope=scope,
+                    name=name,
+                    version=version,
+                    value=value,
+                    is_final=is_final,
                 )
 
             # —— 时效权重（AGE_CAP + 半衰期/线性） —— #
@@ -1039,9 +1076,13 @@ def psta_process_minute_bucket(
 
             # —— 工具：回写派生值 —— #
             def upsert_feat(scope: str, name: str, version: str, value: float):
-                FeatureSnapshot.objects.update_or_create(
-                    bucket=anchor_bucket, scope=scope, name=name, version=version,
-                    defaults=dict(value=float(_d4(value)), is_final=is_final_bar)
+                safe_upsert_feature_snapshot(
+                    bucket=anchor_bucket,
+                    scope=scope,
+                    name=name,
+                    version=version,
+                    value=value,
+                    is_final=is_final_bar,
                 )
 
             # —— 工具：取历史“基值”序列（不包含当前 x_t），按时间从新到旧取 limit 条 —— #
@@ -1239,21 +1280,37 @@ def psta_process_minute_bucket(
                         low = mid - k * std
                         width = up - low
 
-                        FeatureSnapshot.objects.update_or_create(
-                            bucket=anchor_bucket, scope=scope, name="boll_mid", version=spec_slug,
-                            defaults=dict(value=float(_d4(mid)), is_final=is_final_bar)
+                        safe_upsert_feature_snapshot(
+                            bucket=anchor_bucket,
+                            scope=scope,
+                            name="boll_mid",
+                            version=spec_slug,
+                            value=mid,
+                            is_final=is_final_bar,
                         )
-                        FeatureSnapshot.objects.update_or_create(
-                            bucket=anchor_bucket, scope=scope, name="boll_up", version=spec_slug,
-                            defaults=dict(value=float(_d4(up)), is_final=is_final_bar)
+                        safe_upsert_feature_snapshot(
+                            bucket=anchor_bucket,
+                            scope=scope,
+                            name="boll_up",
+                            version=spec_slug,
+                            value=up,
+                            is_final=is_final_bar,
                         )
-                        FeatureSnapshot.objects.update_or_create(
-                            bucket=anchor_bucket, scope=scope, name="boll_low", version=spec_slug,
-                            defaults=dict(value=float(_d4(low)), is_final=is_final_bar)
+                        safe_upsert_feature_snapshot(
+                            bucket=anchor_bucket,
+                            scope=scope,
+                            name="boll_low",
+                            version=spec_slug,
+                            value=low,
+                            is_final=is_final_bar,
                         )
-                        FeatureSnapshot.objects.update_or_create(
-                            bucket=anchor_bucket, scope=scope, name="boll_width", version=spec_slug,
-                            defaults=dict(value=float(_d4(width)), is_final=is_final_bar)
+                        safe_upsert_feature_snapshot(
+                            bucket=anchor_bucket,
+                            scope=scope,
+                            name="boll_width",
+                            version=spec_slug,
+                            value=width,
+                            is_final=is_final_bar,
                         )
 
                         boll_debug["computed"] += 1
