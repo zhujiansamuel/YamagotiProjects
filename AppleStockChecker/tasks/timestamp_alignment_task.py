@@ -195,7 +195,8 @@ def _tz_offset_str(dt: timezone.datetime) -> str:
 MAX_BUCKET_ERROR_SAMPLES = 50  # 单桶保留的 error 明细条数上限
 MAX_BUCKET_CHART_POINTS = 3000  # 单桶打包给回调聚合用的 chart point 上限
 MAX_PUSH_POINTS = 20000  # 本次广播给前端的 point 总上限（超过则裁剪到最近 N 条）
-
+PRICE_MIN = 10000
+PRICE_MAX = 350000
 # -----------------------------------------------------
 # --------------------------------------------------------
 # -----------------------------------------------------------
@@ -408,6 +409,15 @@ def psta_process_minute_bucket(
             new_price = r.get("price_new") or r.get("New_Product_Price")
             if new_price is None:
                 raise ValueError("missing New_Product_Price")
+            # 这里做一次强制转 int + 区间过滤
+            try:
+                price = int(new_price)
+            except (TypeError, ValueError):
+                raise ValueError(f"bad New_Product_Price: {new_price!r}")
+
+            # 区间外：直接跳过，不入库、不算指标
+            if price < PRICE_MIN or price > PRICE_MAX:
+                continue
 
             align_diff = int((rec_dt - ts_dt).total_seconds())
 
@@ -554,7 +564,10 @@ def psta_process_minute_bucket(
                         qs_latest = (PurchasingShopTimeAnalysis.objects
                                      .filter(iphone_id=ipid,
                                              Timestamp_Time__gte=bucket_start,
-                                             Timestamp_Time__lt=bucket_end)
+                                             Timestamp_Time__lt=bucket_end,
+                                             New_Product_Price__gte=PRICE_MIN,
+                                             New_Product_Price__lte=PRICE_MAX,
+                                             )
                                      .order_by("shop_id", "-Timestamp_Time")
                                      .distinct("shop_id"))
                         prices = [float(p) for p in qs_latest.values_list("New_Product_Price", flat=True) if
@@ -565,7 +578,11 @@ def psta_process_minute_bucket(
                         if use_window:
                             qs_latest = (
                                 PurchasingShopTimeAnalysis.objects
-                                .filter(iphone_id=ipid, Timestamp_Time__gte=bucket_start, Timestamp_Time__lt=bucket_end)
+                                .filter(iphone_id=ipid,
+                                        Timestamp_Time__gte=bucket_start,
+                                        Timestamp_Time__lt=bucket_end,
+                                        New_Product_Price__gte=PRICE_MIN,
+                                        New_Product_Price__lte=PRICE_MAX,)
                                 .order_by("shop_id", "-Timestamp_Time")
                                 .distinct("shop_id")
                                 .values("shop_id", "New_Product_Price", "Timestamp_Time")
@@ -752,8 +769,12 @@ def psta_process_minute_bucket(
             if use_window:
                 base_qs = (
                     PurchasingShopTimeAnalysis.objects
-                    .filter(Timestamp_Time__gte=bucket_start, Timestamp_Time__lt=bucket_end,
-                            shop_id__in=shops_seen, iphone_id__in=iphones_seen)
+                    .filter(Timestamp_Time__gte=bucket_start,
+                            Timestamp_Time__lt=bucket_end,
+                            shop_id__in=shops_seen,
+                            iphone_id__in=iphones_seen,
+                            New_Product_Price__gte=PRICE_MIN,
+                            New_Product_Price__lte=PRICE_MAX,)
                     .order_by("shop_id", "iphone_id", "-Timestamp_Time")
                     .distinct("shop_id", "iphone_id")
                     .values("shop_id", "iphone_id", "New_Product_Price", "Timestamp_Time")
@@ -763,7 +784,10 @@ def psta_process_minute_bucket(
                 base_qs = (
                     PurchasingShopTimeAnalysis.objects
                     .filter(Timestamp_Time=ts_dt,
-                            shop_id__in=shops_seen, iphone_id__in=iphones_seen)
+                            shop_id__in=shops_seen,
+                            iphone_id__in=iphones_seen,
+                            New_Product_Price__gte=PRICE_MIN,
+                            New_Product_Price__lte=PRICE_MAX,)
                     .values("shop_id", "iphone_id", "New_Product_Price", "Timestamp_Time")
                 )
                 feature_bucket = anchor_bucket
