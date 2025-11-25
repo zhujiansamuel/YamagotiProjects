@@ -1516,6 +1516,16 @@ def _process_minute_rows(*, ts_iso: str, ts_dt, rows, job_id: str):
     orig_tz = "+09:00"
     chart_points = []
 
+    # 预计算所有 iphone_id 的动态价格区间（优化性能，避免重复查询）
+    unique_iphone_ids = {r.get("iphone_id") for r in rows if r.get("iphone_id")}
+    price_ranges_cache = {}
+    for iphone_id in unique_iphone_ids:
+        try:
+            price_ranges_cache[iphone_id] = get_dynamic_price_range(iphone_id, ts_dt)
+        except Exception as e:
+            logger.warning(f"计算动态价格区间失败: iphone_id={iphone_id}, error={e}, 使用后备区间")
+            price_ranges_cache[iphone_id] = (PRICE_FALLBACK_MIN, PRICE_FALLBACK_MAX)
+
     for r in rows:
         try:
             # 轻量校验
@@ -1538,8 +1548,13 @@ def _process_minute_rows(*, ts_iso: str, ts_dt, rows, job_id: str):
             except (TypeError, ValueError):
                 raise ValueError(f"bad New_Product_Price: {new_price!r}")
 
-            # 区间外：直接跳过
-            if price < PRICE_MIN or price > PRICE_MAX:
+            # 使用动态价格区间过滤（替换固定阈值）
+            price_min, price_max = price_ranges_cache.get(iphone_id, (PRICE_FALLBACK_MIN, PRICE_FALLBACK_MAX))
+            if not (price_min <= price <= price_max):
+                logger.debug(
+                    f"价格超出动态区间: shop_id={shop_id}, iphone_id={iphone_id}, "
+                    f"price={price}, 区间=[{price_min:.0f}, {price_max:.0f}]"
+                )
                 continue
 
             align_diff = int((rec_dt - ts_dt).total_seconds())
