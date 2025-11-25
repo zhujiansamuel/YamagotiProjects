@@ -432,42 +432,55 @@ def _agg_overallbar(
                             iphone_id=ipid,
                             Timestamp_Time__gte=bucket_start,
                             Timestamp_Time__lt=bucket_end,
-                            New_Product_Price__gte=PRICE_MIN,
-                            New_Product_Price__lte=PRICE_MAX,
+                            New_Product_Price__isnull=False,  # 只过滤空值，不用固定阈值
                         )
                         .order_by("shop_id", "-Timestamp_Time")
                         .distinct("shop_id")
                     )
-                    prices = [
+                    prices_raw = [
                         float(p)
                         for p in qs_latest.values_list("New_Product_Price", flat=True)
                         if p is not None
                     ]
                     shop_cnt = qs_latest.values("shop_id").count()
                     ob_bucket = bucket_start
+                    reference_time = bucket_end  # 使用桶结束时间作为参考时间
                 else:
                     qs_latest = (
                         PurchasingShopTimeAnalysis.objects
                         .filter(
                             iphone_id=ipid,
                             Timestamp_Time=ts_dt,
-                            New_Product_Price__gte=PRICE_MIN,
-                            New_Product_Price__lte=PRICE_MAX,
+                            New_Product_Price__isnull=False,  # 只过滤空值，不用固定阈值
                         )
                         .values("shop_id", "New_Product_Price")
                     )
-                    prices = [
+                    prices_raw = [
                         float(r["New_Product_Price"])
                         for r in qs_latest
                         if r["New_Product_Price"] is not None
                     ]
                     shop_cnt = qs_latest.values("shop_id").distinct().count()
                     ob_bucket = ts_dt
+                    reference_time = ts_dt
 
-                if not prices:
+                if not prices_raw:
                     continue
 
-                # 先按“平均值 ±50%”过滤异常值，再计算统计量
+                # 第一步：使用动态价格区间过滤明显错误的数据
+                price_min, price_max = get_dynamic_price_range(ipid, reference_time)
+                prices = [p for p in prices_raw if price_min <= p <= price_max]
+
+                if not prices:
+                    # 如果动态区间过滤后没有数据，记录警告并使用原始数据
+                    logger.warning(
+                        f"动态价格过滤后无数据: iphone_id={ipid}, "
+                        f"原始样本数={len(prices_raw)}, "
+                        f"区间=[{price_min:.0f}, {price_max:.0f}]"
+                    )
+                    prices = prices_raw
+
+                # 第二步：使用统计方法过滤异常值（保留原有逻辑）
                 vals_raw = [float(p) for p in prices]
                 vals_filtered, _, _, _ = _filter_outliers_by_mean_band(vals_raw)
                 if not vals_filtered:
@@ -689,13 +702,13 @@ def _agg_feature_combos(
                     Timestamp_Time__lt=bucket_end,
                     shop_id__in=shops_seen,
                     iphone_id__in=iphones_seen,
-                    New_Product_Price__gte=PRICE_MIN,
-                    New_Product_Price__lte=PRICE_MAX,
+                    New_Product_Price__isnull=False,  # 只过滤空值，不用固定阈值
                 )
                 .order_by("shop_id", "iphone_id", "-Timestamp_Time")
                 .distinct("shop_id", "iphone_id")
                 .values("shop_id", "iphone_id", "New_Product_Price", "Timestamp_Time")
             )
+            reference_time = bucket_end
         else:
             base_qs = (
                 PurchasingShopTimeAnalysis.objects
@@ -703,22 +716,43 @@ def _agg_feature_combos(
                     Timestamp_Time=ts_dt,
                     shop_id__in=shops_seen,
                     iphone_id__in=iphones_seen,
-                    New_Product_Price__gte=PRICE_MIN,
-                    New_Product_Price__lte=PRICE_MAX,
+                    New_Product_Price__isnull=False,  # 只过滤空值，不用固定阈值
                 )
                 .values("shop_id", "iphone_id", "New_Product_Price", "Timestamp_Time")
             )
+            reference_time = ts_dt
+
+        # 为每个 iphone_id 计算动态价格区间
+        price_ranges = {}
+        for iphone_id in iphones_seen:
+            price_ranges[iphone_id] = get_dynamic_price_range(iphone_id, reference_time)
 
         # (shop, iphone) -> (last_price, last_ts)
         data_by_si: Dict[tuple, tuple] = {}
+        filtered_count = 0
+        total_count = 0
         for rec in base_qs:
+            total_count += 1
             p = rec.get("New_Product_Price")
             t = rec.get("Timestamp_Time")
             if p is None:
                 continue
             s = int(rec["shop_id"])
             i = int(rec["iphone_id"])
+
+            # 使用动态价格区间过滤
+            price_min, price_max = price_ranges.get(i, (PRICE_FALLBACK_MIN, PRICE_FALLBACK_MAX))
+            if not (price_min <= float(p) <= price_max):
+                filtered_count += 1
+                continue
+
             data_by_si[(s, i)] = (float(p), t)
+
+        if filtered_count > 0:
+            logger.info(
+                f"特征计算: 动态价格过滤，总记录={total_count}, 过滤={filtered_count}, "
+                f"保留={total_count - filtered_count}"
+            )
 
         # —— 统计工具 —— #
         def _stats(values):
@@ -1325,8 +1359,128 @@ def _agg_bollinger_bands(
 MAX_BUCKET_ERROR_SAMPLES = 50  # 单桶保留的 error 明细条数上限
 MAX_BUCKET_CHART_POINTS = 3000  # 单桶打包给回调聚合用的 chart point 上限
 MAX_PUSH_POINTS = 20000  # 本次广播给前端的 point 总上限（超过则裁剪到最近 N 条）
+
+# 废弃：固定的价格阈值（保留用于后备）
 PRICE_MIN = 10000
 PRICE_MAX = 350000
+
+# 动态价格区间配置
+PRICE_LOOKBACK_MINUTES = 30  # 向前查询多少分钟的数据作为参考
+PRICE_TOLERANCE_RATIO = 0.5  # 容差比例：±50%
+PRICE_MIN_SAMPLES = 3  # 计算参考价格所需的最少样本数
+PRICE_FALLBACK_MIN = 10000  # 数据不足时的后备最小值
+PRICE_FALLBACK_MAX = 350000  # 数据不足时的后备最大值
+
+
+def get_dynamic_price_range(
+    iphone_id: int,
+    reference_time,
+    lookback_minutes: int = PRICE_LOOKBACK_MINUTES,
+    tolerance_ratio: float = PRICE_TOLERANCE_RATIO,
+    min_samples: int = PRICE_MIN_SAMPLES,
+) -> tuple[float, float]:
+    """
+    根据指定 iPhone 型号在参考时间点前 N 分钟内的历史价格，
+    动态计算该型号的合理价格区间。
+
+    逻辑：
+    1. 查询该 iphone_id 在 [reference_time - lookback_minutes, reference_time) 时间窗口内
+       所有不同店铺的最新价格记录
+    2. 计算这些价格的平均值作为参考价格
+    3. 基于参考价格和容差比例，计算价格区间：
+       - price_min = reference_price * (1 - tolerance_ratio)
+       - price_max = reference_price * (1 + tolerance_ratio)
+    4. 如果样本数不足，返回后备的固定区间
+
+    参数：
+        iphone_id: iPhone 型号 ID
+        reference_time: 参考时间点（datetime 对象）
+        lookback_minutes: 向前查询的时间窗口（分钟）
+        tolerance_ratio: 价格容差比例（0.5 表示 ±50%）
+        min_samples: 计算参考价格所需的最少样本数
+
+    返回：
+        (price_min, price_max): 动态计算的价格区间
+    """
+    from django.db.models import Avg, Count
+    from AppleStockChecker.models import PurchasingShopTimeAnalysis
+
+    # 计算查询时间窗口
+    start_time = reference_time - timedelta(minutes=lookback_minutes)
+
+    # 查询该时间窗口内不同店铺的最新价格（每个店铺取最新一条）
+    # 使用子查询获取每个店铺的最新记录
+    subquery = (
+        PurchasingShopTimeAnalysis.objects
+        .filter(
+            iphone_id=iphone_id,
+            Timestamp_Time__gte=start_time,
+            Timestamp_Time__lt=reference_time,
+            New_Product_Price__isnull=False,
+        )
+        .order_by("shop_id", "-Timestamp_Time")
+        .distinct("shop_id")
+        .values_list("New_Product_Price", flat=True)
+    )
+
+    prices = list(subquery)
+
+    # 如果样本数不足，返回后备区间
+    if len(prices) < min_samples:
+        logger.warning(
+            f"动态价格区间: iphone_id={iphone_id}, 样本数不足({len(prices)}/{min_samples}), "
+            f"使用后备区间 [{PRICE_FALLBACK_MIN}, {PRICE_FALLBACK_MAX}]"
+        )
+        return PRICE_FALLBACK_MIN, PRICE_FALLBACK_MAX
+
+    # 计算平均价格作为参考价格
+    reference_price = sum(prices) / len(prices)
+
+    # 计算动态区间
+    price_min = reference_price * (1 - tolerance_ratio)
+    price_max = reference_price * (1 + tolerance_ratio)
+
+    # 确保区间不会过小（至少保留一定的范围）
+    min_range = reference_price * 0.2  # 至少 ±10%
+    if price_max - price_min < min_range:
+        price_min = reference_price * 0.9
+        price_max = reference_price * 1.1
+
+    logger.info(
+        f"动态价格区间: iphone_id={iphone_id}, 样本数={len(prices)}, "
+        f"参考价格={reference_price:.0f}, 区间=[{price_min:.0f}, {price_max:.0f}]"
+    )
+
+    return price_min, price_max
+
+
+def is_price_valid(
+    price: float,
+    iphone_id: int,
+    reference_time,
+    use_dynamic_range: bool = True,
+) -> bool:
+    """
+    检查价格是否在合理区间内。
+
+    参数：
+        price: 待检查的价格
+        iphone_id: iPhone 型号 ID
+        reference_time: 参考时间点
+        use_dynamic_range: 是否使用动态价格区间（默认 True）
+
+    返回：
+        bool: 价格是否有效
+    """
+    if use_dynamic_range:
+        price_min, price_max = get_dynamic_price_range(iphone_id, reference_time)
+    else:
+        # 使用固定区间
+        price_min, price_max = PRICE_MIN, PRICE_MAX
+
+    return price_min <= price <= price_max
+
+
 # -----------------------------------------------------
 # --------------------------------------------------------
 # -----------------------------------------------------------
@@ -1335,7 +1489,7 @@ PRICE_MAX = 350000
 # --------------------------------------------------------
 # -----------------------------------------------------
 # -----------------------------------------------
-# 子任务：处理“分钟桶”并返回桶级摘要 + 图表增量
+# 子任务：处理"分钟桶"并返回桶级摘要 + 图表增量
 # -----------------------------------------------
 TASK_VER_PSTA = 2
 
