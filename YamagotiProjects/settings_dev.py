@@ -162,26 +162,55 @@ if USE_SQLITE:
         }
     }
 else:
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.postgresql",
-            "NAME": os.getenv("POSTGRES_DB"),
-            "USER": os.getenv("POSTGRES_USER"),
-            "PASSWORD": os.getenv("POSTGRES_PASSWORD"),
-            "HOST": os.getenv("POSTGRES_HOST", "127.0.0.1"),
-            "PORT": int(os.getenv("POSTGRES_PORT", "5432")),
-            "CONN_MAX_AGE": 400, 
-            "OPTIONS": {
-            "connect_timeout": 5,
-            # 开 TCP keepalive，防中间网络设备闲置断链
-            "options": "-c tcp_keepalives_idle=60 -c tcp_keepalives_interval=30 -c tcp_keepalives_count=5",
-            # 长任务时别让 PG 端主动断你的语句/事务（按需调整）
-            "options": "-c statement_timeout=0 -c idle_in_transaction_session_timeout=0 "
-                       "-c tcp_keepalives_idle=60 -c tcp_keepalives_interval=30 -c tcp_keepalives_count=5",
-        },
-            
+    # PostgreSQL 配置：支持 PgBouncer 连接池
+    USE_PGBOUNCER = os.getenv("USE_PGBOUNCER", "false").lower() in {"1", "true", "t", "yes", "y"}
+
+    if USE_PGBOUNCER:
+        # 通过 PgBouncer 连接（生产环境推荐）
+        # PgBouncer 使用事务池模式，连接配置需要特殊处理
+        DATABASES = {
+            "default": {
+                "ENGINE": "django.db.backends.postgresql",
+                "NAME": os.getenv("PGBOUNCER_DATABASE", os.getenv("POSTGRES_DB")),
+                "USER": os.getenv("PGBOUNCER_USER", os.getenv("POSTGRES_USER")),
+                "PASSWORD": os.getenv("PGBOUNCER_PASSWORD", os.getenv("POSTGRES_PASSWORD")),
+                "HOST": os.getenv("PGBOUNCER_HOST", "127.0.0.1"),
+                "PORT": int(os.getenv("PGBOUNCER_PORT", "6432")),
+                # PgBouncer 事务池模式下，CONN_MAX_AGE 必须为 0
+                # 因为 PgBouncer 会在每个事务结束后回收连接
+                "CONN_MAX_AGE": 0,
+                "CONN_HEALTH_CHECKS": True,  # Django 4.1+ 健康检查
+                "OPTIONS": {
+                    "connect_timeout": 5,
+                    # 禁用服务器端游标，PgBouncer 事务池模式不支持
+                    # TCP keepalive 保持连接活跃
+                    "options": "-c statement_timeout=60000 "
+                               "-c tcp_keepalives_idle=60 -c tcp_keepalives_interval=30 -c tcp_keepalives_count=5",
+                },
+                "DISABLE_SERVER_SIDE_CURSORS": True,  # 关键：PgBouncer 必须禁用
+            }
         }
-    }
+    else:
+        # 直接连接 PostgreSQL（开发环境）
+        DATABASES = {
+            "default": {
+                "ENGINE": "django.db.backends.postgresql",
+                "NAME": os.getenv("POSTGRES_DB"),
+                "USER": os.getenv("POSTGRES_USER"),
+                "PASSWORD": os.getenv("POSTGRES_PASSWORD"),
+                "HOST": os.getenv("POSTGRES_HOST", "127.0.0.1"),
+                "PORT": int(os.getenv("POSTGRES_PORT", "5432")),
+                "CONN_MAX_AGE": 400,
+                "CONN_HEALTH_CHECKS": True,
+                "OPTIONS": {
+                    "connect_timeout": 5,
+                    # 开 TCP keepalive，防中间网络设备闲置断链
+                    # 长任务时别让 PG 端主动断你的语句/事务（按需调整）
+                    "options": "-c statement_timeout=0 -c idle_in_transaction_session_timeout=0 "
+                               "-c tcp_keepalives_idle=60 -c tcp_keepalives_interval=30 -c tcp_keepalives_count=5",
+                },
+            }
+        }
 
 ## 小建议：开启原子请求（SQLite 写入更稳）
 #DATABASES["default"]["ATOMIC_REQUESTS"] = True
