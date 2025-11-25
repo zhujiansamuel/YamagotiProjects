@@ -168,31 +168,48 @@ WSGI_APPLICATION = 'YamagotiProjects.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
+# 数据库配置：支持环境变量和 PgBouncer
+USE_PGBOUNCER = os.getenv("USE_PGBOUNCER", "false").lower() == "true"
 
-# DATABASES = {
-#     "default": {
-#         "ENGINE": "django.db.backends.postgresql",
-#         "NAME": "yappdb",
-#         "USER": "samuelzhujian",
-#         "PASSWORD": "Xdb73008762",
-#         "HOST": "127.0.0.1",
-#         "PORT": "5432",
-#         "CONN_MAX_AGE": 60,  # 连接复用
-#         "OPTIONS": {"sslmode": "prefer"},  # 按需
-#     }
-# }
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": "applestockchecker_dev",
-        "USER": "samuelzhu",         # 或 "postgres"
-        "PASSWORD": "Xdb73008762",       # 如果用 "postgres" 则是 "localpass"
-        "HOST": "127.0.0.1",
-        "PORT": "5433",               # ★ 容器映射到 5433
-        "CONN_MAX_AGE": 60,
-        "OPTIONS": {"options": "-c statement_timeout=60000"},
+if USE_PGBOUNCER:
+    # 通过 PgBouncer 连接（生产环境推荐）
+    # PgBouncer 使用事务池模式，连接配置需要特殊处理
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": os.getenv("PGBOUNCER_DATABASE", "applestockchecker_dev"),
+            "USER": os.getenv("PGBOUNCER_USER", "samuelzhu"),
+            "PASSWORD": os.getenv("PGBOUNCER_PASSWORD", "Xdb73008762"),
+            "HOST": os.getenv("PGBOUNCER_HOST", "127.0.0.1"),
+            "PORT": os.getenv("PGBOUNCER_PORT", "6432"),
+            # PgBouncer 事务池模式下，CONN_MAX_AGE 必须为 0
+            # 因为 PgBouncer 会在每个事务结束后回收连接
+            "CONN_MAX_AGE": 0,
+            "CONN_HEALTH_CHECKS": True,  # Django 4.1+ 健康检查
+            "OPTIONS": {
+                # 禁用服务器端游标，PgBouncer 事务池模式不支持
+                "options": "-c statement_timeout=60000",
+            },
+            "DISABLE_SERVER_SIDE_CURSORS": True,  # 关键：PgBouncer 必须禁用
+        }
     }
-}
+else:
+    # 直接连接 PostgreSQL（开发环境）
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": os.getenv("POSTGRES_DATABASE", "applestockchecker_dev"),
+            "USER": os.getenv("POSTGRES_USER", "samuelzhu"),
+            "PASSWORD": os.getenv("POSTGRES_PASSWORD", "Xdb73008762"),
+            "HOST": os.getenv("POSTGRES_HOST", "127.0.0.1"),
+            "PORT": os.getenv("POSTGRES_PORT", "5433"),
+            "CONN_MAX_AGE": 60,  # 连接复用
+            "CONN_HEALTH_CHECKS": True,
+            "OPTIONS": {
+                "options": "-c statement_timeout=60000",
+            },
+        }
+    }
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
 

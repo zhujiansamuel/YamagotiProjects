@@ -31,6 +31,7 @@ ALLOWED_HOSTS = [h for h in os.getenv("DJANGO_ALLOWED_HOSTS", "").split(",") if 
 # Application definition
 
 INSTALLED_APPS = [
+    "channels",
     'simplepro',
     'simpleui',
     'import_export',
@@ -44,19 +45,23 @@ INSTALLED_APPS = [
     "corsheaders",
     "rest_framework",
     "drf_spectacular",
+    "django_celery_beat",     # 定时任务(可在Admin里改间隔/暂停)
+    "django_celery_results",  # 可选：任务结果持久化到DB
+    "django_filters",
 
 ]
 
 MIDDLEWARE = [
+    'django.middleware.locale.LocaleMiddleware',  
     "corsheaders.middleware.CorsMiddleware",
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    # "YamagotiProjects.middleware.login_required.LoginRequiredMiddleware",
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-
     'simplepro.middlewares.SimpleMiddleware'
 ]
 
@@ -94,7 +99,7 @@ SIMPLE_JWT = {
     "BLACKLIST_AFTER_ROTATION": True,
     "AUTH_HEADER_TYPES": ("Bearer",),
     # 如需与环境变量 SECRET_KEY 分离，可自定义 SIGNING_KEY
-    # "SIGNING_KEY": os.getenv("JWT_SECRET", SECRET_KEY),
+    "SIGNING_KEY": os.getenv("JWT_SECRET", SECRET_KEY),
 }
 
 # ---- OpenAPI 文档 ----
@@ -109,12 +114,20 @@ SPECTACULAR_SETTINGS = {
 
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
+    "https://yamaguti.ngrok.io",
+    "https://*.ngrok.io",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     # 部署后把前端域名加进来
 ]
 # 若你在本地调试 CSRF：
 CSRF_TRUSTED_ORIGINS = [os.getenv("DJANGO_CSRF_TRUSTED_ORIGINS", "")]
+
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
+
 
 TEMPLATES = [
     {
@@ -149,19 +162,58 @@ if USE_SQLITE:
         }
     }
 else:
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.postgresql",
-            "NAME": os.getenv("POSTGRES_DB"),
-            "USER": os.getenv("POSTGRES_USER"),
-            "PASSWORD": os.getenv("POSTGRES_PASSWORD"),
-            "HOST": os.getenv("POSTGRES_HOST", "127.0.0.1"),
-            "PORT": int(os.getenv("POSTGRES_PORT", "5432")),
-        }
-    }
+    # PostgreSQL 配置：支持 PgBouncer 连接池
+    USE_PGBOUNCER = os.getenv("USE_PGBOUNCER", "false").lower() in {"1", "true", "t", "yes", "y"}
 
-# 小建议：开启原子请求（SQLite 写入更稳）
-DATABASES["default"]["ATOMIC_REQUESTS"] = True
+    if USE_PGBOUNCER:
+        # 通过 PgBouncer 连接（生产环境推荐）
+        # PgBouncer 使用事务池模式，连接配置需要特殊处理
+        DATABASES = {
+            "default": {
+                "ENGINE": "django.db.backends.postgresql",
+                "NAME": os.getenv("PGBOUNCER_DATABASE", os.getenv("POSTGRES_DB")),
+                "USER": os.getenv("PGBOUNCER_USER", os.getenv("POSTGRES_USER")),
+                "PASSWORD": os.getenv("PGBOUNCER_PASSWORD", os.getenv("POSTGRES_PASSWORD")),
+                "HOST": os.getenv("PGBOUNCER_HOST", "127.0.0.1"),
+                "PORT": int(os.getenv("PGBOUNCER_PORT", "6432")),
+                # PgBouncer 事务池模式下，CONN_MAX_AGE 必须为 0
+                # 因为 PgBouncer 会在每个事务结束后回收连接
+                "CONN_MAX_AGE": 0,
+                "CONN_HEALTH_CHECKS": True,  # Django 4.1+ 健康检查
+                "OPTIONS": {
+                    "connect_timeout": 5,
+                    # 禁用服务器端游标，PgBouncer 事务池模式不支持
+                    # TCP keepalive 保持连接活跃
+                    "options": "-c statement_timeout=60000 "
+                               "-c tcp_keepalives_idle=60 -c tcp_keepalives_interval=30 -c tcp_keepalives_count=5",
+                },
+                "DISABLE_SERVER_SIDE_CURSORS": True,  # 关键：PgBouncer 必须禁用
+            }
+        }
+    else:
+        # 直接连接 PostgreSQL（开发环境）
+        DATABASES = {
+            "default": {
+                "ENGINE": "django.db.backends.postgresql",
+                "NAME": os.getenv("POSTGRES_DB"),
+                "USER": os.getenv("POSTGRES_USER"),
+                "PASSWORD": os.getenv("POSTGRES_PASSWORD"),
+                "HOST": os.getenv("POSTGRES_HOST", "127.0.0.1"),
+                "PORT": int(os.getenv("POSTGRES_PORT", "5432")),
+                "CONN_MAX_AGE": 400,
+                "CONN_HEALTH_CHECKS": True,
+                "OPTIONS": {
+                    "connect_timeout": 5,
+                    # 开 TCP keepalive，防中间网络设备闲置断链
+                    # 长任务时别让 PG 端主动断你的语句/事务（按需调整）
+                    "options": "-c statement_timeout=0 -c idle_in_transaction_session_timeout=0 "
+                               "-c tcp_keepalives_idle=60 -c tcp_keepalives_interval=30 -c tcp_keepalives_count=5",
+                },
+            }
+        }
+
+## 小建议：开启原子请求（SQLite 写入更稳）
+#DATABASES["default"]["ATOMIC_REQUESTS"] = True
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
@@ -184,9 +236,9 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = 'ja-jp'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'Asia/Tokyo'
 
 USE_I18N = True
 
@@ -242,19 +294,19 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 EXTERNAL_IPHONE17_INFO_PATH = BASE_DIR / "AppleStockChecker" / "data" / "iphone17_info.csv"
 
 # WebScraper Cloud API 访问令牌（在 Web Scraper Cloud 的 API 页面可见）
-WEB_SCRAPER_API_TOKEN = "vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"
+WEB_SCRAPER_API_TOKEN = "YNndD5WeM3UFO32RKdrogf2p4hNVPlZE3r3rLCoHD3B4idpJcjyqRJbNndXM"
 
 # 导出地址模板（如官方变更，可在这里改）
 # WEB_SCRAPER_EXPORT_URL_TEMPLATE = "https://api.webscraper.io/api/v1/scraping-job/{job_id}/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"
 WEB_SCRAPER_EXPORT_URL_TEMPLATE = "https://api.webscraper.io/api/v1/scraping-job/{job_id}/csv"
 
 # Webhook 共享密钥：在 WebScraper Cloud 的 webhook URL 上带 ?token=XXXX，或在 Header 里带 X-Webhook-Token
-WEB_SCRAPER_WEBHOOK_TOKEN = "0BkhVQJQPDe4IPfxfnw9bX8hYzxY29D48uGi8zq8TcjbsMIvXShEzaEJFFAj"
+WEB_SCRAPER_WEBHOOK_TOKEN = "x2fcby15Mdai5xJqFm5A67Xyu9z14YQGnyGNWt4omOVm7DQBoPgHbWzap7VF"
 
 # 可选：把 WebScraper 的 sitemap 名 或 job 上的 custom_id 映射为清洗器名（shop3/shop4…）
 WEB_SCRAPER_SOURCE_MAP = {
-
-    "shop10": "shop10",
+    "shop1": "shop1",
+    "shop2": "shop2",
     "shop3": "shop3",
     "shop4": "shop4",
     "shop5-1": "shop5-1",
@@ -268,6 +320,17 @@ WEB_SCRAPER_SOURCE_MAP = {
     "shop7": "shop7",
     "shop8": "shop8",
     "shop9": "shop9",
+    "shop10": "shop10",
+    "shop11": "shop11",
+    "shop12": "shop12",
+    "shop13": "shop13",
+    "shop14": "shop14",
+    "shop15": "shop15",
+    "shop16": "shop16",
+    "shop17": "shop17",
+    "shop18": "shop18",
+    "shop19": "shop19",
+    "shop20": "shop20",
 }
 
 # 部属用
@@ -276,8 +339,20 @@ WEB_SCRAPER_SOURCE_MAP = {
 # 开发用
 WEB_SCRAPER_WEBHOOK_TOKEN = "XNgCZCQN7dvkSP7K17xmK8aq-6_bjvI_"
 
+REDIS_URL = os.getenv("REDIS_URL", "redis://redis::6379/0")
+REDIS_URL_RESULT = os.getenv("REDIS_URL_RESULT", "redis://redis::6379/1")
+
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {"hosts": ["redis://redis:6379/1"],  },
+    }
+}
+
+
+
 # Celery/Redis
-CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://127.0.0.1:6379/0")
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", REDIS_URL)
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
 CELERY_TASK_TIME_LIMIT = 600
 CELERY_TASK_SOFT_TIME_LIMIT = 540
@@ -410,18 +485,16 @@ SIMPLEUI_CONFIG = {
             {
                 'name': 'iPhone関連データ',
                 'icon': 'fa-solid fa-mobile-screen-button',
-                'models': [{'name': '中古店価格推移(PN別)',
-                            'icon': 'fa-solid fa-chart-line',
-                            'url': '/AppleStockChecker/resale-trend-pn-merged/',
+                'models': [
+                           {'name': '価格推移实时图表',
+                            'icon': 'fa-solid fa-store',
+                            'url': '/AppleStockChecker/statistical-data-summary/',
                             },
-                           {'name': '中古店価格推移(Model別)',
-                            'icon': 'fa-solid fa-chart-line',
-                            'url': '/AppleStockChecker/resale-trend-colors-merged/',
-                            },
-                           {'name': '中古店価格ボード',
+                           {'name': '価格ボード(展示)',
                             'icon': 'fa-solid fa-table-columns',
                             'url': '/AppleStockChecker/price-matrix/',
                             },
+                            
                            {'name': 'iPhone公式在庫表',
                             'icon': 'fa-solid fa-warehouse',
                             'url': '/AppleStockChecker/price-matrix/',
@@ -441,6 +514,58 @@ SIMPLEUI_CONFIG = {
                                         'icon': 'fa-solid fa-money-check-dollar',
                                         'url': '/admin/AppleStockChecker/purchasingshoppricerecord/'
                                         },
+                                        {'name': '价格整形记录',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/purchasingshoptimeanalysis/'
+                                        },
+
+                                       {'name': '基础统计featuresnapshot-data',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/featuresnapshot/'
+                                        },
+                                       {'name': '参数空间featurespec-data',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/featurespec/'
+                                        },
+
+                                       {'name': '统计模型modelartifact-data',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/modelartifact/'
+                                        },
+                                       {'name': '预测模型forecastsnapshot-data',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/forecastsnapshot/'
+                                        },
+                                       {'name': 'cohortbar-data',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/cohortbar/'
+                                        },
+
+                                       {'name': '商品组合成员cohortmember-data',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/cohortmember/'
+                                        },
+                                       {'name': '商品组合cohort-data',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/cohort/'
+                                        },
+                                       {'name': 'overallbar-data',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/overallbar/'
+                                        },
+                                       {'name': '店铺组合成员shopweightitem-data',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/shopweightitem/'
+                                        },
+                                       {'name': '店铺组合shopweightprofile-data',
+                                        'icon': 'fa-solid fa-money-check-dollar',
+                                        'url': '/admin/AppleStockChecker/shopweightprofile/'
+                                        },
+
+
+
+
+
                                        ]
                             },
 
@@ -456,6 +581,56 @@ SIMPLEUI_CONFIG = {
                                         },
                                        ]
                             },
+                            {'name': '临时页面',
+                            'icon': 'fa-solid fa-file-contract',
+                            'models': [                                
+                                        {'name': '価格推移(Model別)',
+                                         'icon': 'fa-solid fa-chart-line',
+                                         'url': '/AppleStockChecker/resale-trend-colors-merged/',
+                                         },
+                                        {'name': '周期任务',
+                                        'icon': 'fa-solid fa-store',
+                                        'url': '/admin/django_celery_beat/periodictask/',
+                                        },
+                                        {'name': '中古店価格推移(PN別)',
+                                        'icon': 'fa-solid fa-chart-line',
+                                        'url': '/AppleStockChecker/resale-trend-pn-merged/',
+                                        },
+                                       {'name': '価格ボード(社内)',
+                                        'icon': 'fa-solid fa-table-columns',
+                                        'url': '/AppleStockChecker/price-matrix/',
+                                        },
+                                        {'name': '间隔',
+                                         'icon': 'fa-solid fa-chart-line',
+                                         'url': '/admin/django_celery_beat/intervalschedule/',
+                                         },
+                                        {'name': '计划任务',
+                                         'icon': 'fa-solid fa-chart-line',
+                                         'url': '/admin/django_celery_beat/crontabschedule/',
+                                         },
+                                        {'name': '日程时间',
+                                         'icon': 'fa-solid fa-chart-line',
+                                         'url': '/admin/django_celery_beat/solarschedule/',
+                                         },
+                                        {'name': '定时',
+                                         'icon': 'fa-solid fa-chart-line',
+                                         'url': '/admin/django_celery_beat/clockedschedule/',
+                                         },
+
+                                        {'name': '周期性任务',
+                                         'icon': 'fa-solid fa-chart-line',
+                                         'url': '/admin/django_celery_beat/periodictask/',
+                                         },
+                                        {'name': '用户',
+                                         'icon': 'fa-solid fa-chart-line',
+                                         'url': '/admin/auth/user/',
+                                         },
+                                        {'name': '组',
+                                         'icon': 'fa-solid fa-chart-line',
+                                         'url': '/admin/auth/group/',
+                                         },
+                                       ]
+                            },
 
                            ]
             },
@@ -464,12 +639,7 @@ SIMPLEUI_CONFIG = {
 
 
 
-CACHES = {
-    'default': {
-        'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
-        'LOCATION': 'my_cache_table',
-    }
-}
+
 
 
 SESSION_EXPIRE_AT_BROWSER_CLOSE = True
@@ -488,6 +658,7 @@ DJANGO_EASY_AUDIT_UNREGISTERED_URLS_DEFAULT = [r'^/admin/',
                                                r'^/ckeditor5/',
                                                r'^/api-auth/',
                                                ]
+
 
 
 # --- 本地开发：允许 Session 认证 + JWT；生产保持只有 JWT ---
@@ -510,3 +681,71 @@ else:
             "rest_framework.permissions.IsAuthenticated",
         ],
     }
+
+SHOP_DISPLAY_ORDER = [
+    "買取商店",
+    "海峡通信",  # shop2　　　      ２
+    "買取一丁目",  # shop3         ３
+    "モバイルミックス",  # shop4     4
+    "森森買取",  # shop5           ５
+    "買取ルデヤ",  # shop6         ６
+    "買取wiki",  # shop8          ７
+    "買取ホムラ",  # shop7         ８
+    "ドラゴンモバイル",  # shop10　　９
+    "モバステ",  # shop11　         10
+    "アキモバ",  # shop9           11
+    "トゥインクル",  # shop12        12
+    "家電市場",  # shop13           13
+    "買取楽園",  # shop14           14
+    "買取当番",  # shop15           15
+    "携帯空間",  # shop16           16
+    "ゲストモバイル",  # shop17               17
+    "買取オク",  # shop18               18
+    # "",  # shop19               19
+    "毎日買取",  # shop20           20
+    # "",  # shop21
+    # "",  # shop22
+    # "",  # shop23
+    # "",  # shop24
+    # "",  # shop25
+]
+
+
+
+FX_API_KEYS = {
+    "alphavantage": "AlphaVantageKey",
+    "finnhub": "FinnhubKey",
+    "twelvedata": "603d21df9b194d9daeaccd898cee72a3",
+}
+
+TREND_MAX_LOOKBACK_DAYS = 90
+TREND_DB_MAX_WORKERS    = 6
+TREND_CPU_MAX_WORKERS   = 0    # 0/None=自动核数
+TREND_DOWNSAMPLE_TARGET = 0 # 每条曲线最多点数（0=关闭）
+
+LIST_ORDER = [
+    "iphone-17-pro-max-256",
+    "iphone-17-pro-max-512",
+    "iphone-17-pro-max-1024",
+    "iphone-17-pro-max-2048",
+    "iphone-17-pro-256",
+    "iphone-17-pro-512",
+    "iphone-17-pro-1024",
+    "iphone-Air-256",
+    "iphone-Air-512",
+    "iphone-Air-1024",
+    "iphone-17-256",
+    "iphone-17-512"
+]
+
+
+LOGIN_EXEMPT_URLS = [
+    r'^AppleStockChecker/purchasing-price-records/ingest-json/?$',  # ← 新接口
+    # 如还有 path-token 版/webhook 版，也一并加上
+    r'^AppleStockChecker/purchasing-price-records/ingest-webscraper/?$',
+    r'^AppleStockChecker/purchasing-price-records/ingest-webscraper/[-A-Za-z0-9_]+/?$',
+]
+
+
+
+ASGI_APPLICATION = "config.asgi.application"
