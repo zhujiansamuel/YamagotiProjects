@@ -1,0 +1,205 @@
+version: '3.8'
+
+services:
+  # PostgreSQL 数据库
+  db:
+    image: postgres:16-alpine
+    container_name: yapp_postgres
+    environment:
+      POSTGRES_DB: applestockchecker_dev
+      POSTGRES_USER: samuelzhu
+      POSTGRES_PASSWORD: Xdb73008762
+      # 增加最大连接数，为 PgBouncer 提供足够的后端连接
+      POSTGRES_INITDB_ARGS: "-c max_connections=200"
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=200"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "effective_cache_size=1GB"
+      - "-c"
+      - "maintenance_work_mem=64MB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "wal_buffers=16MB"
+      - "-c"
+      - "default_statistics_target=100"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_io_concurrency=200"
+      - "-c"
+      - "work_mem=5242kB"
+      - "-c"
+      - "huge_pages=off"
+      - "-c"
+      - "min_wal_size=1GB"
+      - "-c"
+      - "max_wal_size=4GB"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"  # 外部访问端口
+    networks:
+      - yapp_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U samuelzhu -d applestockchecker_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PgBouncer 连接池 - 事务池模式
+  pgbouncer:
+    image: edoburu/pgbouncer:1.21.0
+    container_name: yapp_pgbouncer
+    environment:
+      DATABASE_URL: "postgres://samuelzhu:Xdb73008762@db:5432/applestockchecker_dev"
+      POOL_MODE: transaction  # 事务池模式，每个事务结束后释放连接
+      MAX_CLIENT_CONN: 1000   # 最大客户端连接数
+      DEFAULT_POOL_SIZE: 25   # 每个数据库的默认连接池大小
+      MIN_POOL_SIZE: 5        # 最小连接池大小
+      RESERVE_POOL_SIZE: 5    # 保留连接池大小
+      RESERVE_POOL_TIMEOUT: 3 # 保留池超时（秒）
+      MAX_DB_CONNECTIONS: 50  # 每个数据库的最大连接数
+      MAX_USER_CONNECTIONS: 50 # 每个用户的最大连接数
+      SERVER_IDLE_TIMEOUT: 600 # 服务器空闲超时（秒）
+      SERVER_LIFETIME: 3600   # 服务器连接生命周期（秒）
+      SERVER_CONNECT_TIMEOUT: 15 # 服务器连接超时（秒）
+      QUERY_TIMEOUT: 0        # 查询超时（0=禁用）
+      CLIENT_IDLE_TIMEOUT: 0  # 客户端空闲超时（0=禁用）
+      IGNORE_STARTUP_PARAMETERS: extra_float_digits
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "6432:5432"  # PgBouncer 端口
+    networks:
+      - yapp_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -p 5432"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis - Celery Broker & Cache
+  redis:
+    image: redis:7-alpine
+    container_name: yapp_redis
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    networks:
+      - yapp_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - redis_data:/data
+
+  # Celery Worker - 默认队列
+  celery_worker_default:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_default
+    command: celery -A YamagotiProjects worker -Q default,celery -l info -c 4 --max-tasks-per-child=1000
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DATABASE_URL=postgres://samuelzhu:Xdb73008762@pgbouncer:5432/applestockchecker_dev
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=true
+    depends_on:
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - yapp_network
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
+  # Celery Worker - WebScraper 专用队列（2个worker）
+  celery_worker_webscraper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_webscraper
+    command: celery -A YamagotiProjects worker -Q webscraper -l info -c 2 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DATABASE_URL=postgres://samuelzhu:Xdb73008762@pgbouncer:5432/applestockchecker_dev
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=true
+    depends_on:
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - yapp_network
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
+  # Celery Beat - 定时任务调度器
+  celery_beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_beat
+    command: celery -A YamagotiProjects beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DATABASE_URL=postgres://samuelzhu:Xdb73008762@pgbouncer:5432/applestockchecker_dev
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=true
+    depends_on:
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - yapp_network
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
+  # Flower - Celery 监控工具（可选）
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_flower
+    command: celery -A YamagotiProjects flower --port=5555
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "5555:5555"
+    networks:
+      - yapp_network
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  yapp_network:
+    driver: bridge
