@@ -41,6 +41,12 @@ const AVG_LINES_DEFAULTS = [
 git fetch --all --prune
 git reset --hard origin/master
 git pull origin master
+
+
+
+git fetch --all --prune
+git checkout master
+git reset --hard origin/master
 docker compose build
 docker compose up -d web nginx
 
