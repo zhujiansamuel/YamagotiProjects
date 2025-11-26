@@ -1523,15 +1523,7 @@ function adjustGridTopForLegend(inst) {
     }
 
     /* —— 子图工厂 —— */
-    function createPanelAndInitChart(host, title, isFeature = false) {
-        const {panel, canvas} = createPanel(host, title, isFeature);
-        const inst = echarts.init(canvas);
-        inst.setOption(isFeature ? baseOptionForFeature() : baseOptionForPrice(), true);
-        const opt = isFeature ? baseOptionForFeature() : baseOptionForPrice();
-        opt.grid = Object.assign({}, opt.grid, {bottom: 40});
-        ensureDailyTicksOn(inst);
-        return {panel, chart: inst};
-    }
+
 
     /** —— 工具：把 part number 转成“人类友好”名称 —— */
     function humanNameOfPart(partNumber, {withPn = true} = {}) {
@@ -2439,8 +2431,6 @@ function adjustGridTopForLegend(inst) {
 
     /* ===================== 6) 五种加载处理器（A 保主图，B/C/D/E 分图） ===================== */
 
-    const RAW_MAX_SERIES = 60, RAW_CONC_LIMIT = 8;
-
     async function runWithLimit(tasks, limit = RAW_CONC_LIMIT) {
         const ret = [];
         let i = 0, running = 0;
@@ -2865,7 +2855,6 @@ function adjustGridTopForLegend(inst) {
     });
 }
 
-    let END_AUTO_TIMER = null;
 
     function startAutoEndSync() {
         syncAllEndToNow();
