@@ -1216,6 +1216,7 @@ function adjustGridTopForLegend(inst) {
         chart.setOption({
             series: [{
                 id: '__workhours__',
+                name: '',  // 空名称，不显示在图例中
                 type: 'line',
                 data: [],
                 markArea,
@@ -1415,6 +1416,7 @@ function adjustGridTopForLegend(inst) {
         inst.setOption({
             series: [{
                 id: '__workhours__',
+                name: '',  // 空名称，不显示在图例中
                 type: 'line',
                 data: [],
                 markArea: buildBusinessHoursMarkArea10to19(startMs, endMs),
@@ -1429,6 +1431,7 @@ function adjustGridTopForLegend(inst) {
         const patch = {
             series: [{
                 id: '__workhours__',
+                name: '',  // 空名称，不显示在图例中
                 type: 'line',
                 data: [],
                 markArea: buildBusinessHoursMarkArea10to19(startMs, endMs),
@@ -2521,6 +2524,7 @@ function adjustGridTopForLegend(inst) {
                 chart.setOption({
                     series: [{
                         id: '__workhours__',
+                        name: '',  // 空名称，不显示在图例中
                         type: 'line',
                         data: [],
                         markArea: buildBusinessHoursMarkArea10to19(SELECTED_START_MS, SELECTED_END_MS),
