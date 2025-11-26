@@ -1624,7 +1624,8 @@ function adjustGridTopForLegend(inst) {
         const inst = chart;
         if (!inst) return;
         const opt = inst.getOption() || {};
-        const cur = (opt.series || []).filter(s => s.id !== '__workhours__');
+        // 过滤掉 undefined/null 项和 workhours 覆盖层
+        const cur = (opt.series || []).filter(s => s && s.id !== '__workhours__');
         const idx = cur.findIndex(s => s.id === id);
         const base = {
             id, name, type: 'line', showSymbol: false, smooth: 0.15,
@@ -1666,7 +1667,8 @@ function adjustGridTopForLegend(inst) {
     function addOrUpdateSeriesForPart(part, id, name, color, data) {
         const inst = ensurePriceChartForPart(part);
         const opt = inst.getOption() || {};
-        const arr = (opt.series || []).slice();
+        // 过滤掉 undefined/null 项
+        const arr = (opt.series || []).filter(s => s);
         const idx = arr.findIndex(s => s.id === id);
         const base = {
             id, name,
