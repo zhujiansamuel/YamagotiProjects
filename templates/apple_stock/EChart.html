@@ -1087,8 +1087,6 @@ function adjustGridTopForLegend(inst) {
     }
 
     // —— 价格显示范围（过滤阈值） ——
-    const PRICE_VISIBLE_MIN = 100000; // 10万
-    const PRICE_VISIBLE_MAX = 400000; // 40万
     const fmtJPY = n => new Intl.NumberFormat('ja-JP', {
         style: 'currency',
         currency: 'JPY',
