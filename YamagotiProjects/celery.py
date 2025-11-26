@@ -9,18 +9,25 @@ app.config_from_object("django.conf:settings", namespace="CELERY")
 # 定义队列路由：将特定任务路由到专用队列
 app.conf.task_routes = {
     # WebScraper 相关任务路由到 webscraper 队列（2个专用worker）
+
+    # task_process_webscraper_job 使用默认命名（包含完整模块路径）
     "AppleStockChecker.tasks.webscraper_tasks.task_process_webscraper_job": {
         "queue": "webscraper",
         "routing_key": "webscraper.process_job",
     },
-    "AppleStockChecker.tasks.webscraper_tasks.task_process_xlsx": {
+
+    # task_process_xlsx 显式指定了简短名称（不含 webscraper_tasks）
+    "AppleStockChecker.tasks.task_process_xlsx": {
         "queue": "webscraper",
         "routing_key": "webscraper.process_xlsx",
     },
+
+    # task_ingest_json_shop1 使用默认命名（包含完整模块路径）
     "AppleStockChecker.tasks.webscraper_tasks.task_ingest_json_shop1": {
         "queue": "webscraper",
         "routing_key": "webscraper.ingest_json",
     },
+
     # 其他所有任务默认路由到 default 队列
 }
 

@@ -136,6 +136,7 @@ def task_process_xlsx(
     autoretry_for=(Exception,),
     retry_backoff=30,          # 30s,60s,120s...
     retry_kwargs={"max_retries": 5},
+    name="AppleStockChecker.tasks.webscraper_tasks.task_process_webscraper_job",
 )
 def task_process_webscraper_job(self, job_id: str, source_name: str, *,
                                 dry_run: bool = False, create_shop: bool = True,
@@ -153,7 +154,12 @@ def task_process_webscraper_job(self, job_id: str, source_name: str, *,
 
 
 
-@shared_task(bind=True, soft_time_limit=600, time_limit=900)
+@shared_task(
+    bind=True,
+    soft_time_limit=600,
+    time_limit=900,
+    name="AppleStockChecker.tasks.webscraper_tasks.task_ingest_json_shop1",
+)
 def task_ingest_json_shop1(self, records: list, opts: dict):
     """
     Celery 任务：records(JSON 数组) -> DataFrame -> 清洗器 shop1 -> （dry_run 或落库）
