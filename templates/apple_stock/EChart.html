@@ -505,6 +505,32 @@ const RAW_MAX_SERIES = 60;
 /** 並行フェッチの最大同時実行数 */
 const RAW_CONC_LIMIT = 8;
 
+/* ========== データ集約設定 (Data Aggregation) ========== */
+
+/**
+ * 価格データ集約時の時間窓口（ミリ秒）
+ *
+ * 複数系列を平均化する際、この時間窗口内のデータポイントを1つのバケットとして集約します。
+ *
+ * 推奨値:
+ * - 60000 (1分): 分単位のデータで細かい変動を見たい場合
+ * - 300000 (5分): 短期的なノイズを平滑化
+ * - 600000 (10分): 中程度の平滑化
+ * - 1800000 (30分): 長期的なトレンドを見る場合
+ * - 3600000 (1時間): より滑らかな曲線
+ *
+ * デフォルト: 300000 (5分)
+ *
+ * 値が小さいほど:
+ * - ✅ 細かい変動を捉えられる
+ * - ❌ ノイズが多く、波動が激しくなる
+ *
+ * 値が大きいほど:
+ * - ✅ 滑らかな曲線になる
+ * - ❌ 短期的な変動を見逃す可能性がある
+ */
+const AGG_TIME_WINDOW_MS = 5 * 60 * 1000;  // 5分 (300000ミリ秒)
+
 /* ========== カラーパレット (Color Palette) ========== */
 
 /**
@@ -1486,19 +1512,42 @@ function toIsoLocal(dtStr) {
     }
 
 
-    // 把多条曲线（同店不同 part）按时间戳求均值
+    /**
+     * 複数系列を時間窓口で集約して平均値を計算
+     *
+     * 時間戳を AGG_TIME_WINDOW_MS で割って切り下げることで、
+     * 同じ時間窗口内のデータポイントを1つのバケットとして集約します。
+     *
+     * Before (問題):
+     * - 時間戳が完全に一致するデータポイントのみ集約
+     * - 時間戳が少しずれているとバラバラになり、波動が激しい
+     *
+     * After (改善):
+     * - AGG_TIME_WINDOW_MS（例：5分）の窗口内のデータを集約
+     * - より滑らかな平均値曲線を生成
+     *
+     * @param {Array<Array>} seriesList - 複数系列のデータ配列
+     * @returns {Array<[number, number]>} 集約後の [時間戳, 平均値] 配列
+     * @example
+     * // 5分窗口で集約
+     * const avgSeries = mergeSeriesAverage([series1, series2, series3]);
+     */
     function mergeSeriesAverage(seriesList) {
-        const acc = new Map(); // ts -> {sum, count}
+        const acc = new Map(); // bucket_ts -> {sum, count}
         for (const series of seriesList) {
             for (const item of series) {
                 const v = Array.isArray(item) ? item : item?.value;
                 const ts = Array.isArray(v) ? v[0] : NaN;
                 const y = _yOf(item);
                 if (!Number.isFinite(ts) || !Number.isFinite(y)) continue;
-                const cur = acc.get(ts) || {sum: 0, count: 0};
+
+                // ★ 時間窗口でバケット化: 時間戳を窗口サイズで切り下げ
+                const bucketTs = Math.floor(ts / AGG_TIME_WINDOW_MS) * AGG_TIME_WINDOW_MS;
+
+                const cur = acc.get(bucketTs) || {sum: 0, count: 0};
                 cur.sum += y;
                 cur.count += 1;
-                acc.set(ts, cur);
+                acc.set(bucketTs, cur);
             }
         }
         return Array.from(acc.entries())
