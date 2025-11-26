@@ -1096,36 +1096,11 @@ function adjustGridTopForLegend(inst) {
     // _yOf(): 行868-874で定義
     // _latestY(): 行884-892で定義
     // _median(): 行901-910で定義
-
-    // 根据曲线键决定用 name 还是 version；禁止同时携带两者
-    function applyFeatureMetricParam(u, metricKey) {
-        const key = String(metricKey || '').trim();
-        const lower = key.toLowerCase();
-        if (lower === 'mean' || lower === 'std') {
-            u.searchParams.set('name', key);
-        } else {
-            u.searchParams.set('version', key);
-        }
-    }
-
-    function nearestPastMinuteMs(d = new Date()) {
-        return Math.floor(d.getTime() / 60000) * 60000;
-    }
-
-    // toIsoLocal(): 行747-752で定義済み
-
-    function toMillis(s) {
-        const t = new Date(s).valueOf();
-        return Number.isFinite(t) ? t : NaN;
-    }
-
-    function verticalTickFormatter(ms) {
-    const d = utcMsToJstDate(ms);  // ← 固定按 JST 看这条时间线
-    const m = d.getUTCMonth() + 1;
-    const day = d.getUTCDate();
-    const w = WDAY[d.getUTCDay()];
-    return `${m}\n月\n${day}日\n（${w}）`;
-}
+    // applyFeatureMetricParam(): 行956-967で定義
+    // nearestPastMinuteMs(): 行760-762で定義
+    // toIsoLocal(): 行747-752で定義
+    // toMillis(): 行730-733で定義
+    // verticalTickFormatter(): 行820-829で定義
 
     // === 统计图：初始化 ===
     const statsChart = echarts.init(document.getElementById('chart_stats'));
@@ -1854,13 +1829,7 @@ function adjustGridTopForLegend(inst) {
 
     /* ===================== 4) Scopes：cohort / profile / iphone 选项 ===================== */
 
-    function arrFirst(obj, keys) {
-        for (const k of keys) {
-            const v = obj && obj[k];
-            if (Array.isArray(v)) return v;
-        }
-        return [];
-    }
+    // arrFirst(): 行935-941で定義済み
 
     async function loadScopesOnce() {
         if (_SCOPES_CACHE) return _SCOPES_CACHE;
@@ -2882,22 +2851,11 @@ function adjustGridTopForLegend(inst) {
         document.querySelectorAll('#shops input[type=checkbox][data-shop-id], #shops input[type=checkbox][value]').forEach(cb => cb.checked = false);
     });
 
-    /* 自动把 end 输入同步到“当前最近整分钟（JST）”，若页面存在这些输入框 */
+    /* 自動で終了時刻を現在の最近の分（JST）に同期 */
 
-
-    function toInputValueJST(dateUtc) {
-    const msJst = dateUtc.getTime() + JST_OFFSET_MS;
-    const d = new Date(msJst);
-    const y = d.getUTCFullYear();
-    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(d.getUTCDate()).padStart(2, '0');
-    const hh = String(d.getUTCHours()).padStart(2, '0');
-    const mm = String(d.getUTCMinutes()).padStart(2, '0');
-    return `${y}-${m}-${day}T${hh}:${mm}`;
-}
-
-// floorToMinute(): 行772-774で定義済み
-// nearestPastMinuteInputValueJST(): 行804-807で定義済み
+    // toInputValueJST(): 行785-797で定義済み
+    // floorToMinute(): 行772-774で定義済み
+    // nearestPastMinuteInputValueJST(): 行804-807で定義済み
 
     function syncAllEndToNow() {
     const v = nearestPastMinuteInputValueJST();
