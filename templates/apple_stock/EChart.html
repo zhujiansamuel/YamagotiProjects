@@ -529,7 +529,7 @@ const RAW_CONC_LIMIT = 8;
  * - ✅ 滑らかな曲線になる
  * - ❌ 短期的な変動を見逃す可能性がある
  */
-const AGG_TIME_WINDOW_MS = 15 * 60 * 1000;  // 5分 (300000ミリ秒)
+const AGG_TIME_WINDOW_MS = 5 * 60 * 1000;  // 5分 (300000ミリ秒)
 
 /* ========== カラーパレット (Color Palette) ========== */
 
@@ -575,8 +575,22 @@ const LINE_PALETTE = [
 
 /* ========== Feature デフォルト設定 (Feature Defaults) ========== */
 
-/** デフォルトで描画する Feature 名のリスト */
-const FEATURE_NAMES_DEFAULT = ['mean', 'std'];
+/**
+ * デフォルトで描画する Feature 名のリスト
+ *
+ * 含まれる指標:
+ * - mean: 平均値
+ * - std: 標準偏差
+ * - wma60m, wma120m, wma900m, wma1800m: 加重移動平均 (60分, 120分, 900分, 1800分)
+ * - ema_hl30m, ema_hl60m: 指数移動平均 (30分, 60分)
+ * - sma75m: 単純移動平均 (75分)
+ */
+const FEATURE_NAMES_DEFAULT = [
+    'mean', 'std',
+    'wma60m', 'wma120m', 'wma900m', 'wma1800m',
+    'ema_hl30m', 'ema_hl60m',
+    'sma75m'
+];
 
 /* ========================================
  * 🌍 グローバル状態 (Global State)
@@ -1071,65 +1085,17 @@ function adjustGridTopForLegend(inst) {
   }
 }
 
-
-    function floorDay(ms) {
-        if (!Number.isFinite(ms)) return null;
-        const d = new Date(ms);
-        d.setHours(0, 0, 0, 0);
-        return d.getTime();
-    }
-
-    function ceilDay(ms) {
-        if (!Number.isFinite(ms)) return null;
-        const d = new Date(ms);
-        d.setHours(0, 0, 0, 0);
-        return d.getTime() + ONE_DAY; // 次日 00:00
-    }
-
-    // —— 价格显示范围（过滤阈值） ——
-    const fmtJPY = n => new Intl.NumberFormat('ja-JP', {
-        style: 'currency',
-        currency: 'JPY',
-        maximumFractionDigits: 0
-    }).format(n);
-    const WDAY = ['日', '月', '火', '水', '木', '金', '土'];
-    const IPHONE_INFO_BY_PART = new Map();
-
-    function iphoneHumanLabelByPart(pn) {
-        const info = IPHONE_INFO_BY_PART.get(String(pn));
-        if (!info) return String(pn); // 兜底仍显示 PN
-        const cap = info.capacity_gb ? `${info.capacity_gb}GB` : '';
-        const color = info.color ? ` ${info.color}` : '';
-        const model = info.model_name || 'iPhone';
-        return `${model} ${cap}${color}`.trim();
-    }
-
-    // === 统计工具 ===
-    // 从一个数据点中抽出数值 y（支持 [ts, y] 或 { value: [ts, y] }）
-    function _yOf(item) {
-        if (Array.isArray(item)) return Number(item[1]);
-        if (item && item.value && Array.isArray(item.value)) return Number(item.value[1]);
-        return NaN;
-    }
-
-    // 从一条序列中取“最后一个有效 y”
-    function _latestY(data) {
-        for (let i = data.length - 1; i >= 0; i--) {
-            const v = _yOf(data[i]);
-            if (Number.isFinite(v)) return v;
-        }
-        return NaN;
-    }
-
-    // 已排序数组的中位数
-    function _median(sortedNums) {
-        const n = sortedNums.length;
-        if (!n) return NaN;
-        const mid = Math.floor(n / 2);
-        return n % 2
-            ? sortedNums[mid]
-            : (sortedNums[mid - 1] + sortedNums[mid]) / 2;
-    }
+    // ========== ユーティリティ関数（上部で定義済み） ==========
+    // floorDay(): 行685-691で定義
+    // ceilDay(): 行701-707で定義
+    // fmtJPY: 行824-828で定義
+    // WDAY: 行831で定義
+    // IPHONE_INFO_BY_PART: 行594で定義
+    // iphoneHumanLabelByPart(): 行845-852で定義
+    // PRICE_VISIBLE_MIN, PRICE_VISIBLE_MAX: 行490-493で定義
+    // _yOf(): 行868-874で定義
+    // _latestY(): 行884-892で定義
+    // _median(): 行901-910で定義
 
     // 根据曲线键决定用 name 还是 version；禁止同时携带两者
     function applyFeatureMetricParam(u, metricKey) {
@@ -1146,12 +1112,7 @@ function adjustGridTopForLegend(inst) {
         return Math.floor(d.getTime() / 60000) * 60000;
     }
 
-function toIsoLocal(dtStr) {
-    // dtStr 形如 "2025-10-20T10:00"，我们认为它是 JST 的本地时间
-    if (!dtStr || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dtStr)) return '';
-    // 加上 +09:00 让 JS 当成 JST 来解析，再用 toISOString() 变成 UTC
-    return new Date(`${dtStr}:00+09:00`).toISOString().replace('.000Z', 'Z');
-}
+    // toIsoLocal(): 行747-752で定義済み
 
     function toMillis(s) {
         const t = new Date(s).valueOf();
@@ -2182,7 +2143,7 @@ function toIsoLocal(dtStr) {
 
     /* ===================== 5) FeatureSnapshot ===================== */
 
-    const FEATURE_NAMES_DEFAULT = ['mean', 'std', "wma60m", "wma120m", 'wma900m', 'wma1800m', "ema_hl30m", "ema_hl60m", "sma75m"]; // 默认抓两条指标
+    // FEATURE_NAMES_DEFAULT: 行588-593で定義済み
 
     function toUtcZ(isoStr) {
         return new Date(isoStr).toISOString().replace('.000Z', 'Z');
@@ -2934,14 +2895,9 @@ function toIsoLocal(dtStr) {
     const mm = String(d.getUTCMinutes()).padStart(2, '0');
     return `${y}-${m}-${day}T${hh}:${mm}`;
 }
-function floorToMinute(date = new Date()) {
-    return new Date(Math.floor(date.getTime() / 60000) * 60000);
-}
 
-function nearestPastMinuteInputValueJST() {
-    const flooredUtc = floorToMinute(new Date());  // 这个 Date 代表“当前这一刻”，独立于时区
-    return toInputValueJST(flooredUtc);            // 强制转成 JST 文本
-}
+// floorToMinute(): 行772-774で定義済み
+// nearestPastMinuteInputValueJST(): 行804-807で定義済み
 
     function syncAllEndToNow() {
     const v = nearestPastMinuteInputValueJST();
