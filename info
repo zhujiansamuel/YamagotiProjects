@@ -50,7 +50,7 @@ git reset --hard origin/master
 docker compose build
 docker compose up -d web nginx
 
-
+Y9Rs5xPkZQjcYHJ
 ---------------------------------------------------------------------
 cd /opt/apple/src            # 换成你实际路径
 

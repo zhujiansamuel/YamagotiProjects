@@ -1366,7 +1366,7 @@ PRICE_MAX = 350000
 
 # 动态价格区间配置
 PRICE_LOOKBACK_MINUTES = 30  # 向前查询多少分钟的数据作为参考
-PRICE_TOLERANCE_RATIO = 0.5  # 容差比例：±50%
+PRICE_TOLERANCE_RATIO = 0.10  # 容差比例：±50%
 PRICE_MIN_SAMPLES = 3  # 计算参考价格所需的最少样本数
 PRICE_FALLBACK_MIN = 10000  # 数据不足时的后备最小值
 PRICE_FALLBACK_MAX = 350000  # 数据不足时的后备最大值
