@@ -452,523 +452,79 @@
 </div>
 
 <script>
-/* ========================================
- * 📋 設定パラメータ (Configuration Parameters)
- * ======================================== */
+    /* ===================== 0) 工具与常量 ===================== */
 
-/* ========== API エンドポイント (API Endpoints) ========== */
+    const $ = id => document.getElementById(id);
 
-/** WebSocket通知URL */
-const BROADCAST_URL = '/events/notify_progress_all';
+    /* —— 颜色规则（按店固定色） —— */
+    const SHOP_COLOR_RULES = [
+        {match: /買取商店/, color: "#DD1133", shop_id: 14, order: 1},
+        {match: /海峡通信/, color: "#478CD8", shop_id: 1, order: 2},
+        {match: /買取一丁目/, color: "#B41524", shop_id: 8, order: 3},
+        {match: /モバイルミックス/, color: "#DD1133", shop_id: 13, order: 4},
+        {match: /森森買取/, color: "#278C46", shop_id: 7, order: 5},
+        {match: /買取ルデヤ/, color: "#2DA9E8", shop_id: 9, order: 6},
+        {match: /買取wiki/, color: "#E71534", shop_id: 10, order: 7},
+        {match: /買取ホムラ/, color: "#F27474", shop_id: 19, order: 8},
+        {match: /ドラゴンモバイル/, color: "#3952A6", shop_id: 16, order: 9},
+        {match: /モバステ/, color: "#E60012", shop_id: 18, order: 10},
+        {match: /アキモバ/, color: "#20AECC", shop_id: 12, order: 11},
+        {match: /トゥインクル/, color: "#0EC7D9", shop_id: 17, order: 12},
+        {match: /家電市場/, color: "#FFF100", shop_id: 3, order: 13},
+        {match: /買取楽園/, color: "#DA7C66", shop_id: 4, order: 14},
+        {match: /買取当番/, color: "#1C4473", shop_id: 2, order: 15},
+        {match: /携帯空間/, color: "#0049A8", shop_id: 5, order: 16},
+        {match: /ゲストモバイル/, color: "#34C6F6", shop_id: 11, order: 17},
+        {match: /買取オク/, color: "#033F68", shop_id: 6, order: 18},
+        {match: /毎日買取/, color: "#C30D23", shop_id: 15, order: 19},
+        {match: /Mobile Zone/, color: "#f50620", shop_id: 20, order: 20},
+    ];
+    const LINE_PALETTE = [
+        "#478CD8", "#E71534", "#278C46", "#2DA9E8", "#F27474",
+        "#3952A6", "#E60012", "#20AECC", "#0EC7D9", "#FFF100",
+        "#DA7C66", "#1C4473", "#0049A8", "#34C6F6", "#033F68",
+        "#C30D23", "#f50620", "#7e57c2", "#26a69a", "#ef6c00"
+    ];
 
-/** 店舗一覧取得API */
-const ENDPOINT_SHOPS = `/AppleStockChecker/secondhand-shops/`;
+    /* —— 接口路径 —— */
+    const BROADCAST_URL = '/events/notify_progress_all';
+    const ENDPOINT_SHOPS = `/AppleStockChecker/secondhand-shops/`;
+    const ENDPOINT_IPHONES = `/AppleStockChecker/iphones/`;
+    const SERIES_API_BASE = '/AppleStockChecker/purchasing-time-analyses-psta-compact/'; // 原始价格
+    const FEATURE_SERIES_API = '/AppleStockChecker/features/points/';                      // Feature 点
+    const ENDPOINT_SCOPES = '/AppleStockChecker/options/scopes/';
 
-/** iPhone型番一覧取得API */
-const ENDPOINT_IPHONES = `/AppleStockChecker/iphones/`;
+    /* —— 全局索引/缓存 —— */
+    const SHOPS_INDEX = new Map();                // shop_id -> shop_name
+    const IPHONE_ID_BY_PART = new Map();          // part_number -> iphone_id
+    let SHOP_PROFILES = [];                       // [{id,slug,title,label,items:[{shop_id,shop_name,...}],...}]
+    let COHORTS = [];                             // [{id,slug,title,label,members:[{iphone_id,part_number,...}]}]
+    let PROFILE_BY_ID = new Map();
+    let COHORT_BY_ID = new Map();
+    let _SCOPES_CACHE = null;
 
-/** 原始価格時系列データAPI (コンパクト版) */
-const SERIES_API_BASE = '/AppleStockChecker/purchasing-time-analyses-psta-compact/';
+    /* —— 查询上下文 —— */
+    let ACTIVE_PART_NUMBER = '';
+    let ACTIVE_IPHONE_ID = null;
+    let SELECTED_SHOP_IDS = new Set();
+    let SELECTED_START_MS = null;
+    let SELECTED_END_MS = null;
+    const ONE_DAY = 24 * 3600 * 1000;
 
-/** Feature ポイントデータAPI */
-const FEATURE_SERIES_API = '/AppleStockChecker/features/points/';
 
-/** Scopes (店舗プロファイル・iPhoneコホート) 取得API */
-const ENDPOINT_SCOPES = '/AppleStockChecker/options/scopes/';
 
-/* ========== 時間・タイムゾーン設定 (Time & Timezone) ========== */
+const JST_OFFSET_MS = 9 * 60 * 60 * 1000; // +09:00
 
-/** JST (日本標準時) オフセット: +09:00 のミリ秒表現 */
-const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
-
-/** 1日のミリ秒数 */
-const ONE_DAY = 24 * 3600 * 1000;
-
-/* ========== 価格フィルタ設定 (Price Filter) ========== */
-
-/** 表示対象の最小価格 (円) - これ以下は異常値として除外 */
-const PRICE_VISIBLE_MIN = 100000;  // 10万円
-
-/** 表示対象の最大価格 (円) - これ以上は異常値として除外 */
-const PRICE_VISIBLE_MAX = 400000;  // 40万円
-
-/* ========== チャート表示設定 (Chart Display) ========== */
-
-/** Y軸の上下留白比率 (0.1 = 10%) - データ範囲の上下に視覚的な余白を追加 */
-const YPAD_RATIO = 0.1;
-
-/* ========== データフェッチ制御 (Data Fetch Control) ========== */
-
-/** 一度に描画する最大系列数 (これ以上は切り捨て) */
-const RAW_MAX_SERIES = 60;
-
-/** 並行フェッチの最大同時実行数 */
-const RAW_CONC_LIMIT = 8;
-
-/* ========== データ集約設定 (Data Aggregation) ========== */
-
-/**
- * 価格データ集約時の時間窓口（ミリ秒）
- *
- * 複数系列を平均化する際、この時間窗口内のデータポイントを1つのバケットとして集約します。
- *
- * 推奨値:
- * - 60000 (1分): 分単位のデータで細かい変動を見たい場合
- * - 300000 (5分): 短期的なノイズを平滑化
- * - 600000 (10分): 中程度の平滑化
- * - 1800000 (30分): 長期的なトレンドを見る場合
- * - 3600000 (1時間): より滑らかな曲線
- *
- * デフォルト: 300000 (5分)
- *
- * 値が小さいほど:
- * - ✅ 細かい変動を捉えられる
- * - ❌ ノイズが多く、波動が激しくなる
- *
- * 値が大きいほど:
- * - ✅ 滑らかな曲線になる
- * - ❌ 短期的な変動を見逃す可能性がある
- */
-const AGG_TIME_WINDOW_MS = 15 * 60 * 1000;  // 5分 (300000ミリ秒)
-
-/* ========== カラーパレット (Color Palette) ========== */
-
-/**
- * 店舗別カラールール
- * 各店舗に固定色と表示順序を割り当て
- * @type {Array<{match: RegExp, color: string, shop_id: number, order: number}>}
- */
-const SHOP_COLOR_RULES = [
-    {match: /買取商店/, color: "#DD1133", shop_id: 14, order: 1},
-    {match: /海峡通信/, color: "#478CD8", shop_id: 1, order: 2},
-    {match: /買取一丁目/, color: "#B41524", shop_id: 8, order: 3},
-    {match: /モバイルミックス/, color: "#DD1133", shop_id: 13, order: 4},
-    {match: /森森買取/, color: "#278C46", shop_id: 7, order: 5},
-    {match: /買取ルデヤ/, color: "#2DA9E8", shop_id: 9, order: 6},
-    {match: /買取wiki/, color: "#E71534", shop_id: 10, order: 7},
-    {match: /買取ホムラ/, color: "#F27474", shop_id: 19, order: 8},
-    {match: /ドラゴンモバイル/, color: "#3952A6", shop_id: 16, order: 9},
-    {match: /モバステ/, color: "#E60012", shop_id: 18, order: 10},
-    {match: /アキモバ/, color: "#20AECC", shop_id: 12, order: 11},
-    {match: /トゥインクル/, color: "#0EC7D9", shop_id: 17, order: 12},
-    {match: /家電市場/, color: "#FFF100", shop_id: 3, order: 13},
-    {match: /買取楽園/, color: "#DA7C66", shop_id: 4, order: 14},
-    {match: /買取当番/, color: "#1C4473", shop_id: 2, order: 15},
-    {match: /携帯空間/, color: "#0049A8", shop_id: 5, order: 16},
-    {match: /ゲストモバイル/, color: "#34C6F6", shop_id: 11, order: 17},
-    {match: /買取オク/, color: "#033F68", shop_id: 6, order: 18},
-    {match: /毎日買取/, color: "#C30D23", shop_id: 15, order: 19},
-    {match: /Mobile Zone/, color: "#f50620", shop_id: 20, order: 20},
-];
-
-/**
- * 系列描画用カラーパレット
- * Feature ラインや複数系列の色分けに使用
- * @type {string[]}
- */
-const LINE_PALETTE = [
-    "#478CD8", "#E71534", "#278C46", "#2DA9E8", "#F27474",
-    "#3952A6", "#E60012", "#20AECC", "#0EC7D9", "#FFF100",
-    "#DA7C66", "#1C4473", "#0049A8", "#34C6F6", "#033F68",
-    "#C30D23", "#f50620", "#7e57c2", "#26a69a", "#ef6c00"
-];
-
-/* ========== Feature デフォルト設定 (Feature Defaults) ========== */
-
-/** デフォルトで描画する Feature 名のリスト */
-const FEATURE_NAMES_DEFAULT = ['mean', 'std'];
-
-/* ========================================
- * 🌍 グローバル状態 (Global State)
- * ======================================== */
-
-/* ========== データインデックス (Data Indexes) ========== */
-
-/** 店舗IDから店舗名へのマッピング @type {Map<number, string>} */
-const SHOPS_INDEX = new Map();
-
-/** Part NumberからiPhone IDへのマッピング @type {Map<string, number>} */
-const IPHONE_ID_BY_PART = new Map();
-
-/** Part NumberからiPhone詳細情報へのマッピング @type {Map<string, Object>} */
-const IPHONE_INFO_BY_PART = new Map();
-
-/* ========== Scopes データ (Scope Data) ========== */
-
-/**
- * 店舗プロファイル一覧
- * 各プロファイルは複数店舗をグループ化したもの
- * @type {Array<{id: number, slug: string, title: string, label: string, items: Array<{shop_id: number, shop_name: string}>}>}
- */
-let SHOP_PROFILES = [];
-
-/**
- * iPhoneコホート一覧
- * 各コホートは複数のiPhone型番をグループ化したもの
- * @type {Array<{id: number, slug: string, title: string, label: string, members: Array<{iphone_id: number, part_number: string}>}>}
- */
-let COHORTS = [];
-
-/** プロファイルIDからプロファイルオブジェクトへのマッピング @type {Map<number, Object>} */
-let PROFILE_BY_ID = new Map();
-
-/** コホートIDからコホートオブジェクトへのマッピング @type {Map<number, Object>} */
-let COHORT_BY_ID = new Map();
-
-/** Scopes APIレスポンスのキャッシュ (1回のみフェッチ) @type {Object|null} */
-let _SCOPES_CACHE = null;
-
-/* ========== 現在の選択状態 (Current Selection State) ========== */
-
-/** 現在選択中の Part Number @type {string} */
-let ACTIVE_PART_NUMBER = '';
-
-/** 現在選択中の iPhone ID @type {number|null} */
-let ACTIVE_IPHONE_ID = null;
-
-/** 現在選択中の店舗IDセット @type {Set<number>} */
-let SELECTED_SHOP_IDS = new Set();
-
-/** 現在選択中の開始時刻 (UTC ミリ秒) @type {number|null} */
-let SELECTED_START_MS = null;
-
-/** 現在選択中の終了時刻 (UTC ミリ秒) @type {number|null} */
-let SELECTED_END_MS = null;
-
-/* ========== タイマー (Timers) ========== */
-
-/** 終了時刻自動同期タイマーID @type {number|null} */
-let END_AUTO_TIMER = null;
-
-/* ========================================
- * 🛠️ ユーティリティ関数 (Utility Functions)
- * ======================================== */
-
-/* ========== DOM操作 (DOM Manipulation) ========== */
-
-/**
- * getElementById のショートハンド
- * @param {string} id - 要素ID
- * @returns {HTMLElement|null} DOM要素
- */
-const $ = id => document.getElementById(id);
-
-/* ========== 日付・時刻ユーティリティ (Date & Time Utilities) ========== */
-
-/**
- * UTC ミリ秒を JST の Date オブジェクトに変換
- *
- * ブラウザのローカルタイムゾーンに影響されずに、常に JST (+09:00) として
- * 日時を扱うための変換関数。変換後の Date オブジェクトは getUTC* メソッドで
- * JST の年月日時分秒を取得可能。
- *
- * @param {number} ms - UTC タイムスタンプ (ミリ秒)
- * @returns {Date} JST オフセット適用後の Date オブジェクト
- * @example
- * const jstDate = utcMsToJstDate(1640995200000);
- * console.log(jstDate.getUTCHours()); // JST の時刻を取得
- */
-
+// 把“UTC 时间戳 ms”转换成“JST 对应的 Date”
+// 再用 getUTC* 读出年月日，避免受到浏览器本地时区影响
 function utcMsToJstDate(ms) {
     return new Date(ms + JST_OFFSET_MS);
 }
 
-/**
- * 日付をその日の0時0分0秒に切り下げ
- *
- * @param {number} ms - UTC タイムスタンプ (ミリ秒)
- * @returns {number|null} 0時に切り下げたタイムスタンプ、無効な入力の場合はnull
- * @example
- * const ms = Date.now();
- * const dayStart = floorDay(ms); // その日の00:00:00
- */
-function floorDay(ms) {
-    if (!Number.isFinite(ms)) return null;
-    const d = new Date(ms);
-    d.setHours(0, 0, 0, 0);
-    return d.getTime();
-}
+    // ★ Y 轴随缩放自适应（带留白，可选软钳制）
+    const YPAD_RATIO = 0.1; // 上下各 6% 视觉留白
 
-/**
- * 日付を次の日の0時0分0秒に切り上げ
- *
- * @param {number} ms - UTC タイムスタンプ (ミリ秒)
- * @returns {number|null} 次の日の0時のタイムスタンプ、無効な入力の場合はnull
- * @example
- * const ms = Date.now();
- * const nextDay = ceilDay(ms); // 翌日の00:00:00
- */
-function ceilDay(ms) {
-    if (!Number.isFinite(ms)) return null;
-    const d = new Date(ms);
-    d.setHours(0, 0, 0, 0);
-    return d.getTime() + ONE_DAY;
-}
-
-/**
- * ISO文字列をUTCミリ秒に変換
- *
- * @param {string} s - ISO 8601形式の日時文字列
- * @returns {number} タイムスタンプ (ミリ秒)、無効な入力の場合はNaN
- * @example
- * const ms = toMillis('2025-01-20T10:00:00Z');
- */
-function toMillis(s) {
-    const t = new Date(s).valueOf();
-    return Number.isFinite(t) ? t : NaN;
-}
-
-/**
- * ローカルJST文字列 (datetime-local形式) をISO UTC文字列に変換
- *
- * フォームの datetime-local 入力値 (例: "2025-10-20T10:00") を
- * JST タイムゾーン として解釈し、UTC の ISO文字列に変換する。
- *
- * @param {string} dtStr - "YYYY-MM-DDTHH:MM" 形式の文字列 (JST想定)
- * @returns {string} ISO 8601 UTC文字列 (例: "2025-10-20T01:00:00Z")、無効な入力の場合は空文字列
- * @example
- * const utcIso = toIsoLocal("2025-10-20T10:00");
- * // => "2025-10-20T01:00:00Z" (JST 10:00 = UTC 01:00)
- */
-function toIsoLocal(dtStr) {
-    if (!dtStr || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dtStr)) return '';
-    return new Date(`${dtStr}:00+09:00`).toISOString().replace('.000Z', 'Z');
-}
-
-/**
- * 最も近い過去の分のタイムスタンプを取得
- *
- * @param {Date} [d=new Date()] - 基準となる日時
- * @returns {number} 分単位に切り下げたタイムスタンプ (ミリ秒)
- * @example
- * const ms = nearestPastMinuteMs(); // 現在時刻の秒以下を切り捨て
- */
-function nearestPastMinuteMs(d = new Date()) {
-    return Math.floor(d.getTime() / 60000) * 60000;
-}
-
-/**
- * 分単位に切り下げた Date オブジェクトを返す
- *
- * @param {Date} [date=new Date()] - 基準となる日時
- * @returns {Date} 秒・ミリ秒が0にセットされた Date
- * @example
- * const floored = floorToMinute(new Date());
- */
-function floorToMinute(date = new Date()) {
-    return new Date(Math.floor(date.getTime() / 60000) * 60000);
-}
-
-/**
- * UTC Date を JST の datetime-local 入力値形式に変換
- *
- * @param {Date} dateUtc - UTC の Date オブジェクト
- * @returns {string} "YYYY-MM-DDTHH:MM" 形式の文字列 (JST)
- * @example
- * const inputValue = toInputValueJST(new Date());
- * // => "2025-11-26T15:30" (JST)
- */
-function toInputValueJST(dateUtc) {
-    const msJst = dateUtc.getTime() + JST_OFFSET_MS;
-    const d = new Date(msJst);
-    const y = d.getUTCFullYear();
-    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(d.getUTCDate()).padStart(2, '0');
-    const hh = String(d.getUTCHours()).padStart(2, '0');
-    const mm = String(d.getUTCMinutes()).padStart(2, '0');
-    return `${y}-${m}-${day}T${hh}:${mm}`;
-}
-
-/**
- * 最も近い過去の分を JST の datetime-local 入力値形式で取得
- *
- * @returns {string} "YYYY-MM-DDTHH:MM" 形式の文字列 (JST)
- * @example
- * const value = nearestPastMinuteInputValueJST();
- * // => "2025-11-26T15:30" (現在時刻から秒以下切り捨て、JST)
- */
-function nearestPastMinuteInputValueJST() {
-    const flooredUtc = floorToMinute(new Date());
-    return toInputValueJST(flooredUtc);
-}
-
-/**
- * 縦書き日付フォーマッタ (ECharts X軸用)
- *
- * UTC ミリ秒を JST の "月\n日\n(曜)" 形式にフォーマット
- *
- * @param {number} ms - UTC タイムスタンプ (ミリ秒)
- * @returns {string} 改行区切りの縦書き日付文字列
- * @example
- * const label = verticalTickFormatter(1640995200000);
- * // => "1\n月\n1日\n(土)"
- */
-function verticalTickFormatter(ms) {
-    const d = utcMsToJstDate(ms);
-    const m = d.getUTCMonth() + 1;
-    const day = d.getUTCDate();
-    const w = WDAY[d.getUTCDay()];
-    return `${m}\n月\n${day}日\n（${w}）`;
-}
-
-/* ========== フォーマットユーティリティ (Format Utilities) ========== */
-
-/**
- * 数値を日本円通貨形式にフォーマット
- *
- * @param {number} n - 金額
- * @returns {string} "¥123,456" 形式の文字列
- * @example
- * fmtJPY(123456); // => "¥123,456"
- */
-const fmtJPY = n => new Intl.NumberFormat('ja-JP', {
-    style: 'currency',
-    currency: 'JPY',
-    maximumFractionDigits: 0
-}).format(n);
-
-/** 曜日配列 (日曜=0 〜 土曜=6) */
-const WDAY = ['日', '月', '火', '水', '木', '金', '土'];
-
-/**
- * Part Number から iPhone の人間可読ラベルを生成
- *
- * IPHONE_INFO_BY_PART から情報を取得し、
- * "モデル名 容量GB 色" 形式の文字列を返す
- *
- * @param {string} pn - iPhone の Part Number
- * @returns {string} 人間可読ラベル、情報がない場合は Part Number そのまま
- * @example
- * iphoneHumanLabelByPart("MG864J/A");
- * // => "iPhone 15 Pro 256GB ナチュラルチタニウム"
- */
-function iphoneHumanLabelByPart(pn) {
-    const info = IPHONE_INFO_BY_PART.get(String(pn));
-    if (!info) return String(pn);
-    const cap = info.capacity_gb ? `${info.capacity_gb}GB` : '';
-    const color = info.color ? ` ${info.color}` : '';
-    const model = info.model_name || 'iPhone';
-    return `${model} ${cap}${color}`.trim();
-}
-
-/* ========== 統計ユーティリティ (Statistics Utilities) ========== */
-
-/**
- * データポイントから Y 値を抽出
- *
- * ECharts のデータ形式 ([x, y] または {value: [x, y]}) から
- * Y値 (価格や数値) を取り出す
- *
- * @param {Array|Object} item - データポイント
- * @returns {number} Y値、取得できない場合はNaN
- * @example
- * _yOf([1640995200000, 123456]); // => 123456
- * _yOf({value: [1640995200000, 123456]}); // => 123456
- */
-function _yOf(item) {
-    if (Array.isArray(item)) return Number(item[1]);
-    if (item && item.value && Array.isArray(item.value)) return Number(item.value[1]);
-    return NaN;
-}
-
-/**
- * 系列から最後の有効な Y 値を取得
- *
- * データ配列を後ろから走査し、最初に見つかった有効な数値を返す
- *
- * @param {Array} data - データポイントの配列
- * @returns {number} 最後の有効なY値、見つからない場合はNaN
- * @example
- * _latestY([[1, 100], [2, 200], [3, NaN]]); // => 200
- */
-function _latestY(data) {
-    for (let i = data.length - 1; i >= 0; i--) {
-        const v = _yOf(data[i]);
-        if (Number.isFinite(v)) return v;
-    }
-    return NaN;
-}
-
-/**
- * ソート済み数値配列の中央値を計算
- *
- * @param {number[]} sortedNums - 昇順ソート済みの数値配列
- * @returns {number} 中央値、空配列の場合はNaN
- * @example
- * _median([1, 2, 3, 4, 5]); // => 3
- * _median([1, 2, 3, 4]); // => 2.5
- */
-function _median(sortedNums) {
-    const n = sortedNums.length;
-    if (!n) return NaN;
-    const mid = Math.floor(n / 2);
-    return n % 2
-        ? sortedNums[mid]
-        : (sortedNums[mid - 1] + sortedNums[mid]) / 2;
-}
-
-/**
- * オブジェクトから最初に見つかった配列値を返す
- *
- * 複数のキー候補から順に検索し、配列を見つけたら返す
- *
- * @param {Object} obj - 検索対象オブジェクト
- * @param {string[]} keys - キー候補のリスト
- * @returns {Array} 見つかった配列、見つからない場合は空配列
- * @example
- * arrFirst({results: [1,2,3]}, ['data', 'results']); // => [1,2,3]
- */
-function arrFirst(obj, keys) {
-    for (const k of keys) {
-        const v = obj && obj[k];
-        if (Array.isArray(v)) return v;
-    }
-    return [];
-}
-
-/**
- * Feature メトリックキーを URL パラメータに適用
- *
- * 'mean' / 'std' の場合は name パラメータ、
- * それ以外は version パラメータとして URL に追加
- *
- * @param {URL} u - URL オブジェクト
- * @param {string} metricKey - メトリックキー ('mean', 'std', またはバージョン番号)
- * @example
- * const url = new URL('https://example.com/api');
- * applyFeatureMetricParam(url, 'mean');
- * // url.searchParams => {name: 'mean'}
- */
-function applyFeatureMetricParam(u, metricKey) {
-    const key = String(metricKey || '').trim();
-    const lower = key.toLowerCase();
-    if (lower === 'mean' || lower === 'std') {
-        u.searchParams.set('name', key);
-    } else {
-        u.searchParams.set('version', key);
-    }
-}
-
-/* ========================================
- * 📊 チャート設定関数 (Chart Configuration Functions)
- * ======================================== */
-
-/**
- * Y軸の自動スケール設定を生成
- *
- * データ範囲に応じて自動的にY軸の最小値・最大値を調整し、
- * 視覚的な留白 (YPAD_RATIO) を上下に追加する。
- * オプションで最小値・最大値をクランプ可能。
- *
- * @param {Object} options - オプション
- * @param {string} [options.name='JPY'] - Y軸のラベル名
- * @param {string} [options.position='right'] - Y軸の位置 ('left' または 'right')
- * @param {number[]|null} [options.clamp=null] - [min, max] の形でY軸範囲を制限
- * @returns {Object} ECharts Y軸設定オブジェクト
- * @example
- * const yAxis = makeAutoY({name: 'JPY', position: 'right', clamp: [100000, 400000]});
- */
-function makeAutoY({name = 'JPY', position = 'right', clamp = null} = {}) {
+    function makeAutoY({name = 'JPY', position = 'right', clamp = null} = {}) {
         return {
             type: 'value',
             position,
@@ -1512,42 +1068,19 @@ function toIsoLocal(dtStr) {
     }
 
 
-    /**
-     * 複数系列を時間窓口で集約して平均値を計算
-     *
-     * 時間戳を AGG_TIME_WINDOW_MS で割って切り下げることで、
-     * 同じ時間窗口内のデータポイントを1つのバケットとして集約します。
-     *
-     * Before (問題):
-     * - 時間戳が完全に一致するデータポイントのみ集約
-     * - 時間戳が少しずれているとバラバラになり、波動が激しい
-     *
-     * After (改善):
-     * - AGG_TIME_WINDOW_MS（例：5分）の窗口内のデータを集約
-     * - より滑らかな平均値曲線を生成
-     *
-     * @param {Array<Array>} seriesList - 複数系列のデータ配列
-     * @returns {Array<[number, number]>} 集約後の [時間戳, 平均値] 配列
-     * @example
-     * // 5分窗口で集約
-     * const avgSeries = mergeSeriesAverage([series1, series2, series3]);
-     */
+    // 把多条曲线（同店不同 part）按时间戳求均值
     function mergeSeriesAverage(seriesList) {
-        const acc = new Map(); // bucket_ts -> {sum, count}
+        const acc = new Map(); // ts -> {sum, count}
         for (const series of seriesList) {
             for (const item of series) {
                 const v = Array.isArray(item) ? item : item?.value;
                 const ts = Array.isArray(v) ? v[0] : NaN;
                 const y = _yOf(item);
                 if (!Number.isFinite(ts) || !Number.isFinite(y)) continue;
-
-                // ★ 時間窗口でバケット化: 時間戳を窗口サイズで切り下げ
-                const bucketTs = Math.floor(ts / AGG_TIME_WINDOW_MS) * AGG_TIME_WINDOW_MS;
-
-                const cur = acc.get(bucketTs) || {sum: 0, count: 0};
+                const cur = acc.get(ts) || {sum: 0, count: 0};
                 cur.sum += y;
                 cur.count += 1;
-                acc.set(bucketTs, cur);
+                acc.set(ts, cur);
             }
         }
         return Array.from(acc.entries())
