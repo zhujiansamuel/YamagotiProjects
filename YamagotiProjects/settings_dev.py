@@ -1,3 +1,4 @@
+
 """
 Django settings for YamagotiProjects project.
 
@@ -52,7 +53,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-    'django.middleware.locale.LocaleMiddleware',  
+    'django.middleware.locale.LocaleMiddleware',
     "corsheaders.middleware.CorsMiddleware",
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -186,6 +187,7 @@ else:
                     # TCP keepalive 保持连接活跃
                     "options": "-c statement_timeout=60000 "
                                "-c tcp_keepalives_idle=60 -c tcp_keepalives_interval=30 -c tcp_keepalives_count=5",
+                     "prepare_threshold": 0,
                 },
                 "DISABLE_SERVER_SIDE_CURSORS": True,  # 关键：PgBouncer 必须禁用
             }
@@ -208,6 +210,7 @@ else:
                     # 长任务时别让 PG 端主动断你的语句/事务（按需调整）
                     "options": "-c statement_timeout=0 -c idle_in_transaction_session_timeout=0 "
                                "-c tcp_keepalives_idle=60 -c tcp_keepalives_interval=30 -c tcp_keepalives_count=5",
+                    "prepare_threshold": 0,
                 },
             }
         }
@@ -276,7 +279,7 @@ EXTERNAL_TRADEIN_SOURCES = [
     # {"name": "shop5-4",
     #  "url": "https://api.webscraper.io/api/v1/scraping-job/34172573/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
     # {"name": "shop4",
-    #  "url": "https://api.webscraper.io/api/v1/scraping-job/	34172559/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
+    #  "url": "https://api.webscraper.io/api/v1/scraping-job/    34172559/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
     {"name": "shop3",
      "url": "https://api.webscraper.io/api/v1/scraping-job/34172550/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
     # {"name": "shop2",
@@ -583,7 +586,7 @@ SIMPLEUI_CONFIG = {
                             },
                             {'name': '临时页面',
                             'icon': 'fa-solid fa-file-contract',
-                            'models': [                                
+                            'models': [
                                         {'name': '価格推移(Model別)',
                                          'icon': 'fa-solid fa-chart-line',
                                          'url': '/AppleStockChecker/resale-trend-colors-merged/',
