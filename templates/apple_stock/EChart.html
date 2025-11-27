@@ -1375,11 +1375,11 @@ function toIsoLocal(dtStr) {
 
     /* ===================== 3D图表管理 ===================== */
 
-    // 3D图表容器管理 - 按颜色/店铺分组
+    // 3D图表容器管理 - 按iPhone颜色分组
     const Chart3DManager = {
-        charts: new Map(),  // shopId -> {el, chart, color, name, data}
+        charts: new Map(),  // iphoneColor -> {el, chart, data}
         host: null,
-        dataByShop: new Map() // shopId -> [{timestamp, price, partNumber}]
+        dataByColor: new Map() // iphoneColor -> [{timestamp, shopId, shopName, shopColor, price}]
     };
 
     function init3DChartHost() {
@@ -1389,38 +1389,30 @@ function toIsoLocal(dtStr) {
         return Chart3DManager.host;
     }
 
-    function create3DPanel(host, shopId, shopName, color) {
+    function create3DPanel(host, iphoneColor, title) {
         const panel = document.createElement('div');
         panel.className = 'chart-3d-panel';
 
-        const title = document.createElement('div');
-        title.className = 'chart-3d-title';
-
-        const swatch = document.createElement('span');
-        swatch.className = 'chart-3d-swatch';
-        swatch.style.background = color;
-
-        const text = document.createTextNode(`${shopName} - 3D分布`);
-
-        title.appendChild(swatch);
-        title.appendChild(text);
+        const titleDiv = document.createElement('div');
+        titleDiv.className = 'chart-3d-title';
+        titleDiv.textContent = title;
 
         const canvas = document.createElement('div');
         canvas.className = 'chart-3d-canvas';
 
-        panel.appendChild(title);
+        panel.appendChild(titleDiv);
         panel.appendChild(canvas);
         host.appendChild(panel);
 
         return {panel, canvas};
     }
 
-    function get3DChartForShop(shopId, shopName, color) {
-        if (!Chart3DManager.charts.has(shopId)) {
+    function get3DChartForColor(iphoneColor, title) {
+        if (!Chart3DManager.charts.has(iphoneColor)) {
             const host = init3DChartHost();
             if (!host) return null;
 
-            const {canvas} = create3DPanel(host, shopId, shopName, color);
+            const {canvas} = create3DPanel(host, iphoneColor, title);
             const chart = echarts.init(canvas);
 
             // 基础3D配置
@@ -1428,30 +1420,22 @@ function toIsoLocal(dtStr) {
                 tooltip: {
                     formatter: function(params) {
                         const d = params.data;
-                        if (!d || d.length < 3) return '';
+                        if (!d || d.length < 4) return '';
                         const timestamp = new Date(d[0]).toLocaleString('ja-JP');
-                        const price = d[1] ? d[1].toLocaleString() : 'N/A';
-                        const part = d[2] || '';
-                        return `時刻: ${timestamp}<br/>価格: ¥${price}<br/>型番: ${part}`;
-                    }
-                },
-                visualMap: {
-                    show: false,
-                    min: PRICE_VISIBLE_MIN,
-                    max: PRICE_VISIBLE_MAX,
-                    inRange: {
-                        color: [color]
+                        const shopName = d[1] || '';
+                        const price = d[2] ? d[2].toLocaleString() : 'N/A';
+                        return `時刻: ${timestamp}<br/>店舗: ${shopName}<br/>価格: ¥${price}`;
                     }
                 },
                 grid3D: {
                     viewControl: {
                         projection: 'orthographic',
                         autoRotate: false,
-                        distance: 200
+                        distance: 180
                     },
-                    boxWidth: 100,
-                    boxHeight: 80,
-                    boxDepth: 100
+                    boxWidth: 120,
+                    boxHeight: 100,
+                    boxDepth: 80
                 },
                 xAxis3D: {
                     name: '時刻',
@@ -1460,51 +1444,47 @@ function toIsoLocal(dtStr) {
                         formatter: function(value) {
                             const d = new Date(value);
                             return `${d.getMonth()+1}/${d.getDate()}\n${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`;
-                        }
+                        },
+                        fontSize: 10
                     }
                 },
                 yAxis3D: {
-                    name: '価格 (JPY)',
-                    min: PRICE_VISIBLE_MIN,
-                    max: PRICE_VISIBLE_MAX
+                    name: '店舗',
+                    type: 'category',
+                    data: [],
+                    axisLabel: {
+                        fontSize: 10,
+                        interval: 0
+                    }
                 },
                 zAxis3D: {
-                    name: '型番',
-                    type: 'category'
-                },
-                series: [{
-                    type: 'scatter3D',
-                    symbolSize: 5,
-                    itemStyle: {
-                        color: color,
-                        opacity: 0.7
-                    },
-                    data: [],
-                    encode: {
-                        x: 0,  // timestamp
-                        y: 1,  // price
-                        z: 2   // part number
+                    name: '価格 (JPY)',
+                    min: PRICE_VISIBLE_MIN,
+                    max: PRICE_VISIBLE_MAX,
+                    axisLabel: {
+                        formatter: function(value) {
+                            return (value / 10000).toFixed(0) + '万';
+                        }
                     }
-                }]
+                },
+                series: []
             };
 
             chart.setOption(option);
 
-            Chart3DManager.charts.set(shopId, {
+            Chart3DManager.charts.set(iphoneColor, {
                 el: canvas,
                 chart: chart,
-                color: color,
-                name: shopName,
                 data: []
             });
         }
 
-        return Chart3DManager.charts.get(shopId);
+        return Chart3DManager.charts.get(iphoneColor);
     }
 
-    function update3DChartData(shopId, shopName, color, dataPoints) {
-        // dataPoints: [{timestamp, price, partNumber}, ...]
-        const chartObj = get3DChartForShop(shopId, shopName, color);
+    function update3DChartForColor(iphoneColor, title, dataPoints) {
+        // dataPoints: [{timestamp, shopId, shopName, shopColor, price}, ...]
+        const chartObj = get3DChartForColor(iphoneColor, title);
         if (!chartObj) return;
 
         // 过滤有效数据点
@@ -1513,22 +1493,69 @@ function toIsoLocal(dtStr) {
             return Number.isFinite(price) && price >= PRICE_VISIBLE_MIN && price <= PRICE_VISIBLE_MAX;
         });
 
-        // 转换为3D散点数据格式: [timestamp, price, partNumber]
-        const scatter3DData = validData.map(d => [d.timestamp, d.price, d.partNumber]);
+        if (validData.length === 0) return;
 
-        // 提取所有唯一的型号作为Z轴分类
-        const partNumbers = [...new Set(validData.map(d => d.partNumber))].sort();
+        // 提取所有唯一的店铺，按照SHOP_COLOR_RULES的顺序排序
+        const shopMap = new Map();
+        validData.forEach(d => {
+            if (!shopMap.has(d.shopId)) {
+                shopMap.set(d.shopId, {
+                    id: d.shopId,
+                    name: d.shopName,
+                    color: d.shopColor,
+                    order: getOrderForShop({name: d.shopName, id: d.shopId})
+                });
+            }
+        });
+        const shops = Array.from(shopMap.values()).sort((a, b) => a.order - b.order);
+        const shopNames = shops.map(s => s.name);
 
-        chartObj.data = scatter3DData;
+        // 按店铺分组数据，每个店铺一个series
+        const seriesByShop = new Map();
+        validData.forEach(d => {
+            if (!seriesByShop.has(d.shopId)) {
+                const shop = shopMap.get(d.shopId);
+                seriesByShop.set(d.shopId, {
+                    name: d.shopName,
+                    type: 'scatter3D',
+                    symbolSize: 6,
+                    itemStyle: {
+                        color: shop.color,
+                        opacity: 0.8
+                    },
+                    data: []
+                });
+            }
+            // 数据格式: [timestamp, shopName, price, shopColor]
+            seriesByShop.get(d.shopId).data.push([
+                d.timestamp,
+                d.shopName,
+                d.price,
+                d.shopColor
+            ]);
+        });
+
+        const series = Array.from(seriesByShop.values());
+
+        chartObj.data = validData;
         chartObj.chart.setOption({
-            zAxis3D: {
-                name: '型番',
+            yAxis3D: {
+                name: '店舗',
                 type: 'category',
-                data: partNumbers
+                data: shopNames,
+                axisLabel: {
+                    fontSize: 10,
+                    interval: 0
+                }
             },
-            series: [{
-                data: scatter3DData
-            }]
+            legend: {
+                data: series.map(s => s.name),
+                top: 10,
+                textStyle: {
+                    fontSize: 11
+                }
+            },
+            series: series
         });
     }
 
@@ -1537,29 +1564,32 @@ function toIsoLocal(dtStr) {
             if (obj.chart) obj.chart.dispose();
         });
         Chart3DManager.charts.clear();
-        Chart3DManager.dataByShop.clear();
+        Chart3DManager.dataByColor.clear();
         if (Chart3DManager.host) {
             Chart3DManager.host.innerHTML = '';
         }
     }
 
-    function collect3DDataPoint(shopId, shopName, color, timestamp, price, partNumber) {
-        // 收集数据点以供后续批量更新3D图表
-        if (!Chart3DManager.dataByShop.has(shopId)) {
-            Chart3DManager.dataByShop.set(shopId, {
-                name: shopName,
-                color: color,
-                points: []
-            });
+    function collect3DDataPoint(shopId, shopName, shopColor, timestamp, price, partNumber, iphoneColor) {
+        // 按iPhone颜色收集数据点
+        const colorKey = iphoneColor || '不明';
+        if (!Chart3DManager.dataByColor.has(colorKey)) {
+            Chart3DManager.dataByColor.set(colorKey, []);
         }
-        const shopData = Chart3DManager.dataByShop.get(shopId);
-        shopData.points.push({timestamp, price, partNumber});
+        Chart3DManager.dataByColor.get(colorKey).push({
+            timestamp,
+            shopId,
+            shopName,
+            shopColor,
+            price
+        });
     }
 
     function render3DChartsFromCollectedData() {
-        // 从收集的数据渲染所有3D图表
-        Chart3DManager.dataByShop.forEach((shopData, shopId) => {
-            update3DChartData(shopId, shopData.name, shopData.color, shopData.points);
+        // 从收集的数据渲染所有3D图表，按iPhone颜色分组
+        Chart3DManager.dataByColor.forEach((dataPoints, iphoneColor) => {
+            const title = `${iphoneColor} - 3D価格分布`;
+            update3DChartForColor(iphoneColor, title, dataPoints);
         });
     }
 
@@ -2826,9 +2856,11 @@ function toIsoLocal(dtStr) {
             addOrUpdateSeries(`raw:s:${sid}|p:${part}`, sname, color, data);
 
             // 收集3D数据点
+            const iphoneInfo = IPHONE_INFO_BY_PART.get(part);
+            const iphoneColor = iphoneInfo?.color || '不明';
             data.forEach(point => {
                 if (Array.isArray(point) && point.length >= 2) {
-                    collect3DDataPoint(sid, sname, color, point[0], point[1], part);
+                    collect3DDataPoint(sid, sname, color, point[0], point[1], part, iphoneColor);
                 }
             });
             render3DChartsFromCollectedData();  // 渲染3D图表
@@ -2912,9 +2944,11 @@ function toIsoLocal(dtStr) {
             aggByShop.get(sid).push(data);
 
             // 收集3D数据点
+            const iphoneInfo = IPHONE_INFO_BY_PART.get(part);
+            const iphoneColor = iphoneInfo?.color || '不明';
             data.forEach(point => {
                 if (Array.isArray(point) && point.length >= 2) {
-                    collect3DDataPoint(sid, sname, color, point[0], point[1], part);
+                    collect3DDataPoint(sid, sname, color, point[0], point[1], part, iphoneColor);
                 }
             });
         });
@@ -2992,9 +3026,11 @@ function toIsoLocal(dtStr) {
             aggByShop.get(sid).push(data);
 
             // 收集3D数据点
+            const iphoneInfo = IPHONE_INFO_BY_PART.get(p);
+            const iphoneColor = iphoneInfo?.color || '不明';
             data.forEach(point => {
                 if (Array.isArray(point) && point.length >= 2) {
-                    collect3DDataPoint(sid, sname, color, point[0], point[1], p);
+                    collect3DDataPoint(sid, sname, color, point[0], point[1], p, iphoneColor);
                 }
             });
         });
@@ -3065,9 +3101,11 @@ function toIsoLocal(dtStr) {
             addOrUpdateSeriesForPart(p, `s:${s}`, sname, color, data);
 
             // 收集3D数据点
+            const iphoneInfo = IPHONE_INFO_BY_PART.get(p);
+            const iphoneColor = iphoneInfo?.color || '不明';
             data.forEach(point => {
                 if (Array.isArray(point) && point.length >= 2) {
-                    collect3DDataPoint(s, sname, color, point[0], point[1], p);
+                    collect3DDataPoint(s, sname, color, point[0], point[1], p, iphoneColor);
                 }
             });
         });
@@ -3149,9 +3187,11 @@ function toIsoLocal(dtStr) {
             aggByShop.get(s).push(data);
 
             // 收集3D数据点
+            const iphoneInfo = IPHONE_INFO_BY_PART.get(p);
+            const iphoneColor = iphoneInfo?.color || '不明';
             data.forEach(point => {
                 if (Array.isArray(point) && point.length >= 2) {
-                    collect3DDataPoint(s, sname, color, point[0], point[1], p);
+                    collect3DDataPoint(s, sname, color, point[0], point[1], p, iphoneColor);
                 }
             });
         });
