@@ -5,6 +5,7 @@
     <title>跨店铺曲线</title>
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts-gl@2/dist/echarts-gl.min.js"></script>
     <style>
         :root {
             --w: 4080px;
@@ -140,6 +141,48 @@
             border: 1px solid #eee;
             border-radius: 8px;
             padding: 8px;
+        }
+
+        #chart_3d_container {
+            margin-top: 20px;
+            margin-bottom: 20px;
+        }
+
+        .chart-3d-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(500px, 1fr));
+            gap: 16px;
+            margin-top: 12px;
+        }
+
+        .chart-3d-panel {
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 8px;
+            background: #fff;
+        }
+
+        .chart-3d-title {
+            font-size: 13px;
+            color: #374151;
+            font-weight: 600;
+            margin: 0 0 8px 4px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .chart-3d-swatch {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 3px;
+            border: 1px solid #d1d5db;
+        }
+
+        .chart-3d-canvas {
+            width: 100%;
+            height: 450px;
         }
 
         #chart_stats {
@@ -444,6 +487,15 @@
 
     {# 数据表 #}
     <div id="chart"></div>
+
+    {# 3D散点图 - 按颜色分组 #}
+    <div id="chart_3d_container">
+        <fieldset>
+            <legend>3D価格分布（カラー別）</legend>
+            <div id="chart_3d_grid" class="chart-3d-grid"></div>
+        </fieldset>
+    </div>
+
     {# 前端基础统计 #}
     <div id="chart_stats"></div>
     {# 后端计算统计信息 #}
@@ -1320,6 +1372,198 @@ function toIsoLocal(dtStr) {
         hostPrice: null,    // #chart_parts
         hostFeature: null   // #chart_feature
     };
+
+    /* ===================== 3D图表管理 ===================== */
+
+    // 3D图表容器管理 - 按颜色/店铺分组
+    const Chart3DManager = {
+        charts: new Map(),  // shopId -> {el, chart, color, name, data}
+        host: null,
+        dataByShop: new Map() // shopId -> [{timestamp, price, partNumber}]
+    };
+
+    function init3DChartHost() {
+        if (!Chart3DManager.host) {
+            Chart3DManager.host = document.getElementById('chart_3d_grid');
+        }
+        return Chart3DManager.host;
+    }
+
+    function create3DPanel(host, shopId, shopName, color) {
+        const panel = document.createElement('div');
+        panel.className = 'chart-3d-panel';
+
+        const title = document.createElement('div');
+        title.className = 'chart-3d-title';
+
+        const swatch = document.createElement('span');
+        swatch.className = 'chart-3d-swatch';
+        swatch.style.background = color;
+
+        const text = document.createTextNode(`${shopName} - 3D分布`);
+
+        title.appendChild(swatch);
+        title.appendChild(text);
+
+        const canvas = document.createElement('div');
+        canvas.className = 'chart-3d-canvas';
+
+        panel.appendChild(title);
+        panel.appendChild(canvas);
+        host.appendChild(panel);
+
+        return {panel, canvas};
+    }
+
+    function get3DChartForShop(shopId, shopName, color) {
+        if (!Chart3DManager.charts.has(shopId)) {
+            const host = init3DChartHost();
+            if (!host) return null;
+
+            const {canvas} = create3DPanel(host, shopId, shopName, color);
+            const chart = echarts.init(canvas);
+
+            // 基础3D配置
+            const option = {
+                tooltip: {
+                    formatter: function(params) {
+                        const d = params.data;
+                        if (!d || d.length < 3) return '';
+                        const timestamp = new Date(d[0]).toLocaleString('ja-JP');
+                        const price = d[1] ? d[1].toLocaleString() : 'N/A';
+                        const part = d[2] || '';
+                        return `時刻: ${timestamp}<br/>価格: ¥${price}<br/>型番: ${part}`;
+                    }
+                },
+                visualMap: {
+                    show: false,
+                    min: PRICE_VISIBLE_MIN,
+                    max: PRICE_VISIBLE_MAX,
+                    inRange: {
+                        color: [color]
+                    }
+                },
+                grid3D: {
+                    viewControl: {
+                        projection: 'orthographic',
+                        autoRotate: false,
+                        distance: 200
+                    },
+                    boxWidth: 100,
+                    boxHeight: 80,
+                    boxDepth: 100
+                },
+                xAxis3D: {
+                    name: '時刻',
+                    type: 'time',
+                    axisLabel: {
+                        formatter: function(value) {
+                            const d = new Date(value);
+                            return `${d.getMonth()+1}/${d.getDate()}\n${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`;
+                        }
+                    }
+                },
+                yAxis3D: {
+                    name: '価格 (JPY)',
+                    min: PRICE_VISIBLE_MIN,
+                    max: PRICE_VISIBLE_MAX
+                },
+                zAxis3D: {
+                    name: '型番',
+                    type: 'category'
+                },
+                series: [{
+                    type: 'scatter3D',
+                    symbolSize: 5,
+                    itemStyle: {
+                        color: color,
+                        opacity: 0.7
+                    },
+                    data: [],
+                    encode: {
+                        x: 0,  // timestamp
+                        y: 1,  // price
+                        z: 2   // part number
+                    }
+                }]
+            };
+
+            chart.setOption(option);
+
+            Chart3DManager.charts.set(shopId, {
+                el: canvas,
+                chart: chart,
+                color: color,
+                name: shopName,
+                data: []
+            });
+        }
+
+        return Chart3DManager.charts.get(shopId);
+    }
+
+    function update3DChartData(shopId, shopName, color, dataPoints) {
+        // dataPoints: [{timestamp, price, partNumber}, ...]
+        const chartObj = get3DChartForShop(shopId, shopName, color);
+        if (!chartObj) return;
+
+        // 过滤有效数据点
+        const validData = dataPoints.filter(d => {
+            const price = Number(d.price);
+            return Number.isFinite(price) && price >= PRICE_VISIBLE_MIN && price <= PRICE_VISIBLE_MAX;
+        });
+
+        // 转换为3D散点数据格式: [timestamp, price, partNumber]
+        const scatter3DData = validData.map(d => [d.timestamp, d.price, d.partNumber]);
+
+        // 提取所有唯一的型号作为Z轴分类
+        const partNumbers = [...new Set(validData.map(d => d.partNumber))].sort();
+
+        chartObj.data = scatter3DData;
+        chartObj.chart.setOption({
+            zAxis3D: {
+                name: '型番',
+                type: 'category',
+                data: partNumbers
+            },
+            series: [{
+                data: scatter3DData
+            }]
+        });
+    }
+
+    function clear3DCharts() {
+        Chart3DManager.charts.forEach(obj => {
+            if (obj.chart) obj.chart.dispose();
+        });
+        Chart3DManager.charts.clear();
+        Chart3DManager.dataByShop.clear();
+        if (Chart3DManager.host) {
+            Chart3DManager.host.innerHTML = '';
+        }
+    }
+
+    function collect3DDataPoint(shopId, shopName, color, timestamp, price, partNumber) {
+        // 收集数据点以供后续批量更新3D图表
+        if (!Chart3DManager.dataByShop.has(shopId)) {
+            Chart3DManager.dataByShop.set(shopId, {
+                name: shopName,
+                color: color,
+                points: []
+            });
+        }
+        const shopData = Chart3DManager.dataByShop.get(shopId);
+        shopData.points.push({timestamp, price, partNumber});
+    }
+
+    function render3DChartsFromCollectedData() {
+        // 从收集的数据渲染所有3D图表
+        Chart3DManager.dataByShop.forEach((shopData, shopId) => {
+            update3DChartData(shopId, shopData.name, shopData.color, shopData.points);
+        });
+    }
+
+    /* ===================== End 3D图表管理 ===================== */
 
     function createPanel(host, titleText, isFeature = false) {
         const panel = document.createElement('div');
@@ -2572,6 +2816,7 @@ function toIsoLocal(dtStr) {
 
         // 清空分图（A 只画主图）
         disposeAllPartCharts();
+        clear3DCharts();  // 清空3D图表
 
         try {
             const sname = SHOPS_INDEX.get(sid) || `#${sid}`;
@@ -2580,6 +2825,13 @@ function toIsoLocal(dtStr) {
             const data = appendShadowToNowIfNeeded(r.data.slice());
             addOrUpdateSeries(`raw:s:${sid}|p:${part}`, sname, color, data);
 
+            // 收集3D数据点
+            data.forEach(point => {
+                if (Array.isArray(point) && point.length >= 2) {
+                    collect3DDataPoint(sid, sname, color, point[0], point[1], part);
+                }
+            });
+            render3DChartsFromCollectedData();  // 渲染3D图表
 
             $('status') && ($('status').textContent = `A) 完了：${sname} × ${part}`);
 
@@ -2638,6 +2890,7 @@ function toIsoLocal(dtStr) {
         SELECTED_START_MS = new Date(startIso).getTime();
         SELECTED_END_MS = new Date(endIso).getTime();
         disposeAllPartCharts();  // 清空旧分图
+        clear3DCharts();  // 清空3D图表
 
         const allShops = [...SHOPS_INDEX.keys()];
         const pairs = [];
@@ -2657,11 +2910,19 @@ function toIsoLocal(dtStr) {
             addOrUpdateSeriesForPart(part, `s:${sid}`, sname, color, data);
             if (!aggByShop.has(sid)) aggByShop.set(sid, []);
             aggByShop.get(sid).push(data);
+
+            // 收集3D数据点
+            data.forEach(point => {
+                if (Array.isArray(point) && point.length >= 2) {
+                    collect3DDataPoint(sid, sname, color, point[0], point[1], part);
+                }
+            });
         });
 
         try {
             await runWithLimit(tasks, RAW_CONC_LIMIT);
             renderAggregateOnMain(aggByShop, SELECTED_START_MS, SELECTED_END_MS);
+            render3DChartsFromCollectedData();  // 渲染3D图表
             ensureDailyTicksAll();
             applyWorkHoursOverlayAll(SELECTED_START_MS, SELECTED_END_MS);
             $('status') && ($('status').textContent = `B) 完了：${cohort.title || cohort.label}${clipped ? '（已截断显示）' : ''}`);
@@ -2710,6 +2971,7 @@ function toIsoLocal(dtStr) {
         SELECTED_START_MS = new Date(startIso).getTime();
         SELECTED_END_MS = new Date(endIso).getTime();
         disposeAllPartCharts();
+        clear3DCharts();  // 清空3D图表
 
         const shopIds = (profile.items || []).map(x => Number(x.shop_id));
         const pairs = shopIds.map(sid => [sid, part]);
@@ -2728,11 +2990,19 @@ function toIsoLocal(dtStr) {
             addOrUpdateSeriesForPart(p, `s:${sid}`, sname, color, data);
             if (!aggByShop.has(sid)) aggByShop.set(sid, []);
             aggByShop.get(sid).push(data);
+
+            // 收集3D数据点
+            data.forEach(point => {
+                if (Array.isArray(point) && point.length >= 2) {
+                    collect3DDataPoint(sid, sname, color, point[0], point[1], p);
+                }
+            });
         });
 
         try {
             await runWithLimit(tasks, RAW_CONC_LIMIT);
             renderAggregateOnMain(aggByShop, SELECTED_START_MS, SELECTED_END_MS);
+            render3DChartsFromCollectedData();  // 渲染3D图表
             ensureDailyTicksAll();
             applyWorkHoursOverlayAll(SELECTED_START_MS, SELECTED_END_MS);
             $('status') && ($('status').textContent = `C) 完了：${profile.title || profile.label} × ${part}${clipped ? '（已截断显示）' : ''}`);
@@ -2779,6 +3049,7 @@ function toIsoLocal(dtStr) {
         SELECTED_START_MS = new Date(startIso).getTime();
         SELECTED_END_MS = new Date(endIso).getTime();
         disposeAllPartCharts();
+        clear3DCharts();  // 清空3D图表
 
         const pairs = (cohort.members || []).map(m => [sid, String(m.part_number)]);
         let clipped = false;
@@ -2792,10 +3063,18 @@ function toIsoLocal(dtStr) {
             const color = getColorForShop({name: sname, id: s}, s);
             const data = appendShadowToNowIfNeeded(r.data.slice());
             addOrUpdateSeriesForPart(p, `s:${s}`, sname, color, data);
+
+            // 收集3D数据点
+            data.forEach(point => {
+                if (Array.isArray(point) && point.length >= 2) {
+                    collect3DDataPoint(s, sname, color, point[0], point[1], p);
+                }
+            });
         });
 
         try {
             await runWithLimit(tasks, RAW_CONC_LIMIT);
+            render3DChartsFromCollectedData();  // 渲染3D图表
             ensureDailyTicksAll();
             applyWorkHoursOverlayAll(SELECTED_START_MS, SELECTED_END_MS);
             $('status') && ($('status').textContent = `D) 完了：${sname} × ${cohort.title || cohort.label}${clipped ? '（已截断显示）' : ''}`);
@@ -2846,6 +3125,7 @@ function toIsoLocal(dtStr) {
         SELECTED_START_MS = new Date(startIso).getTime();
         SELECTED_END_MS = new Date(endIso).getTime();
         disposeAllPartCharts();
+        clear3DCharts();  // 清空3D图表
 
         const shopIds = (profile.items || []).map(x => Number(x.shop_id));
         const members = cohort.members || [];
@@ -2867,11 +3147,19 @@ function toIsoLocal(dtStr) {
             addOrUpdateSeriesForPart(p, `s:${s}`, sname, color, data);
             if (!aggByShop.has(s)) aggByShop.set(s, []);
             aggByShop.get(s).push(data);
+
+            // 收集3D数据点
+            data.forEach(point => {
+                if (Array.isArray(point) && point.length >= 2) {
+                    collect3DDataPoint(s, sname, color, point[0], point[1], p);
+                }
+            });
         });
 
         try {
             await runWithLimit(tasks, RAW_CONC_LIMIT);
             renderAggregateOnMain(aggByShop, SELECTED_START_MS, SELECTED_END_MS);
+            render3DChartsFromCollectedData();  // 渲染3D图表
             ensureDailyTicksAll();
             applyWorkHoursOverlayAll(SELECTED_START_MS, SELECTED_END_MS);
             $('status') && ($('status').textContent = `E) 完了：${profile.title || profile.label} × ${cohort.title || cohort.label}${clipped ? '（已截断显示）' : ''}`);
@@ -2901,6 +3189,7 @@ function toIsoLocal(dtStr) {
         const inst = getMainChart();
         if (inst) inst.setOption(baseOption, true);
         disposeAllPartCharts(); // 同时清空所有 PN 子图
+        clear3DCharts(); // 清空所有 3D 图表
     });
 
     [
