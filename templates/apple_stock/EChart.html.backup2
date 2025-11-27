@@ -444,8 +444,6 @@
 
     {# 数据表 #}
     <div id="chart"></div>
-    {# 店铺-时间热力图 (Punch Card) #}
-    <div id="chart_punchcard" style="height: 400px; margin-top: 16px;"></div>
     {# 前端基础统计 #}
     <div id="chart_stats"></div>
     {# 后端计算统计信息 #}
@@ -533,15 +531,6 @@ const RAW_CONC_LIMIT = 8;
  */
 const AGG_TIME_WINDOW_MS = 5 * 60 * 1000;  // 5分 (300000ミリ秒)
 
-/* ========== Punch Card 設定 (Punch Card Settings) ========== */
-
-/**
- * Punch Card 時間バケットサイズ（ミリ秒）
- * 店舗×時間帯の散布図における時間軸のバケット間隔
- * @type {number}
- */
-const PUNCHCARD_TIME_BUCKET_MS = 3 * 60 * 60 * 1000;  // 3時間 (10800000ミリ秒)
-
 /* ========== カラーパレット (Color Palette) ========== */
 
 /**
@@ -614,13 +603,6 @@ const SHOPS_INDEX = new Map();
 
 /** Part NumberからiPhone IDへのマッピング @type {Map<string, number>} */
 const IPHONE_ID_BY_PART = new Map();
-
-/**
- * 原始価格データストレージ（Punch Card 用）
- * 店舗ID → 型番 → データポイント配列のマップ
- * @type {Map<number, Map<string, Array<{timestamp: number, price: number, part: string}>>>}
- */
-const RAW_PRICE_DATA = new Map();
 
 /** Part NumberからiPhone詳細情報へのマッピング @type {Map<string, Object>} */
 const IPHONE_INFO_BY_PART = new Map();
@@ -1159,174 +1141,6 @@ function adjustGridTopForLegend(inst) {
 
     statsChart.setOption(statsBaseOption);
     window.addEventListener('resize', () => statsChart.resize());
-
-    // === Punch Card 图：初始化 ===
-    const punchcardChart = echarts.init(document.getElementById('chart_punchcard'));
-
-    /**
-     * 将原始价格数据聚合为 Punch Card 数据格式
-     * 数据格式: [时间bucket索引, 店铺索引, 平均价格]
-     *
-     * @returns {{data: Array<[number, number, number]>, timeLabels: string[], shopLabels: string[]}}
-     */
-    function aggregateToPunchCard() {
-        if (!RAW_PRICE_DATA.size) return {data: [], timeLabels: [], shopLabels: []};
-
-        // 收集所有店铺
-        const shopIds = Array.from(RAW_PRICE_DATA.keys()).sort((a, b) => a - b);
-        const shopLabels = shopIds.map(id => SHOPS_INDEX.get(id) || `#${id}`);
-
-        // 收集所有数据点并计算时间范围
-        const allData = [];
-        for (const [shopId, partMap] of RAW_PRICE_DATA.entries()) {
-            for (const [part, points] of partMap.entries()) {
-                for (const point of points) {
-                    allData.push({...point, shopId});
-                }
-            }
-        }
-
-        if (!allData.length) return {data: [], timeLabels, shopLabels};
-
-        // 计算时间范围并生成时间bucket标签
-        const timestamps = allData.map(d => d.timestamp);
-        const minTs = Math.min(...timestamps);
-        const maxTs = Math.max(...timestamps);
-
-        // 将时间范围划分为3小时bucket
-        const startBucket = Math.floor(minTs / PUNCHCARD_TIME_BUCKET_MS) * PUNCHCARD_TIME_BUCKET_MS;
-        const endBucket = Math.ceil(maxTs / PUNCHCARD_TIME_BUCKET_MS) * PUNCHCARD_TIME_BUCKET_MS;
-
-        const timeBuckets = [];
-        for (let t = startBucket; t <= endBucket; t += PUNCHCARD_TIME_BUCKET_MS) {
-            timeBuckets.push(t);
-        }
-
-        // 生成时间标签 (例如: "12/25 09:00")
-        const timeLabels = timeBuckets.map(ts => {
-            const d = new Date(ts + JST_OFFSET_MS);
-            const month = d.getUTCMonth() + 1;
-            const day = d.getUTCDate();
-            const hour = d.getUTCHours();
-            return `${month}/${day} ${hour.toString().padStart(2, '0')}:00`;
-        });
-
-        // 创建聚合map: (shopId, timeBucket) -> {sum, count}
-        const aggMap = new Map();
-
-        for (const point of allData) {
-            const bucketTs = Math.floor(point.timestamp / PUNCHCARD_TIME_BUCKET_MS) * PUNCHCARD_TIME_BUCKET_MS;
-            const key = `${point.shopId}:${bucketTs}`;
-
-            if (!aggMap.has(key)) {
-                aggMap.set(key, {sum: 0, count: 0, shopId: point.shopId, bucketTs});
-            }
-
-            const agg = aggMap.get(key);
-            agg.sum += point.price;
-            agg.count += 1;
-        }
-
-        // 转换为 ECharts 散点图数据格式
-        const data = [];
-        for (const {shopId, bucketTs, sum, count} of aggMap.values()) {
-            const timeIdx = timeBuckets.indexOf(bucketTs);
-            const shopIdx = shopIds.indexOf(shopId);
-            if (timeIdx >= 0 && shopIdx >= 0) {
-                const avgPrice = sum / count;
-                data.push([timeIdx, shopIdx, Math.round(avgPrice)]);
-            }
-        }
-
-        return {data, timeLabels, shopLabels};
-    }
-
-    /**
-     * 渲染 Punch Card 图表
-     */
-    function renderPunchCard() {
-        const {data, timeLabels, shopLabels} = aggregateToPunchCard();
-
-        if (!data.length) {
-            punchcardChart.setOption({
-                title: {text: '店舗×時間帯 価格分布', left: 'center'},
-                graphic: [{
-                    type: 'text',
-                    left: 'center',
-                    top: 'middle',
-                    style: {text: 'データなし', fontSize: 14, fill: '#999'}
-                }]
-            }, true);
-            return;
-        }
-
-        // 计算价格范围用于符号大小映射
-        const prices = data.map(d => d[2]);
-        const minPrice = Math.min(...prices);
-        const maxPrice = Math.max(...prices);
-        const priceRange = maxPrice - minPrice || 1;
-
-        punchcardChart.setOption({
-            title: {
-                text: '店舗×時間帯 価格分布 (3時間間隔)',
-                left: 'center',
-                textStyle: {fontSize: 14}
-            },
-            tooltip: {
-                position: 'top',
-                formatter: function (params) {
-                    const timeLabel = timeLabels[params.value[0]];
-                    const shopLabel = shopLabels[params.value[1]];
-                    const price = params.value[2];
-                    return `${shopLabel}<br/>${timeLabel}<br/>${fmtJPY(price)}`;
-                }
-            },
-            grid: {
-                left: 120,
-                right: 20,
-                top: 60,
-                bottom: 60,
-                containLabel: false
-            },
-            xAxis: {
-                type: 'category',
-                data: timeLabels,
-                boundaryGap: false,
-                splitLine: {show: true, lineStyle: {color: '#e5e7eb'}},
-                axisLine: {show: false},
-                axisLabel: {
-                    interval: Math.ceil(timeLabels.length / 20),  // 控制标签密度
-                    rotate: 45,
-                    fontSize: 10
-                }
-            },
-            yAxis: {
-                type: 'category',
-                data: shopLabels,
-                axisLine: {show: false},
-                axisLabel: {fontSize: 11}
-            },
-            series: [{
-                name: '平均価格',
-                type: 'scatter',
-                symbolSize: function (val) {
-                    // 价格越高，圆点越大 (范围: 5-30)
-                    const normalized = (val[2] - minPrice) / priceRange;
-                    return 5 + normalized * 25;
-                },
-                data: data,
-                itemStyle: {
-                    color: '#478CD8',
-                    opacity: 0.7
-                },
-                animationDelay: function (idx) {
-                    return idx * 2;
-                }
-            }]
-        }, true);
-    }
-
-    window.addEventListener('resize', () => punchcardChart.resize());
 
     // 从主图当前可见曲线提取统计（只看 id 以 s:/raw: 开头的折线）
     function computeStatsFromMainChart() {
@@ -1990,41 +1804,6 @@ function adjustGridTopForLegend(inst) {
             )
             .sort((a, b) => a[0] - b[0]);
         return {name: shopName, data};
-    }
-
-    /**
-     * 将原始价格数据存储到 RAW_PRICE_DATA 用于 Punch Card 图表
-     * @param {number} shopId - 店铺ID
-     * @param {string} partNumber - 型番
-     * @param {Array<[number, number]>} data - 数据数组 [[timestamp, price], ...]
-     */
-    function storeRawPriceData(shopId, partNumber, data) {
-        if (!RAW_PRICE_DATA.has(shopId)) {
-            RAW_PRICE_DATA.set(shopId, new Map());
-        }
-
-        const partMap = RAW_PRICE_DATA.get(shopId);
-
-        // 将 [timestamp, price] 格式转换为对象格式
-        const points = data.map(([timestamp, price]) => ({
-            timestamp,
-            price,
-            part: partNumber
-        }));
-
-        // 如果该型番已存在数据，合并并去重
-        if (partMap.has(partNumber)) {
-            const existing = partMap.get(partNumber);
-            const combined = [...existing, ...points];
-            // 按时间戳去重
-            const uniqueMap = new Map();
-            for (const point of combined) {
-                uniqueMap.set(point.timestamp, point);
-            }
-            partMap.set(partNumber, Array.from(uniqueMap.values()));
-        } else {
-            partMap.set(partNumber, points);
-        }
     }
 
     function appendShadowToNowIfNeeded(seriesData) {
@@ -2724,10 +2503,6 @@ function adjustGridTopForLegend(inst) {
             const r = await fetchOneShopSeries(SERIES_API_BASE, startIso, endIso, sid, sname, part);
             const color = getColorForShop({name: sname, id: sid}, 0);
             const data = appendShadowToNowIfNeeded(r.data.slice());
-
-            // 存储原始数据用于 Punch Card
-            storeRawPriceData(sid, part, r.data);
-
             addOrUpdateSeries(`raw:s:${sid}|p:${part}`, sname, color, data);
 
 
@@ -2759,9 +2534,6 @@ function adjustGridTopForLegend(inst) {
                 ensureDailyTicksOn(chart);
                 applyWorkHoursOverlayAll(SELECTED_START_MS, SELECTED_END_MS);  // ★
             }
-
-            // 渲染 Punch Card 图表
-            renderPunchCard();
 
         } catch (e) {
             $('err') && ($('err').textContent = `A) 読み込み失敗：${e.message}`);
@@ -2808,10 +2580,6 @@ function adjustGridTopForLegend(inst) {
             const r = await fetchOneShopSeries(SERIES_API_BASE, startIso, endIso, sid, sname, part);
             const color = getColorForShop({name: sname, id: sid}, sid);
             const data = appendShadowToNowIfNeeded(r.data.slice());
-
-            // 存储原始数据用于 Punch Card
-            storeRawPriceData(sid, part, r.data);
-
             addOrUpdateSeriesForPart(part, `s:${sid}`, sname, color, data);
             if (!aggByShop.has(sid)) aggByShop.set(sid, []);
             aggByShop.get(sid).push(data);
@@ -2838,10 +2606,6 @@ function adjustGridTopForLegend(inst) {
                     endIso
                 });
             }
-
-            // 渲染 Punch Card 图表
-            renderPunchCard();
-
         } catch (e) {
             $('err') && ($('err').textContent = `B) 読み込み失敗：${e.message}`);
         }
@@ -2887,10 +2651,6 @@ function adjustGridTopForLegend(inst) {
             const r = await fetchOneShopSeries(SERIES_API_BASE, startIso, endIso, sid, sname, p);
             const color = getColorForShop({name: sname, id: sid}, sid);
             const data = appendShadowToNowIfNeeded(r.data.slice());
-
-            // 存储原始数据用于 Punch Card
-            storeRawPriceData(sid, p, r.data);
-
             addOrUpdateSeriesForPart(p, `s:${sid}`, sname, color, data);
             if (!aggByShop.has(sid)) aggByShop.set(sid, []);
             aggByShop.get(sid).push(data);
@@ -2914,10 +2674,6 @@ function adjustGridTopForLegend(inst) {
                     endIso
                 });
             }
-
-            // 渲染 Punch Card 图表
-            renderPunchCard();
-
         } catch (e) {
             $('err') && ($('err').textContent = `C) 読み込み失敗：${e.message}`);
         }
@@ -2961,10 +2717,6 @@ function adjustGridTopForLegend(inst) {
             const r = await fetchOneShopSeries(SERIES_API_BASE, startIso, endIso, s, sname, p);
             const color = getColorForShop({name: sname, id: s}, s);
             const data = appendShadowToNowIfNeeded(r.data.slice());
-
-            // 存储原始数据用于 Punch Card
-            storeRawPriceData(s, p, r.data);
-
             addOrUpdateSeriesForPart(p, `s:${s}`, sname, color, data);
         });
 
@@ -2985,10 +2737,6 @@ function adjustGridTopForLegend(inst) {
                     endIso
                 });
             }
-
-            // 渲染 Punch Card 图表
-            renderPunchCard();
-
         } catch (e) {
             $('err') && ($('err').textContent = `D) 読み込み失敗：${e.message}`);
         }
@@ -3042,10 +2790,6 @@ function adjustGridTopForLegend(inst) {
             const r = await fetchOneShopSeries(SERIES_API_BASE, startIso, endIso, s, sname, p);
             const color = getColorForShop({name: sname, id: s}, s);
             const data = appendShadowToNowIfNeeded(r.data.slice());
-
-            // 存储原始数据用于 Punch Card
-            storeRawPriceData(s, p, r.data);
-
             addOrUpdateSeriesForPart(p, `s:${s}`, sname, color, data);
             if (!aggByShop.has(s)) aggByShop.set(s, []);
             aggByShop.get(s).push(data);
@@ -3072,10 +2816,6 @@ function adjustGridTopForLegend(inst) {
                     });
                 }
             }
-
-            // 渲染 Punch Card 图表
-            renderPunchCard();
-
         } catch (e) {
             $('err') && ($('err').textContent = `E) 読み込み失敗：${e.message}`);
         }
@@ -3087,10 +2827,6 @@ function adjustGridTopForLegend(inst) {
         const inst = getMainChart();
         if (inst) inst.setOption(baseOption, true);
         disposeAllPartCharts(); // 同时清空所有 PN 子图
-
-        // 清空 Punch Card 数据并重新渲染
-        RAW_PRICE_DATA.clear();
-        renderPunchCard();
     });
 
     [
