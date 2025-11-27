@@ -43,11 +43,17 @@ from .views_frontend import (
     StoreLatestStockView,
     StockDashboardView,
     StatisticalDataSummaryView,
+    AutoMLView,
 )
 from .api_trends_TrendsAvgOnly import TrendsAvgOnlyApiView
 from .api_trends_model_colors import trends_model_colors
 from .api_trends_color_std import TrendsColorStdApiView
 from .api import dispatch_psta_batch_same_ts
+from .api_automl import (
+    TriggerPreprocessingRapidView,
+    TriggerCauseAndEffectTestingView,
+    TriggerQuantificationOfImpactView
+)
 
 router = DefaultRouter()
 router.register(r"iphones", IphoneViewSet, basename="iphone")
@@ -214,6 +220,13 @@ urlpatterns = [
                   path('post-to-x/', post_to_x, name='post_to_x'),
                   path('statistical-data-summary/', StatisticalDataSummaryView.as_view(),
                        name='statistical-data-summary'),
+                  path('automl/', AutoMLView.as_view(), name='automl'),
+                  path('automl/trigger/preprocessing-rapid/', TriggerPreprocessingRapidView.as_view(),
+                       name='trigger-preprocessing-rapid'),
+                  path('automl/trigger/cause-and-effect-testing/', TriggerCauseAndEffectTestingView.as_view(),
+                       name='trigger-cause-and-effect-testing'),
+                  path('automl/trigger/quantification-of-impact/', TriggerQuantificationOfImpactView.as_view(),
+                       name='trigger-quantification-of-impact'),
 
                   path("options/scopes/", ScopeOptionsView.as_view(), name="options-scopes"),
                   path("options/shops/", options_shops, name="options-shops"),
