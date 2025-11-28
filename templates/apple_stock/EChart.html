@@ -208,7 +208,7 @@
 
         .chart-bubble-canvas {
             width: 100%;
-            height: 400px;
+            height: 600px;
         }
 
         #chart_stats {
@@ -1757,10 +1757,10 @@ function adjustGridTopForLegend(inst) {
                     type: 'scatter',
                     symbolSize: function(data) {
                         // data: [timestamp, shopName, price, count]
-                        // 气泡大小基于价格，范围5-30
+                        // 气泡大小基于价格（价格越高，气泡越大）
                         const price = data[2] || 0;
-                        const minSize = 5;
-                        const maxSize = 30;
+                        const minSize = 8;
+                        const maxSize = 40;
                         const priceRange = PRICE_VISIBLE_MAX - PRICE_VISIBLE_MIN;
                         const normalizedPrice = (price - PRICE_VISIBLE_MIN) / priceRange;
                         return minSize + normalizedPrice * (maxSize - minSize);
