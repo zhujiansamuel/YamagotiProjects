@@ -1482,11 +1482,16 @@ function adjustGridTopForLegend(inst) {
         if (!Chart3DManager.dataByColor.has(colorKey)) {
             Chart3DManager.dataByColor.set(colorKey, []);
         }
+
+        // 确保shopName和shopColor有值，使用回退值
+        const safeName = shopName || SHOPS_INDEX.get(shopId) || `店舗#${shopId}`;
+        const safeColor = shopColor || getColorForShop({name: safeName, id: shopId}, shopId);
+
         Chart3DManager.dataByColor.get(colorKey).push({
             timestamp,
             shopId,
-            shopName,
-            shopColor,
+            shopName: safeName,
+            shopColor: safeColor,
             price
         });
     }
