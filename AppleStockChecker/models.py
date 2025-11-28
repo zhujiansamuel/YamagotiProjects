@@ -423,3 +423,322 @@ class FeatureSpec(models.Model):
 
     def __str__(self):
         return f"{self.family}:{self.slug}"
+
+
+# ============================================================================
+# AutoML 因果分析模型
+# ============================================================================
+
+class AutomlCausalJob(models.Model):
+    """
+    AutoML 因果分析 Job 总控表
+    每个机种 + 时间窗口一条记录，管理三个阶段的状态
+    """
+    class StageStatus(models.TextChoices):
+        PENDING = "PENDING", "待处理"
+        RUNNING = "RUNNING", "运行中"
+        SUCCESS = "SUCCESS", "成功"
+        FAILED = "FAILED", "失败"
+        SKIPPED = "SKIPPED", "已跳过"
+
+    id = models.BigAutoField(primary_key=True)
+
+    iphone = models.ForeignKey(
+        "Iphone",
+        on_delete=models.PROTECT,
+        related_name="automl_causal_jobs",
+        db_index=True,
+        verbose_name="iPhone机型",
+    )
+
+    # 可选：绑定上一轮导入的批次/Job_ID
+    batch_id = models.UUIDField(
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name="批次ID",
+    )
+    psta_job_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name="PSTA任务ID",
+    )
+
+    window_start = models.DateTimeField(db_index=True, verbose_name="时间窗口开始")
+    window_end = models.DateTimeField(db_index=True, verbose_name="时间窗口结束")
+    bucket_freq = models.CharField(max_length=16, default="10min", verbose_name="时间桶频率")
+
+    # 三个阶段状态 + 时间
+    preprocessing_status = models.CharField(
+        max_length=16,
+        choices=StageStatus.choices,
+        default=StageStatus.PENDING,
+        db_index=True,
+        verbose_name="预处理状态",
+    )
+    preprocessing_started_at = models.DateTimeField(null=True, blank=True, verbose_name="预处理开始时间")
+    preprocessing_finished_at = models.DateTimeField(null=True, blank=True, verbose_name="预处理完成时间")
+
+    cause_effect_status = models.CharField(
+        max_length=16,
+        choices=StageStatus.choices,
+        default=StageStatus.PENDING,
+        db_index=True,
+        verbose_name="VAR模型状态",
+    )
+    cause_effect_started_at = models.DateTimeField(null=True, blank=True, verbose_name="VAR模型开始时间")
+    cause_effect_finished_at = models.DateTimeField(null=True, blank=True, verbose_name="VAR模型完成时间")
+
+    impact_status = models.CharField(
+        max_length=16,
+        choices=StageStatus.choices,
+        default=StageStatus.PENDING,
+        db_index=True,
+        verbose_name="影响量化状态",
+    )
+    impact_started_at = models.DateTimeField(null=True, blank=True, verbose_name="影响量化开始时间")
+    impact_finished_at = models.DateTimeField(null=True, blank=True, verbose_name="影响量化完成时间")
+
+    # 全局 job 状态与诊断
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
+    last_error = models.TextField(null=True, blank=True, verbose_name="最后错误")
+    retry_count = models.IntegerField(default=0, verbose_name="重试次数")
+
+    # 优先级：小 = 高
+    priority = models.IntegerField(default=100, db_index=True, verbose_name="优先级")
+
+    class Meta:
+        verbose_name = "AutoML因果分析任务"
+        verbose_name_plural = "AutoML因果分析任务"
+        indexes = [
+            models.Index(fields=["iphone", "window_start", "window_end"]),
+            models.Index(fields=["preprocessing_status", "priority"]),
+            models.Index(fields=["cause_effect_status", "priority"]),
+            models.Index(fields=["impact_status", "priority"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["iphone", "window_start", "window_end", "bucket_freq"],
+                name="uniq_automl_job_per_iphone_window",
+            )
+        ]
+
+    def __str__(self):
+        return f"AutoML Job {self.id}: {self.iphone.part_number} [{self.window_start.date()} ~ {self.window_end.date()}]"
+
+
+class AutomlPreprocessedSeries(models.Model):
+    """
+    预处理序列表（阶段1的输出）
+    存储对齐后的价格序列及其衍生指标
+    """
+    id = models.BigAutoField(primary_key=True)
+
+    job = models.ForeignKey(
+        "AutomlCausalJob",
+        on_delete=models.CASCADE,
+        related_name="preprocessed_series",
+        db_index=True,
+        verbose_name="关联任务",
+    )
+
+    shop = models.ForeignKey(
+        "SecondHandShop",
+        on_delete=models.PROTECT,
+        db_index=True,
+        verbose_name="二手店",
+    )
+
+    iphone = models.ForeignKey(
+        "Iphone",
+        on_delete=models.PROTECT,
+        db_index=True,
+        verbose_name="iPhone机型",
+    )
+
+    bucket_ts = models.DateTimeField(db_index=True, verbose_name="时间桶")
+
+    # 价格指标
+    raw_price = models.FloatField(verbose_name="原始价格")
+    log_price = models.FloatField(null=True, blank=True, verbose_name="对数价格")
+    dlog_price = models.FloatField(null=True, blank=True, verbose_name="对数价格差分")
+    z_dlog_price = models.FloatField(null=True, blank=True, verbose_name="标准化对数价格差分")
+
+    # 价格来源标记
+    price_source = models.CharField(
+        max_length=16,
+        choices=[("NEW", "新品"), ("A", "A品"), ("B", "B品")],
+        default="NEW",
+        verbose_name="价格来源",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
+
+    class Meta:
+        verbose_name = "预处理序列"
+        verbose_name_plural = "预处理序列"
+        indexes = [
+            models.Index(fields=["job", "bucket_ts"]),
+            models.Index(fields=["job", "shop", "bucket_ts"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["job", "shop", "bucket_ts"],
+                name="uniq_preproc_per_job_shop_ts",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.shop.name} @ {self.bucket_ts.isoformat()} (Job {self.job_id})"
+
+
+class AutomlVarModel(models.Model):
+    """
+    VAR 模型结果表（阶段2的输出）
+    存储 VAR 模型的系数和统计信息
+    """
+    id = models.BigAutoField(primary_key=True)
+
+    job = models.OneToOneField(
+        "AutomlCausalJob",
+        on_delete=models.CASCADE,
+        related_name="var_model",
+        db_index=True,
+        verbose_name="关联任务",
+    )
+
+    # panel 列顺序（店铺 ID 列表）
+    shop_ids = models.JSONField(verbose_name="店铺ID列表")
+
+    lag_order = models.IntegerField(verbose_name="滞后阶数")
+
+    # coefs: (L, S, S)，序列化为 JSON
+    coefs = models.JSONField(verbose_name="VAR系数")
+
+    aic = models.FloatField(null=True, blank=True, verbose_name="AIC")
+    bic = models.FloatField(null=True, blank=True, verbose_name="BIC")
+    sample_size = models.IntegerField(verbose_name="样本数量")
+
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
+
+    class Meta:
+        verbose_name = "VAR模型"
+        verbose_name_plural = "VAR模型"
+        indexes = [
+            models.Index(fields=["job"]),
+        ]
+
+    def __str__(self):
+        return f"VAR Model for Job {self.job_id} (L={self.lag_order}, Shops={len(self.shop_ids)})"
+
+
+class AutomlGrangerResult(models.Model):
+    """
+    Granger 因果检验结果表（阶段3的输出之一）
+    存储所有店铺对的 Granger 检验结果
+    """
+    id = models.BigAutoField(primary_key=True)
+
+    job = models.ForeignKey(
+        "AutomlCausalJob",
+        on_delete=models.CASCADE,
+        related_name="granger_results",
+        db_index=True,
+        verbose_name="关联任务",
+    )
+
+    cause_shop = models.ForeignKey(
+        "SecondHandShop",
+        on_delete=models.PROTECT,
+        related_name="+",
+        db_index=True,
+        verbose_name="原因店铺",
+    )
+    effect_shop = models.ForeignKey(
+        "SecondHandShop",
+        on_delete=models.PROTECT,
+        related_name="+",
+        db_index=True,
+        verbose_name="结果店铺",
+    )
+
+    maxlag = models.IntegerField(verbose_name="最大滞后")
+    pvalues_by_lag = models.JSONField(verbose_name="各滞后阶的p值")
+
+    min_pvalue = models.FloatField(db_index=True, verbose_name="最小p值")
+    best_lag = models.IntegerField(null=True, blank=True, verbose_name="最优滞后")
+    is_significant = models.BooleanField(default=False, db_index=True, verbose_name="是否显著")
+
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
+
+    class Meta:
+        verbose_name = "Granger检验结果"
+        verbose_name_plural = "Granger检验结果"
+        indexes = [
+            models.Index(fields=["job", "cause_shop", "effect_shop"]),
+            models.Index(fields=["job", "is_significant"]),
+        ]
+
+    def __str__(self):
+        sig = "✓" if self.is_significant else "✗"
+        return f"{sig} {self.cause_shop.name} → {self.effect_shop.name} (p={self.min_pvalue:.4f})"
+
+
+class AutomlCausalEdge(models.Model):
+    """
+    因果边表（阶段3的输出之二）
+    只存储显著的因果关系
+    """
+    id = models.BigAutoField(primary_key=True)
+
+    job = models.ForeignKey(
+        "AutomlCausalJob",
+        on_delete=models.CASCADE,
+        related_name="causal_edges",
+        db_index=True,
+        verbose_name="关联任务",
+    )
+
+    cause_shop = models.ForeignKey(
+        "SecondHandShop",
+        on_delete=models.PROTECT,
+        related_name="+",
+        db_index=True,
+        verbose_name="原因店铺",
+    )
+    effect_shop = models.ForeignKey(
+        "SecondHandShop",
+        on_delete=models.PROTECT,
+        related_name="+",
+        db_index=True,
+        verbose_name="结果店铺",
+    )
+
+    main_lag = models.IntegerField(verbose_name="主要滞后期")
+    weight = models.FloatField(verbose_name="影响权重")
+
+    min_pvalue = models.FloatField(verbose_name="最小p值")
+    confidence = models.FloatField(verbose_name="置信度")
+
+    enabled = models.BooleanField(default=True, verbose_name="是否启用")
+
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
+
+    class Meta:
+        verbose_name = "因果边"
+        verbose_name_plural = "因果边"
+        indexes = [
+            models.Index(fields=["job", "cause_shop", "effect_shop"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["job", "cause_shop", "effect_shop"],
+                name="uniq_causal_edge_per_job_pair",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.cause_shop.name} → {self.effect_shop.name} (weight={self.weight:.3f}, lag={self.main_lag})"
