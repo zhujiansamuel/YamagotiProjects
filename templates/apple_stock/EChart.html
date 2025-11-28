@@ -1869,7 +1869,7 @@ function adjustGridTopForLegend(inst) {
 
     const chart = getMainChart();
 
-    /* —— 新旧两套“增改系列” —— */
+    /* —— 新旧两套"增改系列" —— */
     // 主图用（A）
     function addOrUpdateSeries(id, name, color, data) {
         const inst = chart;
@@ -1877,8 +1877,12 @@ function adjustGridTopForLegend(inst) {
         const opt = inst.getOption() || {};
         const cur = (opt.series || []).filter(s => s.id !== '__workhours__');
         const idx = cur.findIndex(s => s.id === id);
+
+        // 确保name有值
+        const safeName = name || `Series#${id}`;
+
         const base = {
-            id, name, type: 'line', showSymbol: false, smooth: 0.15,
+            id, name: safeName, type: 'line', showSymbol: false, smooth: 0.15,
             xAxisIndex: 0, yAxisIndex: 0,
             emphasis: {focus: 'series'},
             lineStyle: {width: 2, color},
@@ -1887,13 +1891,16 @@ function adjustGridTopForLegend(inst) {
         };
         if (idx >= 0) cur[idx] = {
             ...cur[idx],
-            name,
+            name: safeName,
             data,
             lineStyle: {...(cur[idx].lineStyle || {}), width: 2, color},
             itemStyle: {color}
         };
         else cur.push(base);
-        inst.setOption({series: cur, legend: {data: cur.map(s => s.name)}}, {notMerge: false, lazyUpdate: true});
+
+        // 过滤掉name为undefined的元素
+        const validCur = cur.filter(s => s && s.name);
+        inst.setOption({series: validCur, legend: {data: validCur.map(s => s.name)}}, {notMerge: false, lazyUpdate: true});
         adjustGridTopForLegend(inst);
     }
 
@@ -1919,8 +1926,12 @@ function adjustGridTopForLegend(inst) {
         const opt = inst.getOption() || {};
         const arr = (opt.series || []).slice();
         const idx = arr.findIndex(s => s.id === id);
+
+        // 确保name有值
+        const safeName = name || `Series#${id}`;
+
         const base = {
-            id, name,
+            id, name: safeName,
             type: 'line', showSymbol: false, smooth: 0.15,
             xAxisIndex: 0, yAxisIndex: 0,
             emphasis: {focus: 'series'},
@@ -1930,13 +1941,16 @@ function adjustGridTopForLegend(inst) {
         };
         if (idx >= 0) {
             arr[idx] = {
-                ...arr[idx], name, data, xAxisIndex: 0, yAxisIndex: 0,
+                ...arr[idx], name: safeName, data, xAxisIndex: 0, yAxisIndex: 0,
                 lineStyle: {...(arr[idx].lineStyle || {}), width: 2, color}, itemStyle: {color}
             };
         } else {
             arr.push(base);
         }
-        inst.setOption({series: arr, legend: {data: arr.map(s => s.name)}}, {notMerge: false, lazyUpdate: true});
+
+        // 过滤掉name为undefined的元素
+        const validArr = arr.filter(s => s && s.name);
+        inst.setOption({series: validArr, legend: {data: validArr.map(s => s.name)}}, {notMerge: false, lazyUpdate: true});
     adjustGridTopForLegend(inst);
     }
 
