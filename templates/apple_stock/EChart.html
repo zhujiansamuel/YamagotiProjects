@@ -1419,14 +1419,18 @@ function adjustGridTopForLegend(inst) {
         // 按店铺分组数据，每个店铺一个series
         const seriesByShop = new Map();
         validData.forEach(d => {
+            // 确保shopName和shopColor有值
+            const safeName = d.shopName || SHOPS_INDEX.get(d.shopId) || `店舗#${d.shopId}`;
+            const safeColor = d.shopColor || getColorForShop({name: safeName, id: d.shopId}, d.shopId);
+
             if (!seriesByShop.has(d.shopId)) {
                 const shop = shopMap.get(d.shopId);
                 seriesByShop.set(d.shopId, {
-                    name: d.shopName,
+                    name: safeName,
                     type: 'scatter3D',
                     symbolSize: 6,
                     itemStyle: {
-                        color: shop?.color || d.shopColor || '#999',
+                        color: shop?.color || safeColor,
                         opacity: 0.8
                     },
                     data: []
@@ -1435,9 +1439,9 @@ function adjustGridTopForLegend(inst) {
             // 数据格式: [timestamp, shopName, price, shopColor]
             seriesByShop.get(d.shopId).data.push([
                 d.timestamp,
-                d.shopName,
+                safeName,
                 d.price,
-                d.shopColor
+                safeColor
             ]);
         });
 
