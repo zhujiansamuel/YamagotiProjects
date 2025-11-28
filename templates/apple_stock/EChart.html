@@ -627,8 +627,6 @@ const LINE_PALETTE = [
 
 /* ========== Feature デフォルト設定 (Feature Defaults) ========== */
 
-/** デフォルトで描画する Feature 名のリスト */
-const FEATURE_NAMES_DEFAULT = ['mean', 'std'];
 
 /* ========================================
  * 🌍 グローバル状態 (Global State)
@@ -1123,100 +1121,8 @@ function adjustGridTopForLegend(inst) {
   }
 }
 
-
-    function floorDay(ms) {
-        if (!Number.isFinite(ms)) return null;
-        const d = new Date(ms);
-        d.setHours(0, 0, 0, 0);
-        return d.getTime();
-    }
-
-    function ceilDay(ms) {
-        if (!Number.isFinite(ms)) return null;
-        const d = new Date(ms);
-        d.setHours(0, 0, 0, 0);
-        return d.getTime() + ONE_DAY; // 次日 00:00
-    }
-
     // —— 价格显示范围（过滤阈值） ——
-    const fmtJPY = n => new Intl.NumberFormat('ja-JP', {
-        style: 'currency',
-        currency: 'JPY',
-        maximumFractionDigits: 0
-    }).format(n);
-    const WDAY = ['日', '月', '火', '水', '木', '金', '土'];
-    const IPHONE_INFO_BY_PART = new Map();
 
-    function iphoneHumanLabelByPart(pn) {
-        const info = IPHONE_INFO_BY_PART.get(String(pn));
-        if (!info) return String(pn); // 兜底仍显示 PN
-        const cap = info.capacity_gb ? `${info.capacity_gb}GB` : '';
-        const color = info.color ? ` ${info.color}` : '';
-        const model = info.model_name || 'iPhone';
-        return `${model} ${cap}${color}`.trim();
-    }
-
-    // === 统计工具 ===
-    // 从一个数据点中抽出数值 y（支持 [ts, y] 或 { value: [ts, y] }）
-    function _yOf(item) {
-        if (Array.isArray(item)) return Number(item[1]);
-        if (item && item.value && Array.isArray(item.value)) return Number(item.value[1]);
-        return NaN;
-    }
-
-    // 从一条序列中取“最后一个有效 y”
-    function _latestY(data) {
-        for (let i = data.length - 1; i >= 0; i--) {
-            const v = _yOf(data[i]);
-            if (Number.isFinite(v)) return v;
-        }
-        return NaN;
-    }
-
-    // 已排序数组的中位数
-    function _median(sortedNums) {
-        const n = sortedNums.length;
-        if (!n) return NaN;
-        const mid = Math.floor(n / 2);
-        return n % 2
-            ? sortedNums[mid]
-            : (sortedNums[mid - 1] + sortedNums[mid]) / 2;
-    }
-
-    // 根据曲线键决定用 name 还是 version；禁止同时携带两者
-    function applyFeatureMetricParam(u, metricKey) {
-        const key = String(metricKey || '').trim();
-        const lower = key.toLowerCase();
-        if (lower === 'mean' || lower === 'std') {
-            u.searchParams.set('name', key);
-        } else {
-            u.searchParams.set('version', key);
-        }
-    }
-
-    function nearestPastMinuteMs(d = new Date()) {
-        return Math.floor(d.getTime() / 60000) * 60000;
-    }
-
-function toIsoLocal(dtStr) {
-    // dtStr 形如 "2025-10-20T10:00"，我们认为它是 JST 的本地时间
-    if (!dtStr || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dtStr)) return '';
-    // 加上 +09:00 让 JS 当成 JST 来解析，再用 toISOString() 变成 UTC
-    return new Date(`${dtStr}:00+09:00`).toISOString().replace('.000Z', 'Z');
-}
-
-    function toMillis(s) {
-        const t = new Date(s).valueOf();
-        return Number.isFinite(t) ? t : NaN;
-    }
-
-    function verticalTickFormatter(ms) {
-    const d = utcMsToJstDate(ms);  // ← 固定按 JST 看这条时间线
-    const m = d.getUTCMonth() + 1;
-    const day = d.getUTCDate();
-    const w = WDAY[d.getUTCDay()];
-    return `${m}\n月\n${day}日\n（${w}）`;
-}
 
     // === 统计图：初始化 ===
     const statsChart = echarts.init(document.getElementById('chart_stats'));
@@ -1860,16 +1766,6 @@ function toIsoLocal(dtStr) {
         adjustGridTopForLegend(chart);
     }
 
-    /* —— 子图工厂 —— */
-    function createPanelAndInitChart(host, title, isFeature = false) {
-        const {panel, canvas} = createPanel(host, title, isFeature);
-        const inst = echarts.init(canvas);
-        inst.setOption(isFeature ? baseOptionForFeature() : baseOptionForPrice(), true);
-        const opt = isFeature ? baseOptionForFeature() : baseOptionForPrice();
-        opt.grid = Object.assign({}, opt.grid, {bottom: 40});
-        ensureDailyTicksOn(inst);
-        return {panel, chart: inst};
-    }
 
     /** —— 工具：把 part number 转成“人类友好”名称 —— */
     function humanNameOfPart(partNumber, {withPn = true} = {}) {
@@ -2167,13 +2063,6 @@ function toIsoLocal(dtStr) {
 
     /* ===================== 4) Scopes：cohort / profile / iphone 选项 ===================== */
 
-    function arrFirst(obj, keys) {
-        for (const k of keys) {
-            const v = obj && obj[k];
-            if (Array.isArray(v)) return v;
-        }
-        return [];
-    }
 
     async function loadScopesOnce() {
         if (_SCOPES_CACHE) return _SCOPES_CACHE;
@@ -2783,7 +2672,6 @@ function toIsoLocal(dtStr) {
 
     /* ===================== 6) 五种加载处理器（A 保主图，B/C/D/E 分图） ===================== */
 
-    const RAW_MAX_SERIES = 60, RAW_CONC_LIMIT = 8;
 
     async function runWithLimit(tasks, limit = RAW_CONC_LIMIT) {
         const ret = [];
@@ -3253,24 +3141,9 @@ function toIsoLocal(dtStr) {
     /* 自动把 end 输入同步到“当前最近整分钟（JST）”，若页面存在这些输入框 */
 
 
-    function toInputValueJST(dateUtc) {
-    const msJst = dateUtc.getTime() + JST_OFFSET_MS;
-    const d = new Date(msJst);
-    const y = d.getUTCFullYear();
-    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(d.getUTCDate()).padStart(2, '0');
-    const hh = String(d.getUTCHours()).padStart(2, '0');
-    const mm = String(d.getUTCMinutes()).padStart(2, '0');
-    return `${y}-${m}-${day}T${hh}:${mm}`;
-}
-function floorToMinute(date = new Date()) {
-    return new Date(Math.floor(date.getTime() / 60000) * 60000);
-}
 
-function nearestPastMinuteInputValueJST() {
-    const flooredUtc = floorToMinute(new Date());  // 这个 Date 代表“当前这一刻”，独立于时区
-    return toInputValueJST(flooredUtc);            // 强制转成 JST 文本
-}
+
+
 
     function syncAllEndToNow() {
     const v = nearestPastMinuteInputValueJST();
@@ -3280,7 +3153,6 @@ function nearestPastMinuteInputValueJST() {
     });
 }
 
-    let END_AUTO_TIMER = null;
 
     function startAutoEndSync() {
         syncAllEndToNow();
