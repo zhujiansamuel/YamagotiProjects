@@ -1413,7 +1413,7 @@ function adjustGridTopForLegend(inst) {
                 });
             }
         });
-        const shops = Array.from(shopMap.values()).sort((a, b) => a.order - b.order);
+        const shops = Array.from(shopMap.values()).filter(s => s && s.name).sort((a, b) => a.order - b.order);
         const shopNames = shops.map(s => s.name);
 
         // 按店铺分组数据，每个店铺一个series
@@ -1441,7 +1441,7 @@ function adjustGridTopForLegend(inst) {
             ]);
         });
 
-        const series = Array.from(seriesByShop.values());
+        const series = Array.from(seriesByShop.values()).filter(s => s && s.name);
 
         chartObj.data = validData;
         chartObj.chart.setOption({
