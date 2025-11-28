@@ -1729,6 +1729,12 @@ function adjustGridTopForLegend(inst) {
         const aggregatedData = aggregate3HourData(dataPoints);
         if (aggregatedData.length === 0) return;
 
+        // 计算实际价格范围（用于气泡大小标准化）
+        const prices = aggregatedData.map(d => d.price);
+        const minPrice = Math.min(...prices);
+        const maxPrice = Math.max(...prices);
+        const priceRange = maxPrice - minPrice;
+
         // 提取所有唯一的店铺
         const shopMap = new Map();
         aggregatedData.forEach(d => {
@@ -1761,8 +1767,10 @@ function adjustGridTopForLegend(inst) {
                         const price = data[2] || 0;
                         const minSize = 8;
                         const maxSize = 40;
-                        const priceRange = PRICE_VISIBLE_MAX - PRICE_VISIBLE_MIN;
-                        const normalizedPrice = (price - PRICE_VISIBLE_MIN) / priceRange;
+
+                        // 使用实际数据的价格范围进行标准化
+                        if (priceRange === 0) return (minSize + maxSize) / 2; // 如果价格都相同，返回中间值
+                        const normalizedPrice = (price - minPrice) / priceRange;
                         return minSize + normalizedPrice * (maxSize - minSize);
                     },
                     itemStyle: {
