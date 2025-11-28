@@ -1426,7 +1426,7 @@ function adjustGridTopForLegend(inst) {
                     type: 'scatter3D',
                     symbolSize: 6,
                     itemStyle: {
-                        color: shop.color,
+                        color: shop?.color || d.shopColor || '#999',
                         opacity: 0.8
                     },
                     data: []
