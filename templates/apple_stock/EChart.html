@@ -150,23 +150,23 @@
 
         .chart-3d-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(500px, 1fr));
-            gap: 16px;
+            grid-template-columns: 1fr;  /* 每行一个图表 */
+            gap: 20px;
             margin-top: 12px;
         }
 
         .chart-3d-panel {
             border: 1px solid #e5e7eb;
             border-radius: 12px;
-            padding: 8px;
+            padding: 12px;
             background: #fff;
         }
 
         .chart-3d-title {
-            font-size: 13px;
+            font-size: 14px;
             color: #374151;
             font-weight: 600;
-            margin: 0 0 8px 4px;
+            margin: 0 0 12px 4px;
             display: flex;
             align-items: center;
             gap: 8px;
@@ -182,7 +182,7 @@
 
         .chart-3d-canvas {
             width: 100%;
-            height: 450px;
+            height: 500px;  /* 增加高度以更好展示 */
         }
 
         #chart_stats {
@@ -1447,6 +1447,17 @@ function adjustGridTopForLegend(inst) {
 
         const series = Array.from(seriesByShop.values()).filter(s => s && s.name);
 
+        // 计算价格范围以优化Z轴显示
+        const prices = validData.map(d => d.price);
+        const minPrice = Math.min(...prices);
+        const maxPrice = Math.max(...prices);
+        const priceRange = maxPrice - minPrice;
+
+        // 添加10%的上下边距以更好地展示波动
+        const padding = priceRange * 0.1;
+        const zMin = Math.max(PRICE_VISIBLE_MIN, Math.floor((minPrice - padding) / 1000) * 1000);
+        const zMax = Math.min(PRICE_VISIBLE_MAX, Math.ceil((maxPrice + padding) / 1000) * 1000);
+
         chartObj.data = validData;
         chartObj.chart.setOption({
             yAxis3D: {
@@ -1456,6 +1467,16 @@ function adjustGridTopForLegend(inst) {
                 axisLabel: {
                     fontSize: 10,
                     interval: 0
+                }
+            },
+            zAxis3D: {
+                name: '価格 (JPY)',
+                min: zMin,
+                max: zMax,
+                axisLabel: {
+                    formatter: function(value) {
+                        return (value / 10000).toFixed(0) + '万';
+                    }
                 }
             },
             legend: {
