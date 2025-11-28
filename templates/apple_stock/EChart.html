@@ -182,7 +182,33 @@
 
         .chart-3d-canvas {
             width: 100%;
-            height: 500px;  /* 增加高度以更好展示 */
+            height: 700px;  /* 增加高度，接近正方形 */
+        }
+
+        .chart-bubble-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .chart-bubble-panel {
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 12px;
+            background: #fff;
+        }
+
+        .chart-bubble-title {
+            font-size: 14px;
+            color: #374151;
+            font-weight: 600;
+            margin: 0 0 12px 4px;
+        }
+
+        .chart-bubble-canvas {
+            width: 100%;
+            height: 400px;
         }
 
         #chart_stats {
@@ -493,6 +519,14 @@
         <fieldset>
             <legend>3D価格分布（カラー別）</legend>
             <div id="chart_3d_grid" class="chart-3d-grid"></div>
+        </fieldset>
+    </div>
+
+    {# 气泡图 - 按颜色分组，3小时聚合 #}
+    <div id="chart_bubble_container">
+        <fieldset>
+            <legend>価格分布バブルチャート（3時間集計・カラー別）</legend>
+            <div id="chart_bubble_grid" class="chart-bubble-grid"></div>
         </fieldset>
     </div>
 
@@ -1427,22 +1461,25 @@ function adjustGridTopForLegend(inst) {
                 const shop = shopMap.get(d.shopId);
                 seriesByShop.set(d.shopId, {
                     name: safeName,
-                    type: 'scatter3D',
-                    symbolSize: 6,
-                    itemStyle: {
-                        color: shop?.color || safeColor,
-                        opacity: 0.8
+                    type: 'line3D',  // 改为线型
+                    lineStyle: {
+                        width: 2,
+                        color: shop?.color || safeColor
                     },
                     data: []
                 });
             }
-            // 数据格式: [timestamp, shopName, price, shopColor]
+            // 数据格式: [timestamp, shopName, price]
             seriesByShop.get(d.shopId).data.push([
                 d.timestamp,
                 safeName,
-                d.price,
-                safeColor
+                d.price
             ]);
+        });
+
+        // 对每个店铺的数据按时间排序，以形成正确的线条
+        seriesByShop.forEach(series => {
+            series.data.sort((a, b) => a[0] - b[0]);
         });
 
         const series = Array.from(seriesByShop.values()).filter(s => s && s.name);
@@ -1518,6 +1555,287 @@ function adjustGridTopForLegend(inst) {
             shopName: safeName,
             shopColor: safeColor,
             price
+        });
+    }
+
+    /* ===================== 气泡图管理 (3小时聚合) ===================== */
+
+    // 气泡图容器管理 - 按iPhone颜色分组
+    const ChartBubbleManager = {
+        charts: new Map(),  // iphoneColor -> {el, chart}
+        host: null,
+        dataByColor: new Map() // iphoneColor -> [{timestamp, shopId, shopName, shopColor, price}]
+    };
+
+    // 3小时聚合函数：将数据按3小时时间桶分组
+    function aggregate3HourData(dataPoints) {
+        // dataPoints: [{timestamp, shopId, shopName, shopColor, price}, ...]
+        // 返回: Map<bucket_timestamp, Map<shopId, {shopName, shopColor, prices: []}>>
+
+        const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
+        const buckets = new Map();
+
+        dataPoints.forEach(d => {
+            // 计算3小时桶的起始时间
+            const ts = new Date(d.timestamp).getTime();
+            const bucketStart = Math.floor(ts / THREE_HOURS_MS) * THREE_HOURS_MS;
+
+            if (!buckets.has(bucketStart)) {
+                buckets.set(bucketStart, new Map());
+            }
+
+            const shopMap = buckets.get(bucketStart);
+            if (!shopMap.has(d.shopId)) {
+                shopMap.set(d.shopId, {
+                    shopName: d.shopName,
+                    shopColor: d.shopColor,
+                    prices: []
+                });
+            }
+
+            shopMap.get(d.shopId).prices.push(d.price);
+        });
+
+        // 计算每个桶中每个店铺的平均价格
+        const aggregated = [];
+        buckets.forEach((shopMap, bucketStart) => {
+            shopMap.forEach((data, shopId) => {
+                const avgPrice = data.prices.reduce((sum, p) => sum + p, 0) / data.prices.length;
+                aggregated.push({
+                    timestamp: bucketStart,
+                    shopId: shopId,
+                    shopName: data.shopName,
+                    shopColor: data.shopColor,
+                    price: avgPrice,
+                    count: data.prices.length  // 数据点数量
+                });
+            });
+        });
+
+        return aggregated;
+    }
+
+    function initBubbleChartHost() {
+        if (!ChartBubbleManager.host) {
+            ChartBubbleManager.host = document.getElementById('chart_bubble_grid');
+        }
+        return ChartBubbleManager.host;
+    }
+
+    function createBubblePanel(host, iphoneColor, title) {
+        const panel = document.createElement('div');
+        panel.className = 'chart-bubble-panel';
+
+        const titleDiv = document.createElement('div');
+        titleDiv.className = 'chart-bubble-title';
+        titleDiv.textContent = title;
+
+        const canvas = document.createElement('div');
+        canvas.className = 'chart-bubble-canvas';
+
+        panel.appendChild(titleDiv);
+        panel.appendChild(canvas);
+        host.appendChild(panel);
+
+        return {panel, canvas};
+    }
+
+    function getBubbleChartForColor(iphoneColor, title) {
+        if (!ChartBubbleManager.charts.has(iphoneColor)) {
+            const host = initBubbleChartHost();
+            if (!host) return null;
+
+            const {canvas} = createBubblePanel(host, iphoneColor, title);
+            const chart = echarts.init(canvas);
+
+            // 基础气泡图配置
+            const option = {
+                tooltip: {
+                    formatter: function(params) {
+                        const d = params.data;
+                        if (!d) return '';
+                        const timestamp = new Date(d[0]).toLocaleString('ja-JP');
+                        const shopName = d[1] || '';
+                        const price = d[2] ? d[2].toLocaleString() : 'N/A';
+                        const count = d[3] || 1;
+                        return `時刻: ${timestamp}<br/>店舗: ${shopName}<br/>平均価格: ¥${price}<br/>データ数: ${count}`;
+                    }
+                },
+                grid: {
+                    left: 80,
+                    right: 50,
+                    top: 80,
+                    bottom: 80
+                },
+                xAxis: {
+                    type: 'time',
+                    name: '時刻',
+                    nameLocation: 'middle',
+                    nameGap: 30,
+                    axisLabel: {
+                        formatter: function(value) {
+                            const d = new Date(value);
+                            return `${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:00`;
+                        },
+                        rotate: 45
+                    }
+                },
+                yAxis: {
+                    type: 'category',
+                    name: '店舗',
+                    data: [],
+                    axisLabel: {
+                        interval: 0
+                    }
+                },
+                dataZoom: [
+                    {
+                        type: 'slider',
+                        xAxisIndex: 0,
+                        start: 0,
+                        end: 100,
+                        height: 30,
+                        bottom: 10
+                    },
+                    {
+                        type: 'inside',
+                        xAxisIndex: 0
+                    }
+                ],
+                legend: {
+                    data: [],
+                    top: 10
+                },
+                series: []
+            };
+
+            chart.setOption(option);
+
+            ChartBubbleManager.charts.set(iphoneColor, {
+                el: canvas,
+                chart: chart
+            });
+        }
+
+        return ChartBubbleManager.charts.get(iphoneColor);
+    }
+
+    function updateBubbleChartForColor(iphoneColor, title, dataPoints) {
+        // dataPoints: [{timestamp, shopId, shopName, shopColor, price}, ...]
+        const chartObj = getBubbleChartForColor(iphoneColor, title);
+        if (!chartObj) return;
+
+        // 3小时聚合
+        const aggregatedData = aggregate3HourData(dataPoints);
+        if (aggregatedData.length === 0) return;
+
+        // 提取所有唯一的店铺
+        const shopMap = new Map();
+        aggregatedData.forEach(d => {
+            if (!shopMap.has(d.shopId)) {
+                shopMap.set(d.shopId, {
+                    id: d.shopId,
+                    name: d.shopName,
+                    color: d.shopColor,
+                    order: getOrderForShop({name: d.shopName, id: d.shopId})
+                });
+            }
+        });
+        const shops = Array.from(shopMap.values()).filter(s => s && s.name).sort((a, b) => a.order - b.order);
+        const shopNames = shops.map(s => s.name);
+
+        // 按店铺分组数据，每个店铺一个series
+        const seriesByShop = new Map();
+        aggregatedData.forEach(d => {
+            const safeName = d.shopName || SHOPS_INDEX.get(d.shopId) || `店舗#${d.shopId}`;
+            const safeColor = d.shopColor || getColorForShop({name: safeName, id: d.shopId}, d.shopId);
+
+            if (!seriesByShop.has(d.shopId)) {
+                const shop = shopMap.get(d.shopId);
+                seriesByShop.set(d.shopId, {
+                    name: safeName,
+                    type: 'scatter',
+                    symbolSize: function(data) {
+                        // data: [timestamp, shopName, price, count]
+                        // 气泡大小基于价格，范围5-30
+                        const price = data[2] || 0;
+                        const minSize = 5;
+                        const maxSize = 30;
+                        const priceRange = PRICE_VISIBLE_MAX - PRICE_VISIBLE_MIN;
+                        const normalizedPrice = (price - PRICE_VISIBLE_MIN) / priceRange;
+                        return minSize + normalizedPrice * (maxSize - minSize);
+                    },
+                    itemStyle: {
+                        color: shop?.color || safeColor,
+                        opacity: 0.7
+                    },
+                    data: []
+                });
+            }
+
+            // 数据格式: [timestamp, shopName, price, count]
+            seriesByShop.get(d.shopId).data.push([
+                d.timestamp,
+                safeName,
+                d.price,
+                d.count
+            ]);
+        });
+
+        const series = Array.from(seriesByShop.values()).filter(s => s && s.name);
+
+        chartObj.chart.setOption({
+            yAxis: {
+                type: 'category',
+                name: '店舗',
+                data: shopNames,
+                axisLabel: {
+                    interval: 0
+                }
+            },
+            legend: {
+                data: series.map(s => s.name),
+                top: 10
+            },
+            series: series
+        });
+    }
+
+    function clearBubbleCharts() {
+        ChartBubbleManager.charts.forEach(obj => {
+            if (obj.chart) obj.chart.dispose();
+        });
+        ChartBubbleManager.charts.clear();
+        ChartBubbleManager.dataByColor.clear();
+        if (ChartBubbleManager.host) {
+            ChartBubbleManager.host.innerHTML = '';
+        }
+    }
+
+    function collectBubbleDataPoint(shopId, shopName, shopColor, timestamp, price, partNumber, iphoneColor) {
+        // 按iPhone颜色收集数据点（与3D图相同的数据）
+        const colorKey = iphoneColor || '不明';
+        if (!ChartBubbleManager.dataByColor.has(colorKey)) {
+            ChartBubbleManager.dataByColor.set(colorKey, []);
+        }
+
+        const safeName = shopName || SHOPS_INDEX.get(shopId) || `店舗#${shopId}`;
+        const safeColor = shopColor || getColorForShop({name: safeName, id: shopId}, shopId);
+
+        ChartBubbleManager.dataByColor.get(colorKey).push({
+            timestamp,
+            shopId,
+            shopName: safeName,
+            shopColor: safeColor,
+            price
+        });
+    }
+
+    function renderBubbleChartsFromCollectedData() {
+        // 从收集的数据渲染所有气泡图表，按iPhone颜色分组
+        ChartBubbleManager.dataByColor.forEach((dataPoints, iphoneColor) => {
+            const title = `${iphoneColor} - 価格分布バブルチャート（3時間集計）`;
+            updateBubbleChartForColor(iphoneColor, title, dataPoints);
         });
     }
 
@@ -2779,6 +3097,7 @@ function adjustGridTopForLegend(inst) {
         // 清空分图（A 只画主图）
         disposeAllPartCharts();
         clear3DCharts();  // 清空3D图表
+        clearBubbleCharts();  // 清空气泡图
 
         try {
             const sname = SHOPS_INDEX.get(sid) || `#${sid}`;
@@ -2787,15 +3106,17 @@ function adjustGridTopForLegend(inst) {
             const data = appendShadowToNowIfNeeded(r.data.slice());
             addOrUpdateSeries(`raw:s:${sid}|p:${part}`, sname, color, data);
 
-            // 收集3D数据点
+            // 收集3D数据点和气泡图数据点
             const iphoneInfo = IPHONE_INFO_BY_PART.get(part);
             const iphoneColor = iphoneInfo?.color || '不明';
             data.forEach(point => {
                 if (Array.isArray(point) && point.length >= 2) {
                     collect3DDataPoint(sid, sname, color, point[0], point[1], part, iphoneColor);
+                    collectBubbleDataPoint(sid, sname, color, point[0], point[1], part, iphoneColor);
                 }
             });
             render3DChartsFromCollectedData();  // 渲染3D图表
+            renderBubbleChartsFromCollectedData();  // 渲染气泡图
 
             $('status') && ($('status').textContent = `A) 完了：${sname} × ${part}`);
 
@@ -2855,6 +3176,7 @@ function adjustGridTopForLegend(inst) {
         SELECTED_END_MS = new Date(endIso).getTime();
         disposeAllPartCharts();  // 清空旧分图
         clear3DCharts();  // 清空3D图表
+        clearBubbleCharts();  // 清空气泡图
 
         const allShops = [...SHOPS_INDEX.keys()];
         const pairs = [];
@@ -2875,12 +3197,13 @@ function adjustGridTopForLegend(inst) {
             if (!aggByShop.has(sid)) aggByShop.set(sid, []);
             aggByShop.get(sid).push(data);
 
-            // 收集3D数据点
+            // 收集3D数据点和气泡图数据点
             const iphoneInfo = IPHONE_INFO_BY_PART.get(part);
             const iphoneColor = iphoneInfo?.color || '不明';
             data.forEach(point => {
                 if (Array.isArray(point) && point.length >= 2) {
                     collect3DDataPoint(sid, sname, color, point[0], point[1], part, iphoneColor);
+                    collectBubbleDataPoint(sid, sname, color, point[0], point[1], part, iphoneColor);
                 }
             });
         });
@@ -2889,6 +3212,7 @@ function adjustGridTopForLegend(inst) {
             await runWithLimit(tasks, RAW_CONC_LIMIT);
             renderAggregateOnMain(aggByShop, SELECTED_START_MS, SELECTED_END_MS);
             render3DChartsFromCollectedData();  // 渲染3D图表
+            renderBubbleChartsFromCollectedData();  // 渲染气泡图
             ensureDailyTicksAll();
             applyWorkHoursOverlayAll(SELECTED_START_MS, SELECTED_END_MS);
             $('status') && ($('status').textContent = `B) 完了：${cohort.title || cohort.label}${clipped ? '（已截断显示）' : ''}`);
@@ -2938,6 +3262,7 @@ function adjustGridTopForLegend(inst) {
         SELECTED_END_MS = new Date(endIso).getTime();
         disposeAllPartCharts();
         clear3DCharts();  // 清空3D图表
+        clearBubbleCharts();  // 清空气泡图
 
         const shopIds = (profile.items || []).map(x => Number(x.shop_id));
         const pairs = shopIds.map(sid => [sid, part]);
@@ -2957,12 +3282,13 @@ function adjustGridTopForLegend(inst) {
             if (!aggByShop.has(sid)) aggByShop.set(sid, []);
             aggByShop.get(sid).push(data);
 
-            // 收集3D数据点
+            // 收集3D数据点和气泡图数据点
             const iphoneInfo = IPHONE_INFO_BY_PART.get(p);
             const iphoneColor = iphoneInfo?.color || '不明';
             data.forEach(point => {
                 if (Array.isArray(point) && point.length >= 2) {
                     collect3DDataPoint(sid, sname, color, point[0], point[1], p, iphoneColor);
+                    collectBubbleDataPoint(sid, sname, color, point[0], point[1], p, iphoneColor);
                 }
             });
         });
@@ -2971,6 +3297,7 @@ function adjustGridTopForLegend(inst) {
             await runWithLimit(tasks, RAW_CONC_LIMIT);
             renderAggregateOnMain(aggByShop, SELECTED_START_MS, SELECTED_END_MS);
             render3DChartsFromCollectedData();  // 渲染3D图表
+            renderBubbleChartsFromCollectedData();  // 渲染气泡图
             ensureDailyTicksAll();
             applyWorkHoursOverlayAll(SELECTED_START_MS, SELECTED_END_MS);
             $('status') && ($('status').textContent = `C) 完了：${profile.title || profile.label} × ${part}${clipped ? '（已截断显示）' : ''}`);
@@ -3018,6 +3345,7 @@ function adjustGridTopForLegend(inst) {
         SELECTED_END_MS = new Date(endIso).getTime();
         disposeAllPartCharts();
         clear3DCharts();  // 清空3D图表
+        clearBubbleCharts();  // 清空气泡图
 
         const pairs = (cohort.members || []).map(m => [sid, String(m.part_number)]);
         let clipped = false;
@@ -3032,12 +3360,13 @@ function adjustGridTopForLegend(inst) {
             const data = appendShadowToNowIfNeeded(r.data.slice());
             addOrUpdateSeriesForPart(p, `s:${s}`, sname, color, data);
 
-            // 收集3D数据点
+            // 收集3D数据点和气泡图数据点
             const iphoneInfo = IPHONE_INFO_BY_PART.get(p);
             const iphoneColor = iphoneInfo?.color || '不明';
             data.forEach(point => {
                 if (Array.isArray(point) && point.length >= 2) {
                     collect3DDataPoint(s, sname, color, point[0], point[1], p, iphoneColor);
+                    collectBubbleDataPoint(s, sname, color, point[0], point[1], p, iphoneColor);
                 }
             });
         });
@@ -3045,6 +3374,7 @@ function adjustGridTopForLegend(inst) {
         try {
             await runWithLimit(tasks, RAW_CONC_LIMIT);
             render3DChartsFromCollectedData();  // 渲染3D图表
+            renderBubbleChartsFromCollectedData();  // 渲染气泡图
             ensureDailyTicksAll();
             applyWorkHoursOverlayAll(SELECTED_START_MS, SELECTED_END_MS);
             $('status') && ($('status').textContent = `D) 完了：${sname} × ${cohort.title || cohort.label}${clipped ? '（已截断显示）' : ''}`);
@@ -3096,6 +3426,7 @@ function adjustGridTopForLegend(inst) {
         SELECTED_END_MS = new Date(endIso).getTime();
         disposeAllPartCharts();
         clear3DCharts();  // 清空3D图表
+        clearBubbleCharts();  // 清空气泡图
 
         const shopIds = (profile.items || []).map(x => Number(x.shop_id));
         const members = cohort.members || [];
@@ -3118,12 +3449,13 @@ function adjustGridTopForLegend(inst) {
             if (!aggByShop.has(s)) aggByShop.set(s, []);
             aggByShop.get(s).push(data);
 
-            // 收集3D数据点
+            // 收集3D数据点和气泡图数据点
             const iphoneInfo = IPHONE_INFO_BY_PART.get(p);
             const iphoneColor = iphoneInfo?.color || '不明';
             data.forEach(point => {
                 if (Array.isArray(point) && point.length >= 2) {
                     collect3DDataPoint(s, sname, color, point[0], point[1], p, iphoneColor);
+                    collectBubbleDataPoint(s, sname, color, point[0], point[1], p, iphoneColor);
                 }
             });
         });
@@ -3132,6 +3464,7 @@ function adjustGridTopForLegend(inst) {
             await runWithLimit(tasks, RAW_CONC_LIMIT);
             renderAggregateOnMain(aggByShop, SELECTED_START_MS, SELECTED_END_MS);
             render3DChartsFromCollectedData();  // 渲染3D图表
+            renderBubbleChartsFromCollectedData();  // 渲染气泡图
             ensureDailyTicksAll();
             applyWorkHoursOverlayAll(SELECTED_START_MS, SELECTED_END_MS);
             $('status') && ($('status').textContent = `E) 完了：${profile.title || profile.label} × ${cohort.title || cohort.label}${clipped ? '（已截断显示）' : ''}`);
@@ -3162,6 +3495,7 @@ function adjustGridTopForLegend(inst) {
         if (inst) inst.setOption(baseOption, true);
         disposeAllPartCharts(); // 同时清空所有 PN 子图
         clear3DCharts(); // 清空所有 3D 图表
+        clearBubbleCharts(); // 清空所有气泡图
     });
 
     [
