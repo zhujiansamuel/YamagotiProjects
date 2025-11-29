@@ -355,6 +355,19 @@ CELERY_TASK_ACKS_LATE = True  # 任务跑完才确认，异常能重派
 CELERY_TASK_REJECT_ON_WORKER_LOST = True  # WorkerLost 也回到队列
 CELERY_TASK_TRACK_STARTED = True
 
+# Celery 队列配置（GPU 专用队列）
+from kombu import Queue
+CELERY_TASK_QUEUES = (
+    Queue("celery"),          # 默认队列
+    Queue("automl_gpu"),      # GPU 专用队列
+)
+
+# Celery 任务路由（AutoML 任务路由到 GPU 队列）
+CELERY_TASK_ROUTES = {
+    "buyrisk.tasks.run_automl": {"queue": "automl_gpu"},
+    # 其它需要 GPU 的任务也可以追加到这里
+}
+
 USE_X_FORWARDED_HOST = True
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
@@ -729,6 +742,10 @@ BUY_RISK_SKUS = []
 
 # 聚合回补天数（用于门店层和市场层30分钟聚合）
 BUY_RISK_AGG_BACKFILL_DAYS = 3  # 默认回补近3天，保证迟到数据能被重算
+
+# GPU 加速配置
+BUY_RISK_ACCEL_BACKEND = os.getenv("BUY_RISK_ACCEL_BACKEND", "cupy")  # cupy/torch/numpy/auto
+BUY_RISK_SHADOW_CI_BOOTSTRAP_N = 2000  # Bootstrap 样本数（GPU 加速置信区间计算）；设 0 则关闭 CI 计算
 
 # === 默认参数（无训练数据时启用；训练后会被模型参数覆盖）===
 BUY_RISK_DEFAULTS = {

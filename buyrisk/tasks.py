@@ -7,8 +7,8 @@ from .models import (
     DecisionRun, SupplyCurveParam, ShadowParam, PurchaseLog,
     SellProxy, ClearanceEvent, FxDaily, CoverageReport
 )
-from .features import (
-    drift_vol, shadow_sell_price, b_max, lambda_of_B, invert_Bfill,
+from .features_gpu import (
+    drift_vol, shadow_sell_price_with_ci, b_max, lambda_of_B, invert_Bfill,
     wac_and_risk, fx_buffer_reco
 )
 
@@ -79,13 +79,20 @@ def compute_decision_for_sku(sku: str):
         p["tau_hours"] * 60 / settings.BUY_RISK_PRICE_STEP_MINUTES
     ))
 
-    # 计算漂移和波动
-    mu_step, sigma_step, mu_tau, sigma_tau = drift_vol(list(bids), steps_tau)
+    # 转为 numpy 数组用于 GPU 加速
+    import numpy as np
+    bids_np = np.asarray(bids, dtype=float)
 
-    # 计算影子卖价
-    ss = shadow_sell_price(
+    # 计算漂移和波动（GPU 加速）
+    mu_step, sigma_step, mu_tau, sigma_tau = drift_vol(bids_np, steps_tau)
+
+    # 计算影子卖价及置信区间（GPU 加速 Bootstrap）
+    ci_bootstrap_n = getattr(settings, "BUY_RISK_SHADOW_CI_BOOTSTRAP_N", 0)
+    ss = shadow_sell_price_with_ci(
         b_last, mu_tau, sigma_tau,
-        p["alpha"], p["beta"], p["d_liq"], p["q"]
+        p["alpha"], p["beta"], p["d_liq"], p["q"],
+        bids_np=bids_np, steps_tau=steps_tau,
+        ci_bootstrap_n=ci_bootstrap_n
     )
 
     # 获取库存
@@ -136,7 +143,11 @@ def compute_decision_for_sku(sku: str):
         "Bmax": bmax - (ss["s_shadow"] - p["cost_per_unit"] - p["min_margin"] - p["fx_buffer"] - inv_penalty)
     }
 
-    # 保存决策结果
+    # 保存决策结果（将 CI 和后端信息添加到 params_json）
+    params_with_ci = dict(p)
+    params_with_ci["s_shadow_ci"] = ss["ci"]
+    params_with_ci["accel_backend"] = ss.get("backend", "numpy")
+
     out = DecisionRun.objects.create(
         ts_calc=timezone.now(),
         sku=sku,
@@ -160,7 +171,7 @@ def compute_decision_for_sku(sku: str):
         fx_buffer_reco=fx_reco,
         inv_penalty=inv_penalty,
         decomposition_json=decomposition,
-        params_json=p
+        params_json=params_with_ci
     )
 
     return {
@@ -334,12 +345,16 @@ def backtest_coverage_all_skus(window_days: int = 30):
             steps_tau = max(1, round(
                 p["tau_hours"] * 60 / settings.BUY_RISK_PRICE_STEP_MINUTES
             ))
-            mu_step, sigma_step, mu_tau, sigma_tau = drift_vol(list(bids), steps_tau)
+            import numpy as np
+            bids_np = np.asarray(bids, dtype=float)
+            mu_step, sigma_step, mu_tau, sigma_tau = drift_vol(bids_np, steps_tau)
             b_last = float(bids[-1])
 
-            ss = shadow_sell_price(
+            # 回测时不需要 CI，所以 ci_bootstrap_n=0
+            ss = shadow_sell_price_with_ci(
                 b_last, mu_tau, sigma_tau,
-                p["alpha"], p["beta"], p["d_liq"], p["q"]
+                p["alpha"], p["beta"], p["d_liq"], p["q"],
+                bids_np=None, steps_tau=None, ci_bootstrap_n=0
             )
 
             total += 1
@@ -525,3 +540,152 @@ def aggregate_market_30m():
         upserts += 1
 
     return {"market_bins": upserts}
+
+
+# ============================================================
+# AutoML 训练任务（GPU 队列）
+# ============================================================
+
+@shared_task(name="buyrisk.tasks.run_automl")
+def run_automl(job_id: str, sku_list=None, hours_back: int = 60*24*14, lr=0.05, epochs=200):
+    """
+    在 GPU 上训练供给曲线（λ(B)）参数：b_elastic / lambda_ref
+
+    路由到 automl_gpu 队列，由 GPU ECS（automl_gpu worker）专门消费
+
+    Args:
+        job_id: 任务 ID（用于审计/日志）
+        sku_list: 指定一批 SKU（默认自动发现近 14 天有数据的 SKU）
+        hours_back: 训练数据回溯小时数（默认 14 天）
+        lr: 学习率
+        epochs: 训练轮数
+
+    Returns:
+        训练结果字典 {"job_id": ..., "results": {sku: {...}, ...}}
+    """
+    from django.db.models.functions import TruncHour
+    from django.db.models import Avg, Sum
+    import math
+    import numpy as np
+
+    # 自动发现 SKU
+    if not sku_list:
+        sku_list = list(set(list_skus()[:20]))  # 限制数量避免过长
+
+    now = timezone.now()
+    since = now - timedelta(hours=hours_back)
+
+    results = {}
+
+    # 尝试加载 PyTorch（GPU 优先）
+    try:
+        import torch
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        torch = None
+        device = "cpu"
+
+    for sku in sku_list:
+        # 1) 取样本（按小时聚合：cnt/price）
+        qs = (PurchaseLog.objects
+              .filter(sku=sku, ts__gte=since)
+              .annotate(ts_hour=TruncHour("ts"))
+              .values("ts_hour")
+              .annotate(cnt=Sum("acquired"), price=Avg("offer_price"))
+              .order_by("ts_hour"))
+        rows = list(qs)
+
+        if len(rows) < 24:
+            results[sku] = {"status": "insufficient", "samples": len(rows)}
+            continue
+
+        # 2) 构造特征：x = (price - b_ref)/100；y = cnt；hour one-hot
+        b_ref = 3000.0
+        xs = []
+        ys = []
+        hours = []
+
+        for r in rows:
+            if r["price"] is None:
+                continue
+            xs.append((float(r["price"]) - b_ref) / 100.0)
+            ys.append(float(r["cnt"] or 0.0))
+            hours.append(r["ts_hour"].hour)
+
+        X = np.asarray(xs, dtype=np.float32)
+        Y = np.asarray(ys, dtype=np.float32)
+        H = np.asarray(hours, dtype=np.int64)
+
+        if X.size < 24:
+            results[sku] = {"status": "insufficient", "samples": X.size}
+            continue
+
+        # 3) GPU 训练（如果可用）
+        if torch and device == "cuda":
+            # Poisson 回归： log λ = a + b·X + hour_embed[H]
+            torch.manual_seed(42)
+            x = torch.tensor(X, device=device).unsqueeze(1)  # [N,1]
+            y = torch.tensor(Y, device=device)               # [N]
+            h = torch.tensor(H, device=device)               # [N]
+
+            a = torch.nn.Parameter(torch.zeros(1, device=device))
+            b = torch.nn.Parameter(torch.zeros(1, device=device))
+            emb = torch.nn.Embedding(24, 1, device=device)  # 小时效应
+            opt = torch.optim.Adam([a, b, emb.weight], lr=lr)
+
+            for _ in range(epochs):
+                lam_log = a + b * x + emb(h)[:, 0]   # [N]
+                lam = torch.exp(lam_log).clamp_max(1e6)
+                # Poisson NLL（不含常数项）
+                loss = (lam - y * lam_log).mean()
+                opt.zero_grad()
+                loss.backward()
+                opt.step()
+
+            # 4) 读参：b 即为价格弹性；lambda_ref ≈ exp(a + E[hour_embed])
+            b_elastic = float(b.detach().cpu().item())
+            hour_effect = float(emb.weight.detach().mean().cpu().item())
+            lambda_ref = math.exp(float(a.detach().cpu().item()) + hour_effect)
+
+            training_method = "gpu_torch"
+        else:
+            # --- 无 GPU 时的最小二乘近似 ---
+            # log(cnt+eps) ~ a + b·X + hour dummies
+            eps = 1e-3
+            y_log = np.log(Y + eps)
+
+            # 小时 dummy
+            Hdm = np.eye(24, dtype=np.float32)[H]  # [N,24]
+            Z = np.concatenate([
+                np.ones((X.shape[0], 1), np.float32),
+                X.reshape(-1, 1),
+                Hdm
+            ], axis=1)
+
+            coef, *_ = np.linalg.lstsq(Z, y_log, rcond=None)
+            a_hat = float(coef[0])
+            b_elastic = float(coef[1])
+            hour_effect = float(coef[2:].mean()) if coef.shape[0] > 2 else 0.0
+            lambda_ref = math.exp(a_hat + hour_effect)
+
+            training_method = "cpu_numpy"
+
+        # 5) 保存到数据库
+        SupplyCurveParam.objects.update_or_create(
+            sku=sku,
+            defaults=dict(
+                b_ref=b_ref,
+                lambda_ref=lambda_ref,
+                b_elastic=b_elastic
+            )
+        )
+
+        results[sku] = {
+            "status": "ok",
+            "b_elastic": b_elastic,
+            "lambda_ref": lambda_ref,
+            "method": training_method,
+            "samples": len(xs)
+        }
+
+    return {"job_id": job_id, "results": results}
