@@ -13,40 +13,38 @@ def _get_model(model_path: str):
 
 def fetch_price_series(sku: str) -> List[Tuple[int, float]]:
     """
-    返回近 N 天的[(ts_ms, bid), ...]，按 settings 中的映射读取你的表
+    返回近 N 天的 (ts_ms, bid) 序列
+
+    **重要变更**：现在读取市场层 30m 指数（MarketIphoneAgg30m）
+    而不是原始价格表，这样得到的是跨门店稳健聚合的收购价指数。
+
+    这里的 bid = market 30m 指数的 bid_pref（优先 A，其次 B 再次 New）
 
     Args:
         sku: SKU 标识符
 
     Returns:
-        列表，每个元素为 (时间戳毫秒, 收购价)
+        列表，每个元素为 (时间戳毫秒, 市场收购价指数)
     """
-    model_path = getattr(settings, "BUY_RISK_PRICE_MODEL", None)
-    if not model_path:
-        return []
+    from .models import MarketIphoneAgg30m
 
-    Model = _get_model(model_path)
-    tf = getattr(settings, "BUY_RISK_PRICE_TIME_FIELD", "ts")
-    vf = getattr(settings, "BUY_RISK_PRICE_VALUE_FIELD", "bid")
-    sf = getattr(settings, "BUY_RISK_PRICE_SKU_FIELD", "sku")
     days = getattr(settings, "BUY_RISK_PRICE_WINDOW_DAYS", 7)
-
     since = timezone.now() - timedelta(days=days)
-    qs = (Model.objects
-          .filter(**{sf: sku, f"{tf}__gte": since})
-          .order_by(tf)
-          .values_list(tf, vf))
+
+    # 直接从市场层30分钟聚合表读取
+    qs = (MarketIphoneAgg30m.objects
+          .filter(sku=sku, bin_start__gte=since)
+          .order_by("bin_start")
+          .values_list("bin_start", "bid_pref"))
 
     out = []
-    for t, v in qs:
+    for ts, v in qs:
         if v is None:
+            # 保障序列连续：若缺失，可做 LOCF（Last Observation Carried Forward）
+            # 也可直接跳过，这里选择跳过
             continue
-        # 处理可能的时区问题
-        if hasattr(t, 'timestamp'):
-            ts_ms = int(t.timestamp() * 1000)
-        else:
-            ts_ms = int(t.total_seconds() * 1000)
-        out.append((ts_ms, float(v)))
+        out.append((int(ts.timestamp() * 1000), float(v)))
+
     return out
 
 

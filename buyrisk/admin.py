@@ -1,7 +1,8 @@
 from django.contrib import admin
 from .models import (
     SupplyCurveParam, ShadowParam, PurchaseLog, SellProxy,
-    ClearanceEvent, FxDaily, InventoryLot, DecisionRun, CoverageReport
+    ClearanceEvent, FxDaily, InventoryLot, DecisionRun, CoverageReport,
+    ShopIphoneAgg30m, MarketIphoneAgg30m
 )
 
 
@@ -118,3 +119,59 @@ class CoverageReportAdmin(admin.ModelAdmin):
     ordering = ['-created_at']
     date_hierarchy = 'created_at'
     readonly_fields = ['created_at']
+
+
+@admin.register(ShopIphoneAgg30m)
+class ShopIphoneAgg30mAdmin(admin.ModelAdmin):
+    list_display = [
+        'shop', 'iphone', 'bin_start',
+        'avg_new', 'avg_a', 'avg_b', 'rec_cnt'
+    ]
+    list_filter = ['bin_start', 'shop']
+    search_fields = ['shop__name', 'iphone__model_name']
+    ordering = ['-bin_start']
+    date_hierarchy = 'bin_start'
+    readonly_fields = ['updated_at', 'min_src_ts', 'max_src_ts']
+
+    fieldsets = (
+        ('基本信息', {
+            'fields': ('shop', 'iphone', 'bin_start')
+        }),
+        ('聚合价格', {
+            'fields': ('avg_new', 'avg_a', 'avg_b')
+        }),
+        ('统计信息', {
+            'fields': ('rec_cnt', 'min_src_ts', 'max_src_ts', 'updated_at')
+        }),
+    )
+
+
+@admin.register(MarketIphoneAgg30m)
+class MarketIphoneAgg30mAdmin(admin.ModelAdmin):
+    list_display = [
+        'sku', 'bin_start', 'bid_pref',
+        'med_a', 'med_b', 'shops_included'
+    ]
+    list_filter = ['bin_start']
+    search_fields = ['sku', 'iphone__model_name']
+    ordering = ['-bin_start']
+    date_hierarchy = 'bin_start'
+    readonly_fields = ['updated_at']
+
+    fieldsets = (
+        ('基本信息', {
+            'fields': ('sku', 'iphone', 'bin_start', 'bid_pref')
+        }),
+        ('中位数', {
+            'fields': ('med_new', 'med_a', 'med_b')
+        }),
+        ('均值', {
+            'fields': ('mean_new', 'mean_a', 'mean_b')
+        }),
+        ('截断均值', {
+            'fields': ('tmean_a', 'tmean_b')
+        }),
+        ('统计信息', {
+            'fields': ('shops_included', 'updated_at')
+        }),
+    )

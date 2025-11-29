@@ -727,6 +727,9 @@ BUY_RISK_INVENTORY_STATUS_VALUES = ["in_stock", "ready"]
 # SKU 列表（可选）：留空则从价格表 distinct 取
 BUY_RISK_SKUS = []
 
+# 聚合回补天数（用于门店层和市场层30分钟聚合）
+BUY_RISK_AGG_BACKFILL_DAYS = 3  # 默认回补近3天，保证迟到数据能被重算
+
 # === 默认参数（无训练数据时启用；训练后会被模型参数覆盖）===
 BUY_RISK_DEFAULTS = {
     "tau_hours": 2.0,           # 清货时长 τ
@@ -752,11 +755,26 @@ if 'CELERY_BEAT_SCHEDULE' not in locals():
     CELERY_BEAT_SCHEDULE = {}
 
 CELERY_BEAT_SCHEDULE.update({
+    # === 30分钟聚合任务（门店层 → 市场层）===
+    # 每 15 分钟聚合门店层数据
+    "buyrisk_agg_shop_30m_every_15m": {
+        "task": "buyrisk.tasks.aggregate_shop_30m",
+        "schedule": 60 * 15,  # 15分钟
+    },
+    # 每 17 分钟聚合市场层数据（稍微错峰）
+    "buyrisk_agg_market_30m_every_17m": {
+        "task": "buyrisk.tasks.aggregate_market_30m",
+        "schedule": 60 * 17,  # 17分钟（错峰）
+    },
+
+    # === 决策任务 ===
     # 每 15 分钟跑一次全量 SKU 决策
     "buyrisk_compute_all_skus_15m": {
         "task": "buyrisk.tasks.compute_all_skus",
         "schedule": 60 * 15,  # 15分钟
     },
+
+    # === 训练和回测任务 ===
     # 每日 03:30 训练
     "buyrisk_train_daily": {
         "task": "buyrisk.tasks.train_models_all_skus",

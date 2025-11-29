@@ -356,3 +356,191 @@ def backtest_coverage_all_skus(window_days: int = 30):
         report[sku] = {"coverage": cov, "n": total, "q": p["q"]}
 
     return report
+
+
+# ============================================================
+# 30分钟聚合任务（门店层 → 市场层）
+# ============================================================
+
+@shared_task(name="buyrisk.tasks.aggregate_shop_30m")
+def aggregate_shop_30m():
+    """
+    门店层：对 PurchasingShopTimeAnalysis 在近 N 天内进行 30m 聚合。
+
+    逻辑：
+      group by (shop, iphone, bin_start)：
+        avg_new/avg_a/avg_b = 该桶内均值（忽略空值）
+        rec_cnt/min_ts/max_ts
+    upsert 到 ShopIphoneAgg30m
+
+    Returns:
+        聚合结果统计
+    """
+    from django.apps import apps
+    from collections import defaultdict
+    import numpy as np
+    from .models import ShopIphoneAgg30m
+    from .aggregations import floor_to_30m
+
+    # 可调整的聚合窗口：默认回补近 3 天（保证迟到数据也能被重算）
+    AGG_BACKFILL_DAYS = getattr(settings, "BUY_RISK_AGG_BACKFILL_DAYS", 3)
+
+    # 获取 PurchasingShopTimeAnalysis 模型
+    PurchasingShopTimeAnalysis = apps.get_model(
+        "AppleStockChecker", "PurchasingShopTimeAnalysis"
+    )
+
+    since = timezone.now() - timedelta(days=AGG_BACKFILL_DAYS)
+    qs = (PurchasingShopTimeAnalysis.objects
+          .filter(Timestamp_Time__gte=since)
+          .select_related("shop", "iphone")
+          .only("shop_id", "iphone_id", "Timestamp_Time",
+                "New_Product_Price", "Price_A", "Price_B"))
+
+    # 先在 Python 侧做桶归并，避免跨数据库差异
+    buckets = defaultdict(lambda: {
+        "new": [], "a": [], "b": [],
+        "min_ts": None, "max_ts": None
+    })
+
+    for rec in qs.iterator(chunk_size=5000):
+        bin_start = floor_to_30m(rec.Timestamp_Time)
+        key = (rec.shop_id, rec.iphone_id, bin_start)
+        b = buckets[key]
+
+        if rec.New_Product_Price is not None:
+            b["new"].append(float(rec.New_Product_Price))
+        if rec.Price_A is not None:
+            b["a"].append(float(rec.Price_A))
+        if rec.Price_B is not None:
+            b["b"].append(float(rec.Price_B))
+
+        if b["min_ts"] is None or rec.Timestamp_Time < b["min_ts"]:
+            b["min_ts"] = rec.Timestamp_Time
+        if b["max_ts"] is None or rec.Timestamp_Time > b["max_ts"]:
+            b["max_ts"] = rec.Timestamp_Time
+
+    # 写入/更新
+    upserted = 0
+    for (shop_id, iphone_id, bin_start), v in buckets.items():
+        avg_new = float(np.mean(v["new"])) if v["new"] else None
+        avg_a = float(np.mean(v["a"])) if v["a"] else None
+        avg_b = float(np.mean(v["b"])) if v["b"] else None
+        rec_cnt = len(v["new"]) + len(v["a"]) + len(v["b"])
+
+        ShopIphoneAgg30m.objects.update_or_create(
+            shop_id=shop_id,
+            iphone_id=iphone_id,
+            bin_start=bin_start,
+            defaults=dict(
+                avg_new=avg_new,
+                avg_a=avg_a,
+                avg_b=avg_b,
+                rec_cnt=rec_cnt,
+                min_src_ts=v["min_ts"],
+                max_src_ts=v["max_ts"]
+            )
+        )
+        upserted += 1
+
+    return {"shop_bins": len(buckets), "upserted": upserted}
+
+
+@shared_task(name="buyrisk.tasks.aggregate_market_30m")
+def aggregate_market_30m():
+    """
+    市场层：把门店层聚合结果在近 N 天内进一步跨门店聚合为"市场指数"。
+
+    逻辑：
+      对每个 (iphone, bin_start)：
+        med_* / mean_* / trimmed mean(10%)
+        bid_pref = 优先 med_a，其次 med_b，再次 med_new
+
+    Returns:
+        聚合结果统计
+    """
+    from collections import defaultdict
+    import numpy as np
+    from .models import ShopIphoneAgg30m, MarketIphoneAgg30m
+    from .aggregations import sku_from_iphone
+
+    AGG_BACKFILL_DAYS = getattr(settings, "BUY_RISK_AGG_BACKFILL_DAYS", 3)
+
+    since = timezone.now() - timedelta(days=AGG_BACKFILL_DAYS)
+    qs = (ShopIphoneAgg30m.objects
+          .filter(bin_start__gte=since)
+          .select_related("iphone")
+          .only("iphone_id", "bin_start", "avg_new", "avg_a", "avg_b", "iphone"))
+
+    # 收集 -> 聚合
+    groups = defaultdict(lambda: {
+        "new": [], "a": [], "b": [],
+        "iphone": None
+    })
+
+    for r in qs.iterator(chunk_size=5000):
+        key = (r.iphone_id, r.bin_start)
+        g = groups[key]
+        g["iphone"] = r.iphone  # 保存对象供生成 sku
+
+        if r.avg_new is not None:
+            g["new"].append(float(r.avg_new))
+        if r.avg_a is not None:
+            g["a"].append(float(r.avg_a))
+        if r.avg_b is not None:
+            g["b"].append(float(r.avg_b))
+
+    def _tmean(arr, trim=0.1):
+        """截断均值：去掉两端各 trim 比例的数据"""
+        if not arr:
+            return None
+        a = sorted(arr)
+        k = int(len(a) * trim)
+        a = a[k: len(a) - k] if len(a) > 2 * k else a
+        return float(np.mean(a)) if a else None
+
+    upserts = 0
+    for (iphone_id, bin_start), g in groups.items():
+        # 中位数
+        med_new = float(np.median(g["new"])) if g["new"] else None
+        med_a = float(np.median(g["a"])) if g["a"] else None
+        med_b = float(np.median(g["b"])) if g["b"] else None
+
+        # 均值
+        mean_new = float(np.mean(g["new"])) if g["new"] else None
+        mean_a = float(np.mean(g["a"])) if g["a"] else None
+        mean_b = float(np.mean(g["b"])) if g["b"] else None
+
+        # 截断均值
+        tmean_a = _tmean(g["a"])
+        tmean_b = _tmean(g["b"])
+
+        # 首选报价：优先 A，其次 B，再次新机
+        bid_pref = med_a or med_b or med_new
+
+        # 生成 SKU
+        sku = sku_from_iphone(g["iphone"]) if g["iphone"] else str(iphone_id)
+
+        # 门店数（近似）
+        shops_included = len(set(g["a"] + g["b"] + g["new"]))
+
+        MarketIphoneAgg30m.objects.update_or_create(
+            iphone_id=iphone_id,
+            bin_start=bin_start,
+            defaults=dict(
+                sku=sku,
+                med_new=med_new,
+                med_a=med_a,
+                med_b=med_b,
+                mean_new=mean_new,
+                mean_a=mean_a,
+                mean_b=mean_b,
+                tmean_a=tmean_a,
+                tmean_b=tmean_b,
+                bid_pref=bid_pref,
+                shops_included=shops_included
+            )
+        )
+        upserts += 1
+
+    return {"market_bins": upserts}

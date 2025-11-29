@@ -230,3 +230,101 @@ class CoverageReport(models.Model):
         if self.coverage_realized is not None:
             return f"{self.sku} - 目标{self.q_target:.2%} 实现{self.coverage_realized:.2%} (n={self.n})"
         return f"{self.sku} - 目标{self.q_target:.2%} (n={self.n})"
+
+
+# ============================================================
+# 聚合模型（门店层 → 市场层）
+# ============================================================
+
+class ShopIphoneAgg30m(models.Model):
+    """门店层 30 分钟聚合（平滑）"""
+    # 外键引用 AppleStockChecker 的模型
+    shop = models.ForeignKey(
+        "AppleStockChecker.SecondHandShop",
+        on_delete=models.PROTECT,
+        db_index=True,
+        verbose_name="二手店"
+    )
+    iphone = models.ForeignKey(
+        "AppleStockChecker.Iphone",
+        on_delete=models.PROTECT,
+        db_index=True,
+        verbose_name="iPhone"
+    )
+    bin_start = models.DateTimeField(verbose_name="30m时间桶起始", db_index=True)
+
+    # 30m 内该门店×iPhone的平滑均价（忽略空值）
+    avg_new = models.FloatField(null=True, blank=True, verbose_name="新品均价")
+    avg_a = models.FloatField(null=True, blank=True, verbose_name="A品均价")
+    avg_b = models.FloatField(null=True, blank=True, verbose_name="B品均价")
+
+    # 统计辅助
+    rec_cnt = models.IntegerField(default=0, verbose_name="记录条数")
+    min_src_ts = models.DateTimeField(null=True, blank=True, verbose_name="最早时间戳")
+    max_src_ts = models.DateTimeField(null=True, blank=True, verbose_name="最晚时间戳")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
+
+    class Meta:
+        db_table = "buyrisk_shop_iphone_agg30m"
+        verbose_name = "门店30分钟聚合"
+        verbose_name_plural = "门店30分钟聚合"
+        ordering = ['-bin_start']
+        constraints = [
+            models.UniqueConstraint(
+                fields=["shop", "iphone", "bin_start"],
+                name="uniq_shop_iphone_bin30"
+            )
+        ]
+        indexes = [
+            models.Index(fields=["iphone", "-bin_start"], name="idx_shopagg30_phone_time"),
+            models.Index(fields=["shop", "-bin_start"], name="idx_shopagg30_shop_time"),
+        ]
+
+    def __str__(self):
+        return f"{self.shop.name if hasattr(self.shop, 'name') else self.shop_id} × {self.iphone} @ {self.bin_start}"
+
+
+class MarketIphoneAgg30m(models.Model):
+    """市场层 30 分钟聚合（跨门店稳健指数）"""
+    sku = models.CharField(max_length=128, db_index=True, verbose_name="SKU")
+    iphone = models.ForeignKey(
+        "AppleStockChecker.Iphone",
+        on_delete=models.PROTECT,
+        db_index=True,
+        verbose_name="iPhone"
+    )
+    bin_start = models.DateTimeField(verbose_name="30m时间桶起始", db_index=True)
+
+    # 跨门店稳健聚合：中位数/均值/截断均值（去掉两端各10%）
+    med_new = models.FloatField(null=True, blank=True, verbose_name="新品中位数")
+    med_a = models.FloatField(null=True, blank=True, verbose_name="A品中位数")
+    med_b = models.FloatField(null=True, blank=True, verbose_name="B品中位数")
+    mean_new = models.FloatField(null=True, blank=True, verbose_name="新品均值")
+    mean_a = models.FloatField(null=True, blank=True, verbose_name="A品均值")
+    mean_b = models.FloatField(null=True, blank=True, verbose_name="B品均值")
+    tmean_a = models.FloatField(null=True, blank=True, verbose_name="A品截断均值")
+    tmean_b = models.FloatField(null=True, blank=True, verbose_name="B品截断均值")
+
+    # 供决策引擎直接读取的"首选报价"——优先 A，其次 B，再次 New
+    bid_pref = models.FloatField(null=True, blank=True, verbose_name="首选报价")
+
+    shops_included = models.IntegerField(default=0, verbose_name="包含门店数")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
+
+    class Meta:
+        db_table = "buyrisk_market_iphone_agg30m"
+        verbose_name = "市场30分钟指数"
+        verbose_name_plural = "市场30分钟指数"
+        ordering = ['-bin_start']
+        constraints = [
+            models.UniqueConstraint(
+                fields=["iphone", "bin_start"],
+                name="uniq_market_phone_bin30"
+            )
+        ]
+        indexes = [
+            models.Index(fields=["sku", "-bin_start"], name="idx_marketagg30_sku_time"),
+        ]
+
+    def __str__(self):
+        return f"{self.sku} @ {self.bin_start} - ¥{self.bid_pref or 0:.0f}"
