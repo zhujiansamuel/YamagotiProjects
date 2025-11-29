@@ -5,6 +5,7 @@
     <title>跨店铺曲线</title>
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts-gl@2/dist/echarts-gl.min.js"></script>
     <style>
         :root {
             --w: 4080px;
@@ -140,6 +141,74 @@
             border: 1px solid #eee;
             border-radius: 8px;
             padding: 8px;
+        }
+
+        #chart_3d_container {
+            margin-top: 20px;
+            margin-bottom: 20px;
+        }
+
+        .chart-3d-grid {
+            display: grid;
+            grid-template-columns: 1fr;  /* 每行一个图表 */
+            gap: 20px;
+            margin-top: 12px;
+        }
+
+        .chart-3d-panel {
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 12px;
+            background: #fff;
+        }
+
+        .chart-3d-title {
+            font-size: 14px;
+            color: #374151;
+            font-weight: 600;
+            margin: 0 0 12px 4px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .chart-3d-swatch {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 3px;
+            border: 1px solid #d1d5db;
+        }
+
+        .chart-3d-canvas {
+            width: 100%;
+            height: 700px;  /* 增加高度，接近正方形 */
+        }
+
+        .chart-bubble-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .chart-bubble-panel {
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 12px;
+            background: #fff;
+        }
+
+        .chart-bubble-title {
+            font-size: 14px;
+            color: #374151;
+            font-weight: 600;
+            margin: 0 0 12px 4px;
+        }
+
+        .chart-bubble-canvas {
+            width: 100%;
+            height: 600px;
         }
 
         #chart_stats {
@@ -444,8 +513,23 @@
 
     {# 数据表 #}
     <div id="chart"></div>
-    {# 店铺-时间热力图 (Punch Card) #}
-    <div id="chart_punchcard" style="height: 400px; margin-top: 16px;"></div>
+
+    {# 3D散点图 - 按颜色分组 #}
+    <div id="chart_3d_container">
+        <fieldset>
+            <legend>3D価格分布（カラー別）</legend>
+            <div id="chart_3d_grid" class="chart-3d-grid"></div>
+        </fieldset>
+    </div>
+
+    {# 气泡图 - 按颜色分组，3小时聚合 #}
+    <div id="chart_bubble_container">
+        <fieldset>
+            <legend>価格分布バブルチャート（3時間集計・カラー別）</legend>
+            <div id="chart_bubble_grid" class="chart-bubble-grid"></div>
+        </fieldset>
+    </div>
+
     {# 前端基础统计 #}
     <div id="chart_stats"></div>
     {# 后端计算统计信息 #}
@@ -531,16 +615,7 @@ const RAW_CONC_LIMIT = 8;
  * - ✅ 滑らかな曲線になる
  * - ❌ 短期的な変動を見逃す可能性がある
  */
-const AGG_TIME_WINDOW_MS = 5 * 60 * 1000;  // 5分 (300000ミリ秒)
-
-/* ========== Punch Card 設定 (Punch Card Settings) ========== */
-
-/**
- * Punch Card 時間バケットサイズ（ミリ秒）
- * 店舗×時間帯の散布図における時間軸のバケット間隔
- * @type {number}
- */
-const PUNCHCARD_TIME_BUCKET_MS = 3 * 60 * 60 * 1000;  // 3時間 (10800000ミリ秒)
+const AGG_TIME_WINDOW_MS = 15 * 60 * 1000;  // 5分 (300000ミリ秒)
 
 /* ========== カラーパレット (Color Palette) ========== */
 
@@ -586,22 +661,6 @@ const LINE_PALETTE = [
 
 /* ========== Feature デフォルト設定 (Feature Defaults) ========== */
 
-/**
- * デフォルトで描画する Feature 名のリスト
- *
- * 含まれる指標:
- * - mean: 平均値
- * - std: 標準偏差
- * - wma60m, wma120m, wma900m, wma1800m: 加重移動平均 (60分, 120分, 900分, 1800分)
- * - ema_hl30m, ema_hl60m: 指数移動平均 (30分, 60分)
- * - sma75m: 単純移動平均 (75分)
- */
-const FEATURE_NAMES_DEFAULT = [
-    'mean', 'std',
-    'wma60m', 'wma120m', 'wma900m', 'wma1800m',
-    'ema_hl30m', 'ema_hl60m',
-    'sma75m'
-];
 
 /* ========================================
  * 🌍 グローバル状態 (Global State)
@@ -614,13 +673,6 @@ const SHOPS_INDEX = new Map();
 
 /** Part NumberからiPhone IDへのマッピング @type {Map<string, number>} */
 const IPHONE_ID_BY_PART = new Map();
-
-/**
- * 原始価格データストレージ（Punch Card 用）
- * 店舗ID → 型番 → データポイント配列のマップ
- * @type {Map<number, Map<string, Array<{timestamp: number, price: number, part: string}>>>}
- */
-const RAW_PRICE_DATA = new Map();
 
 /** Part NumberからiPhone詳細情報へのマッピング @type {Map<string, Object>} */
 const IPHONE_INFO_BY_PART = new Map();
@@ -1103,22 +1155,8 @@ function adjustGridTopForLegend(inst) {
   }
 }
 
-    // ========== ユーティリティ関数（上部で定義済み） ==========
-    // floorDay(): 行685-691で定義
-    // ceilDay(): 行701-707で定義
-    // fmtJPY: 行824-828で定義
-    // WDAY: 行831で定義
-    // IPHONE_INFO_BY_PART: 行594で定義
-    // iphoneHumanLabelByPart(): 行845-852で定義
-    // PRICE_VISIBLE_MIN, PRICE_VISIBLE_MAX: 行490-493で定義
-    // _yOf(): 行868-874で定義
-    // _latestY(): 行884-892で定義
-    // _median(): 行901-910で定義
-    // applyFeatureMetricParam(): 行956-967で定義
-    // nearestPastMinuteMs(): 行760-762で定義
-    // toIsoLocal(): 行747-752で定義
-    // toMillis(): 行730-733で定義
-    // verticalTickFormatter(): 行820-829で定義
+    // —— 价格显示范围（过滤阈值） ——
+
 
     // === 统计图：初始化 ===
     const statsChart = echarts.init(document.getElementById('chart_stats'));
@@ -1159,174 +1197,6 @@ function adjustGridTopForLegend(inst) {
 
     statsChart.setOption(statsBaseOption);
     window.addEventListener('resize', () => statsChart.resize());
-
-    // === Punch Card 图：初始化 ===
-    const punchcardChart = echarts.init(document.getElementById('chart_punchcard'));
-
-    /**
-     * 将原始价格数据聚合为 Punch Card 数据格式
-     * 数据格式: [时间bucket索引, 店铺索引, 平均价格]
-     *
-     * @returns
-     */
-    function aggregateToPunchCard() {
-        if (!RAW_PRICE_DATA.size) return {data: [], timeLabels: [], shopLabels: []};
-
-        // 收集所有店铺
-        const shopIds = Array.from(RAW_PRICE_DATA.keys()).sort((a, b) => a - b);
-        const shopLabels = shopIds.map(id => SHOPS_INDEX.get(id) || `#${id}`);
-
-        // 收集所有数据点并计算时间范围
-        const allData = [];
-        for (const [shopId, partMap] of RAW_PRICE_DATA.entries()) {
-            for (const [part, points] of partMap.entries()) {
-                for (const point of points) {
-                    allData.push({...point, shopId});
-                }
-            }
-        }
-
-        if (!allData.length) return {data: [], timeLabels, shopLabels};
-
-        // 计算时间范围并生成时间bucket标签
-        const timestamps = allData.map(d => d.timestamp);
-        const minTs = Math.min(...timestamps);
-        const maxTs = Math.max(...timestamps);
-
-        // 将时间范围划分为3小时bucket
-        const startBucket = Math.floor(minTs / PUNCHCARD_TIME_BUCKET_MS) * PUNCHCARD_TIME_BUCKET_MS;
-        const endBucket = Math.ceil(maxTs / PUNCHCARD_TIME_BUCKET_MS) * PUNCHCARD_TIME_BUCKET_MS;
-
-        const timeBuckets = [];
-        for (let t = startBucket; t <= endBucket; t += PUNCHCARD_TIME_BUCKET_MS) {
-            timeBuckets.push(t);
-        }
-
-        // 生成时间标签 (例如: "12/25 09:00")
-        const timeLabels = timeBuckets.map(ts => {
-            const d = new Date(ts + JST_OFFSET_MS);
-            const month = d.getUTCMonth() + 1;
-            const day = d.getUTCDate();
-            const hour = d.getUTCHours();
-            return `${month}/${day} ${hour.toString().padStart(2, '0')}:00`;
-        });
-
-        // 创建聚合map: (shopId, timeBucket) -> {sum, count}
-        const aggMap = new Map();
-
-        for (const point of allData) {
-            const bucketTs = Math.floor(point.timestamp / PUNCHCARD_TIME_BUCKET_MS) * PUNCHCARD_TIME_BUCKET_MS;
-            const key = `${point.shopId}:${bucketTs}`;
-
-            if (!aggMap.has(key)) {
-                aggMap.set(key, {sum: 0, count: 0, shopId: point.shopId, bucketTs});
-            }
-
-            const agg = aggMap.get(key);
-            agg.sum += point.price;
-            agg.count += 1;
-        }
-
-        // 转换为 ECharts 散点图数据格式
-        const data = [];
-        for (const {shopId, bucketTs, sum, count} of aggMap.values()) {
-            const timeIdx = timeBuckets.indexOf(bucketTs);
-            const shopIdx = shopIds.indexOf(shopId);
-            if (timeIdx >= 0 && shopIdx >= 0) {
-                const avgPrice = sum / count;
-                data.push([timeIdx, shopIdx, Math.round(avgPrice)]);
-            }
-        }
-
-        return {data, timeLabels, shopLabels};
-    }
-
-    /**
-     * 渲染 Punch Card 图表
-     */
-    function renderPunchCard() {
-        const {data, timeLabels, shopLabels} = aggregateToPunchCard();
-
-        if (!data.length) {
-            punchcardChart.setOption({
-                title: {text: '店舗×時間帯 価格分布', left: 'center'},
-                graphic: [{
-                    type: 'text',
-                    left: 'center',
-                    top: 'middle',
-                    style: {text: 'データなし', fontSize: 14, fill: '#999'}
-                }]
-            }, true);
-            return;
-        }
-
-        // 计算价格范围用于符号大小映射
-        const prices = data.map(d => d[2]);
-        const minPrice = Math.min(...prices);
-        const maxPrice = Math.max(...prices);
-        const priceRange = maxPrice - minPrice || 1;
-
-        punchcardChart.setOption({
-            title: {
-                text: '店舗×時間帯 価格分布 (3時間間隔)',
-                left: 'center',
-                textStyle: {fontSize: 14}
-            },
-            tooltip: {
-                position: 'top',
-                formatter: function (params) {
-                    const timeLabel = timeLabels[params.value[0]];
-                    const shopLabel = shopLabels[params.value[1]];
-                    const price = params.value[2];
-                    return `${shopLabel}<br/>${timeLabel}<br/>${fmtJPY(price)}`;
-                }
-            },
-            grid: {
-                left: 120,
-                right: 20,
-                top: 60,
-                bottom: 60,
-                containLabel: false
-            },
-            xAxis: {
-                type: 'category',
-                data: timeLabels,
-                boundaryGap: false,
-                splitLine: {show: true, lineStyle: {color: '#e5e7eb'}},
-                axisLine: {show: false},
-                axisLabel: {
-                    interval: Math.ceil(timeLabels.length / 20),  // 控制标签密度
-                    rotate: 45,
-                    fontSize: 10
-                }
-            },
-            yAxis: {
-                type: 'category',
-                data: shopLabels,
-                axisLine: {show: false},
-                axisLabel: {fontSize: 11}
-            },
-            series: [{
-                name: '平均価格',
-                type: 'scatter',
-                symbolSize: function (val) {
-                    // 价格越高，圆点越大 (范围: 5-30)
-                    const normalized = (val[2] - minPrice) / priceRange;
-                    return 5 + normalized * 25;
-                },
-                data: data,
-                itemStyle: {
-                    color: '#478CD8',
-                    opacity: 0.7
-                },
-                animationDelay: function (idx) {
-                    return idx * 2;
-                }
-            }]
-        }, true);
-    }
-
-    window.addEventListener('resize', () => punchcardChart.resize());
 
     // 从主图当前可见曲线提取统计（只看 id 以 s:/raw: 开头的折线）
     function computeStatsFromMainChart() {
@@ -1402,7 +1272,6 @@ function adjustGridTopForLegend(inst) {
         chart.setOption({
             series: [{
                 id: '__workhours__',
-                name: '',  // 空名称，不显示在图例中
                 type: 'line',
                 data: [],
                 markArea,
@@ -1443,6 +1312,550 @@ function adjustGridTopForLegend(inst) {
         hostPrice: null,    // #chart_parts
         hostFeature: null   // #chart_feature
     };
+
+    /* ===================== 3D图表管理 ===================== */
+
+    // 3D图表容器管理 - 按iPhone颜色分组
+    const Chart3DManager = {
+        charts: new Map(),  // iphoneColor -> {el, chart, data}
+        host: null,
+        dataByColor: new Map() // iphoneColor -> [{timestamp, shopId, shopName, shopColor, price}]
+    };
+
+    function init3DChartHost() {
+        if (!Chart3DManager.host) {
+            Chart3DManager.host = document.getElementById('chart_3d_grid');
+        }
+        return Chart3DManager.host;
+    }
+
+    function create3DPanel(host, iphoneColor, title) {
+        const panel = document.createElement('div');
+        panel.className = 'chart-3d-panel';
+
+        const titleDiv = document.createElement('div');
+        titleDiv.className = 'chart-3d-title';
+        titleDiv.textContent = title;
+
+        const canvas = document.createElement('div');
+        canvas.className = 'chart-3d-canvas';
+
+        panel.appendChild(titleDiv);
+        panel.appendChild(canvas);
+        host.appendChild(panel);
+
+        return {panel, canvas};
+    }
+
+    function get3DChartForColor(iphoneColor, title) {
+        if (!Chart3DManager.charts.has(iphoneColor)) {
+            const host = init3DChartHost();
+            if (!host) return null;
+
+            const {canvas} = create3DPanel(host, iphoneColor, title);
+            const chart = echarts.init(canvas);
+
+            // 基础3D配置
+            const option = {
+                tooltip: {
+                    formatter: function(params) {
+                        const d = params.data;
+                        if (!d || d.length < 4) return '';
+                        const timestamp = new Date(d[0]).toLocaleString('ja-JP');
+                        const shopName = d[1] || '';
+                        const price = d[2] ? d[2].toLocaleString() : 'N/A';
+                        return `時刻: ${timestamp}<br/>店舗: ${shopName}<br/>価格: ¥${price}`;
+                    }
+                },
+                grid3D: {
+                    viewControl: {
+                        projection: 'orthographic',
+                        autoRotate: false,
+                        distance: 180
+                    },
+                    boxWidth: 120,
+                    boxHeight: 100,
+                    boxDepth: 80
+                },
+                xAxis3D: {
+                    name: '時刻',
+                    type: 'time',
+                    axisLabel: {
+                        formatter: function(value) {
+                            const d = new Date(value);
+                            return `${d.getMonth()+1}/${d.getDate()}\n${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`;
+                        },
+                        fontSize: 10
+                    }
+                },
+                yAxis3D: {
+                    name: '店舗',
+                    type: 'category',
+                    data: [],
+                    axisLabel: {
+                        fontSize: 10,
+                        interval: 0
+                    }
+                },
+                zAxis3D: {
+                    name: '価格 (JPY)',
+                    min: PRICE_VISIBLE_MIN,
+                    max: PRICE_VISIBLE_MAX,
+                    axisLabel: {
+                        formatter: function(value) {
+                            return (value / 10000).toFixed(0) + '万';
+                        }
+                    }
+                },
+                series: []
+            };
+
+            chart.setOption(option);
+
+            Chart3DManager.charts.set(iphoneColor, {
+                el: canvas,
+                chart: chart,
+                data: []
+            });
+        }
+
+        return Chart3DManager.charts.get(iphoneColor);
+    }
+
+    function update3DChartForColor(iphoneColor, title, dataPoints) {
+        // dataPoints: [{timestamp, shopId, shopName, shopColor, price}, ...]
+        const chartObj = get3DChartForColor(iphoneColor, title);
+        if (!chartObj) return;
+
+        // 过滤有效数据点
+        const validData = dataPoints.filter(d => {
+            const price = Number(d.price);
+            return Number.isFinite(price) && price >= PRICE_VISIBLE_MIN && price <= PRICE_VISIBLE_MAX;
+        });
+
+        if (validData.length === 0) return;
+
+        // 提取所有唯一的店铺，按照SHOP_COLOR_RULES的顺序排序
+        const shopMap = new Map();
+        validData.forEach(d => {
+            if (!shopMap.has(d.shopId)) {
+                shopMap.set(d.shopId, {
+                    id: d.shopId,
+                    name: d.shopName,
+                    color: d.shopColor,
+                    order: getOrderForShop({name: d.shopName, id: d.shopId})
+                });
+            }
+        });
+        const shops = Array.from(shopMap.values()).filter(s => s && s.name).sort((a, b) => a.order - b.order);
+        const shopNames = shops.map(s => s.name);
+
+        // 按店铺分组数据，每个店铺一个series
+        const seriesByShop = new Map();
+        validData.forEach(d => {
+            // 确保shopName和shopColor有值
+            const safeName = d.shopName || SHOPS_INDEX.get(d.shopId) || `店舗#${d.shopId}`;
+            const safeColor = d.shopColor || getColorForShop({name: safeName, id: d.shopId}, d.shopId);
+
+            if (!seriesByShop.has(d.shopId)) {
+                const shop = shopMap.get(d.shopId);
+                seriesByShop.set(d.shopId, {
+                    name: safeName,
+                    type: 'line3D',  // 改为线型
+                    lineStyle: {
+                        width: 2,
+                        color: shop?.color || safeColor
+                    },
+                    data: []
+                });
+            }
+            // 数据格式: [timestamp, shopName, price]
+            seriesByShop.get(d.shopId).data.push([
+                d.timestamp,
+                safeName,
+                d.price
+            ]);
+        });
+
+        // 对每个店铺的数据按时间排序，以形成正确的线条
+        seriesByShop.forEach(series => {
+            series.data.sort((a, b) => a[0] - b[0]);
+        });
+
+        const series = Array.from(seriesByShop.values()).filter(s => s && s.name);
+
+        // 计算价格范围以优化Z轴显示
+        const prices = validData.map(d => d.price);
+        const minPrice = Math.min(...prices);
+        const maxPrice = Math.max(...prices);
+        const priceRange = maxPrice - minPrice;
+
+        // 添加10%的上下边距以更好地展示波动
+        const padding = priceRange * 0.1;
+        const zMin = Math.max(PRICE_VISIBLE_MIN, Math.floor((minPrice - padding) / 1000) * 1000);
+        const zMax = Math.min(PRICE_VISIBLE_MAX, Math.ceil((maxPrice + padding) / 1000) * 1000);
+
+        chartObj.data = validData;
+        chartObj.chart.setOption({
+            yAxis3D: {
+                name: '店舗',
+                type: 'category',
+                data: shopNames,
+                axisLabel: {
+                    fontSize: 10,
+                    interval: 0
+                }
+            },
+            zAxis3D: {
+                name: '価格 (JPY)',
+                min: zMin,
+                max: zMax,
+                axisLabel: {
+                    formatter: function(value) {
+                        return (value / 10000).toFixed(0) + '万';
+                    }
+                }
+            },
+            legend: {
+                data: series.map(s => s.name),
+                top: 10,
+                textStyle: {
+                    fontSize: 11
+                }
+            },
+            series: series
+        });
+    }
+
+    function clear3DCharts() {
+        Chart3DManager.charts.forEach(obj => {
+            if (obj.chart) obj.chart.dispose();
+        });
+        Chart3DManager.charts.clear();
+        Chart3DManager.dataByColor.clear();
+        if (Chart3DManager.host) {
+            Chart3DManager.host.innerHTML = '';
+        }
+    }
+
+    function collect3DDataPoint(shopId, shopName, shopColor, timestamp, price, partNumber, iphoneColor) {
+        // 按iPhone颜色收集数据点
+        const colorKey = iphoneColor || '不明';
+        if (!Chart3DManager.dataByColor.has(colorKey)) {
+            Chart3DManager.dataByColor.set(colorKey, []);
+        }
+
+        // 确保shopName和shopColor有值，使用回退值
+        const safeName = shopName || SHOPS_INDEX.get(shopId) || `店舗#${shopId}`;
+        const safeColor = shopColor || getColorForShop({name: safeName, id: shopId}, shopId);
+
+        Chart3DManager.dataByColor.get(colorKey).push({
+            timestamp,
+            shopId,
+            shopName: safeName,
+            shopColor: safeColor,
+            price
+        });
+    }
+
+    /* ===================== 气泡图管理 (3小时聚合) ===================== */
+
+    // 气泡图容器管理 - 按iPhone颜色分组
+    const ChartBubbleManager = {
+        charts: new Map(),  // iphoneColor -> {el, chart}
+        host: null,
+        dataByColor: new Map() // iphoneColor -> [{timestamp, shopId, shopName, shopColor, price}]
+    };
+
+    // 3小时聚合函数：将数据按3小时时间桶分组
+    function aggregate3HourData(dataPoints) {
+        // dataPoints: [{timestamp, shopId, shopName, shopColor, price}, ...]
+        // 返回: Map<bucket_timestamp, Map<shopId, {shopName, shopColor, prices: []}>>
+
+        const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
+        const buckets = new Map();
+
+        dataPoints.forEach(d => {
+            // 计算3小时桶的起始时间
+            const ts = new Date(d.timestamp).getTime();
+            const bucketStart = Math.floor(ts / THREE_HOURS_MS) * THREE_HOURS_MS;
+
+            if (!buckets.has(bucketStart)) {
+                buckets.set(bucketStart, new Map());
+            }
+
+            const shopMap = buckets.get(bucketStart);
+            if (!shopMap.has(d.shopId)) {
+                shopMap.set(d.shopId, {
+                    shopName: d.shopName,
+                    shopColor: d.shopColor,
+                    prices: []
+                });
+            }
+
+            shopMap.get(d.shopId).prices.push(d.price);
+        });
+
+        // 计算每个桶中每个店铺的平均价格
+        const aggregated = [];
+        buckets.forEach((shopMap, bucketStart) => {
+            shopMap.forEach((data, shopId) => {
+                const avgPrice = data.prices.reduce((sum, p) => sum + p, 0) / data.prices.length;
+                aggregated.push({
+                    timestamp: bucketStart,
+                    shopId: shopId,
+                    shopName: data.shopName,
+                    shopColor: data.shopColor,
+                    price: avgPrice,
+                    count: data.prices.length  // 数据点数量
+                });
+            });
+        });
+
+        return aggregated;
+    }
+
+    function initBubbleChartHost() {
+        if (!ChartBubbleManager.host) {
+            ChartBubbleManager.host = document.getElementById('chart_bubble_grid');
+        }
+        return ChartBubbleManager.host;
+    }
+
+    function createBubblePanel(host, iphoneColor, title) {
+        const panel = document.createElement('div');
+        panel.className = 'chart-bubble-panel';
+
+        const titleDiv = document.createElement('div');
+        titleDiv.className = 'chart-bubble-title';
+        titleDiv.textContent = title;
+
+        const canvas = document.createElement('div');
+        canvas.className = 'chart-bubble-canvas';
+
+        panel.appendChild(titleDiv);
+        panel.appendChild(canvas);
+        host.appendChild(panel);
+
+        return {panel, canvas};
+    }
+
+    function getBubbleChartForColor(iphoneColor, title) {
+        if (!ChartBubbleManager.charts.has(iphoneColor)) {
+            const host = initBubbleChartHost();
+            if (!host) return null;
+
+            const {canvas} = createBubblePanel(host, iphoneColor, title);
+            const chart = echarts.init(canvas);
+
+            // 基础气泡图配置
+            const option = {
+                tooltip: {
+                    formatter: function(params) {
+                        const d = params.data;
+                        if (!d) return '';
+                        const timestamp = new Date(d[0]).toLocaleString('ja-JP');
+                        const shopName = d[1] || '';
+                        const price = d[2] ? d[2].toLocaleString() : 'N/A';
+                        const count = d[3] || 1;
+                        return `時刻: ${timestamp}<br/>店舗: ${shopName}<br/>平均価格: ¥${price}<br/>データ数: ${count}`;
+                    }
+                },
+                grid: {
+                    left: 80,
+                    right: 50,
+                    top: 80,
+                    bottom: 80
+                },
+                xAxis: {
+                    type: 'time',
+                    name: '時刻',
+                    nameLocation: 'middle',
+                    nameGap: 30,
+                    axisLabel: {
+                        formatter: function(value) {
+                            const d = new Date(value);
+                            return `${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:00`;
+                        },
+                        rotate: 45
+                    }
+                },
+                yAxis: {
+                    type: 'category',
+                    name: '店舗',
+                    data: [],
+                    axisLabel: {
+                        interval: 0
+                    }
+                },
+                dataZoom: [
+                    {
+                        type: 'slider',
+                        xAxisIndex: 0,
+                        start: 0,
+                        end: 100,
+                        height: 30,
+                        bottom: 10
+                    },
+                    {
+                        type: 'inside',
+                        xAxisIndex: 0
+                    }
+                ],
+                legend: {
+                    data: [],
+                    top: 10
+                },
+                series: []
+            };
+
+            chart.setOption(option);
+
+            ChartBubbleManager.charts.set(iphoneColor, {
+                el: canvas,
+                chart: chart
+            });
+        }
+
+        return ChartBubbleManager.charts.get(iphoneColor);
+    }
+
+    function updateBubbleChartForColor(iphoneColor, title, dataPoints) {
+        // dataPoints: [{timestamp, shopId, shopName, shopColor, price}, ...]
+        const chartObj = getBubbleChartForColor(iphoneColor, title);
+        if (!chartObj) return;
+
+        // 3小时聚合
+        const aggregatedData = aggregate3HourData(dataPoints);
+        if (aggregatedData.length === 0) return;
+
+        // 计算实际价格范围（用于气泡大小标准化）
+        const prices = aggregatedData.map(d => d.price);
+        const minPrice = Math.min(...prices);
+        const maxPrice = Math.max(...prices);
+        const priceRange = maxPrice - minPrice;
+
+        // 提取所有唯一的店铺
+        const shopMap = new Map();
+        aggregatedData.forEach(d => {
+            if (!shopMap.has(d.shopId)) {
+                shopMap.set(d.shopId, {
+                    id: d.shopId,
+                    name: d.shopName,
+                    color: d.shopColor,
+                    order: getOrderForShop({name: d.shopName, id: d.shopId})
+                });
+            }
+        });
+        const shops = Array.from(shopMap.values()).filter(s => s && s.name).sort((a, b) => a.order - b.order);
+        const shopNames = shops.map(s => s.name);
+
+        // 按店铺分组数据，每个店铺一个series
+        const seriesByShop = new Map();
+        aggregatedData.forEach(d => {
+            const safeName = d.shopName || SHOPS_INDEX.get(d.shopId) || `店舗#${d.shopId}`;
+            const safeColor = d.shopColor || getColorForShop({name: safeName, id: d.shopId}, d.shopId);
+
+            if (!seriesByShop.has(d.shopId)) {
+                const shop = shopMap.get(d.shopId);
+                seriesByShop.set(d.shopId, {
+                    name: safeName,
+                    type: 'scatter',
+                    symbolSize: function(data) {
+                        // data: [timestamp, shopName, price, count]
+                        // 气泡大小基于价格（价格越高，气泡越大）
+                        const price = data[2] || 0;
+                        const minSize = 8;
+                        const maxSize = 40;
+
+                        // 使用实际数据的价格范围进行标准化
+                        if (priceRange === 0) return (minSize + maxSize) / 2; // 如果价格都相同，返回中间值
+                        const normalizedPrice = (price - minPrice) / priceRange;
+                        return minSize + normalizedPrice * (maxSize - minSize);
+                    },
+                    itemStyle: {
+                        color: shop?.color || safeColor,
+                        opacity: 0.7
+                    },
+                    data: []
+                });
+            }
+
+            // 数据格式: [timestamp, shopName, price, count]
+            seriesByShop.get(d.shopId).data.push([
+                d.timestamp,
+                safeName,
+                d.price,
+                d.count
+            ]);
+        });
+
+        const series = Array.from(seriesByShop.values()).filter(s => s && s.name);
+
+        chartObj.chart.setOption({
+            yAxis: {
+                type: 'category',
+                name: '店舗',
+                data: shopNames,
+                axisLabel: {
+                    interval: 0
+                }
+            },
+            legend: {
+                data: series.map(s => s.name),
+                top: 10
+            },
+            series: series
+        });
+    }
+
+    function clearBubbleCharts() {
+        ChartBubbleManager.charts.forEach(obj => {
+            if (obj.chart) obj.chart.dispose();
+        });
+        ChartBubbleManager.charts.clear();
+        ChartBubbleManager.dataByColor.clear();
+        if (ChartBubbleManager.host) {
+            ChartBubbleManager.host.innerHTML = '';
+        }
+    }
+
+    function collectBubbleDataPoint(shopId, shopName, shopColor, timestamp, price, partNumber, iphoneColor) {
+        // 按iPhone颜色收集数据点（与3D图相同的数据）
+        const colorKey = iphoneColor || '不明';
+        if (!ChartBubbleManager.dataByColor.has(colorKey)) {
+            ChartBubbleManager.dataByColor.set(colorKey, []);
+        }
+
+        const safeName = shopName || SHOPS_INDEX.get(shopId) || `店舗#${shopId}`;
+        const safeColor = shopColor || getColorForShop({name: safeName, id: shopId}, shopId);
+
+        ChartBubbleManager.dataByColor.get(colorKey).push({
+            timestamp,
+            shopId,
+            shopName: safeName,
+            shopColor: safeColor,
+            price
+        });
+    }
+
+    function renderBubbleChartsFromCollectedData() {
+        // 从收集的数据渲染所有气泡图表，按iPhone颜色分组
+        ChartBubbleManager.dataByColor.forEach((dataPoints, iphoneColor) => {
+            const title = `${iphoneColor} - 価格分布バブルチャート（3時間集計）`;
+            updateBubbleChartForColor(iphoneColor, title, dataPoints);
+        });
+    }
+
+    function render3DChartsFromCollectedData() {
+        // 从收集的数据渲染所有3D图表，按iPhone颜色分组
+        Chart3DManager.dataByColor.forEach((dataPoints, iphoneColor) => {
+            const title = `${iphoneColor} - 3D価格分布`;
+            update3DChartForColor(iphoneColor, title, dataPoints);
+        });
+    }
+
+    /* ===================== End 3D图表管理 ===================== */
 
     function createPanel(host, titleText, isFeature = false) {
         const panel = document.createElement('div');
@@ -1602,7 +2015,6 @@ function adjustGridTopForLegend(inst) {
         inst.setOption({
             series: [{
                 id: '__workhours__',
-                name: '',  // 空名称，不显示在图例中
                 type: 'line',
                 data: [],
                 markArea: buildBusinessHoursMarkArea10to19(startMs, endMs),
@@ -1617,7 +2029,6 @@ function adjustGridTopForLegend(inst) {
         const patch = {
             series: [{
                 id: '__workhours__',
-                name: '',  // 空名称，不显示在图例中
                 type: 'line',
                 data: [],
                 markArea: buildBusinessHoursMarkArea10to19(startMs, endMs),
@@ -1710,8 +2121,6 @@ function adjustGridTopForLegend(inst) {
         updateStatsChart();                       // 统计图同步
         adjustGridTopForLegend(chart);
     }
-
-    /* —— 子图工厂 —— */
 
 
     /** —— 工具：把 part number 转成“人类友好”名称 —— */
@@ -1807,17 +2216,20 @@ function adjustGridTopForLegend(inst) {
 
     const chart = getMainChart();
 
-    /* —— 新旧两套“增改系列” —— */
+    /* —— 新旧两套"增改系列" —— */
     // 主图用（A）
     function addOrUpdateSeries(id, name, color, data) {
         const inst = chart;
         if (!inst) return;
         const opt = inst.getOption() || {};
-        // 过滤掉 undefined/null 项和 workhours 覆盖层
-        const cur = (opt.series || []).filter(s => s && s.id !== '__workhours__');
+        const cur = (opt.series || []).filter(s => s.id !== '__workhours__');
         const idx = cur.findIndex(s => s.id === id);
+
+        // 确保name有值
+        const safeName = name || `Series#${id}`;
+
         const base = {
-            id, name, type: 'line', showSymbol: false, smooth: 0.15,
+            id, name: safeName, type: 'line', showSymbol: false, smooth: 0.15,
             xAxisIndex: 0, yAxisIndex: 0,
             emphasis: {focus: 'series'},
             lineStyle: {width: 2, color},
@@ -1826,13 +2238,16 @@ function adjustGridTopForLegend(inst) {
         };
         if (idx >= 0) cur[idx] = {
             ...cur[idx],
-            name,
+            name: safeName,
             data,
             lineStyle: {...(cur[idx].lineStyle || {}), width: 2, color},
             itemStyle: {color}
         };
         else cur.push(base);
-        inst.setOption({series: cur, legend: {data: cur.map(s => s.name)}}, {notMerge: false, lazyUpdate: true});
+
+        // 过滤掉name为undefined的元素
+        const validCur = cur.filter(s => s && s.name);
+        inst.setOption({series: validCur, legend: {data: validCur.map(s => s.name)}}, {notMerge: false, lazyUpdate: true});
         adjustGridTopForLegend(inst);
     }
 
@@ -1856,11 +2271,14 @@ function adjustGridTopForLegend(inst) {
     function addOrUpdateSeriesForPart(part, id, name, color, data) {
         const inst = ensurePriceChartForPart(part);
         const opt = inst.getOption() || {};
-        // 过滤掉 undefined/null 项
-        const arr = (opt.series || []).filter(s => s);
+        const arr = (opt.series || []).slice();
         const idx = arr.findIndex(s => s.id === id);
+
+        // 确保name有值
+        const safeName = name || `Series#${id}`;
+
         const base = {
-            id, name,
+            id, name: safeName,
             type: 'line', showSymbol: false, smooth: 0.15,
             xAxisIndex: 0, yAxisIndex: 0,
             emphasis: {focus: 'series'},
@@ -1870,13 +2288,16 @@ function adjustGridTopForLegend(inst) {
         };
         if (idx >= 0) {
             arr[idx] = {
-                ...arr[idx], name, data, xAxisIndex: 0, yAxisIndex: 0,
+                ...arr[idx], name: safeName, data, xAxisIndex: 0, yAxisIndex: 0,
                 lineStyle: {...(arr[idx].lineStyle || {}), width: 2, color}, itemStyle: {color}
             };
         } else {
             arr.push(base);
         }
-        inst.setOption({series: arr, legend: {data: arr.map(s => s.name)}}, {notMerge: false, lazyUpdate: true});
+
+        // 过滤掉name为undefined的元素
+        const validArr = arr.filter(s => s && s.name);
+        inst.setOption({series: validArr, legend: {data: validArr.map(s => s.name)}}, {notMerge: false, lazyUpdate: true});
     adjustGridTopForLegend(inst);
     }
 
@@ -1992,41 +2413,6 @@ function adjustGridTopForLegend(inst) {
         return {name: shopName, data};
     }
 
-    /**
-     * 将原始价格数据存储到 RAW_PRICE_DATA 用于 Punch Card 图表
-     * @param {number} shopId - 店铺ID
-     * @param {string} partNumber - 型番
-     * @param {Array<[number, number]>} data - 数据数组 [[timestamp, price], ...]
-     */
-    function storeRawPriceData(shopId, partNumber, data) {
-        if (!RAW_PRICE_DATA.has(shopId)) {
-            RAW_PRICE_DATA.set(shopId, new Map());
-        }
-
-        const partMap = RAW_PRICE_DATA.get(shopId);
-
-        // 将 [timestamp, price] 格式转换为对象格式
-        const points = data.map(([timestamp, price]) => ({
-            timestamp,
-            price,
-            part: partNumber
-        }));
-
-        // 如果该型番已存在数据，合并并去重
-        if (partMap.has(partNumber)) {
-            const existing = partMap.get(partNumber);
-            const combined = [...existing, ...points];
-            // 按时间戳去重
-            const uniqueMap = new Map();
-            for (const point of combined) {
-                uniqueMap.set(point.timestamp, point);
-            }
-            partMap.set(partNumber, Array.from(uniqueMap.values()));
-        } else {
-            partMap.set(partNumber, points);
-        }
-    }
-
     function appendShadowToNowIfNeeded(seriesData) {
         if (!seriesData.length) return seriesData;
         const last = seriesData[seriesData.length - 1];
@@ -2047,7 +2433,6 @@ function adjustGridTopForLegend(inst) {
 
     /* ===================== 4) Scopes：cohort / profile / iphone 选项 ===================== */
 
-    // arrFirst(): 行935-941で定義済み
 
     async function loadScopesOnce() {
         if (_SCOPES_CACHE) return _SCOPES_CACHE;
@@ -2330,7 +2715,7 @@ function adjustGridTopForLegend(inst) {
 
     /* ===================== 5) FeatureSnapshot ===================== */
 
-    // FEATURE_NAMES_DEFAULT: 行588-593で定義済み
+    const FEATURE_NAMES_DEFAULT = ['mean', 'std', "wma60m", "wma120m", 'wma900m', 'wma1800m', "ema_hl30m", "ema_hl60m", "sma75m"]; // 默认抓两条指标
 
     function toUtcZ(isoStr) {
         return new Date(isoStr).toISOString().replace('.000Z', 'Z');
@@ -2657,6 +3042,7 @@ function adjustGridTopForLegend(inst) {
 
     /* ===================== 6) 五种加载处理器（A 保主图，B/C/D/E 分图） ===================== */
 
+
     async function runWithLimit(tasks, limit = RAW_CONC_LIMIT) {
         const ret = [];
         let i = 0, running = 0;
@@ -2718,18 +3104,27 @@ function adjustGridTopForLegend(inst) {
 
         // 清空分图（A 只画主图）
         disposeAllPartCharts();
+        clear3DCharts();  // 清空3D图表
+        clearBubbleCharts();  // 清空气泡图
 
         try {
             const sname = SHOPS_INDEX.get(sid) || `#${sid}`;
             const r = await fetchOneShopSeries(SERIES_API_BASE, startIso, endIso, sid, sname, part);
             const color = getColorForShop({name: sname, id: sid}, 0);
             const data = appendShadowToNowIfNeeded(r.data.slice());
-
-            // 存储原始数据用于 Punch Card
-            storeRawPriceData(sid, part, r.data);
-
             addOrUpdateSeries(`raw:s:${sid}|p:${part}`, sname, color, data);
 
+            // 收集3D数据点和气泡图数据点
+            const iphoneInfo = IPHONE_INFO_BY_PART.get(part);
+            const iphoneColor = iphoneInfo?.color || '不明';
+            data.forEach(point => {
+                if (Array.isArray(point) && point.length >= 2) {
+                    collect3DDataPoint(sid, sname, color, point[0], point[1], part, iphoneColor);
+                    collectBubbleDataPoint(sid, sname, color, point[0], point[1], part, iphoneColor);
+                }
+            });
+            render3DChartsFromCollectedData();  // 渲染3D图表
+            renderBubbleChartsFromCollectedData();  // 渲染气泡图
 
             $('status') && ($('status').textContent = `A) 完了：${sname} × ${part}`);
 
@@ -2749,7 +3144,6 @@ function adjustGridTopForLegend(inst) {
                 chart.setOption({
                     series: [{
                         id: '__workhours__',
-                        name: '',  // 空名称，不显示在图例中
                         type: 'line',
                         data: [],
                         markArea: buildBusinessHoursMarkArea10to19(SELECTED_START_MS, SELECTED_END_MS),
@@ -2759,9 +3153,6 @@ function adjustGridTopForLegend(inst) {
                 ensureDailyTicksOn(chart);
                 applyWorkHoursOverlayAll(SELECTED_START_MS, SELECTED_END_MS);  // ★
             }
-
-            // 渲染 Punch Card 图表
-            renderPunchCard();
 
         } catch (e) {
             $('err') && ($('err').textContent = `A) 読み込み失敗：${e.message}`);
@@ -2792,6 +3183,8 @@ function adjustGridTopForLegend(inst) {
         SELECTED_START_MS = new Date(startIso).getTime();
         SELECTED_END_MS = new Date(endIso).getTime();
         disposeAllPartCharts();  // 清空旧分图
+        clear3DCharts();  // 清空3D图表
+        clearBubbleCharts();  // 清空气泡图
 
         const allShops = [...SHOPS_INDEX.keys()];
         const pairs = [];
@@ -2808,18 +3201,26 @@ function adjustGridTopForLegend(inst) {
             const r = await fetchOneShopSeries(SERIES_API_BASE, startIso, endIso, sid, sname, part);
             const color = getColorForShop({name: sname, id: sid}, sid);
             const data = appendShadowToNowIfNeeded(r.data.slice());
-
-            // 存储原始数据用于 Punch Card
-            storeRawPriceData(sid, part, r.data);
-
             addOrUpdateSeriesForPart(part, `s:${sid}`, sname, color, data);
             if (!aggByShop.has(sid)) aggByShop.set(sid, []);
             aggByShop.get(sid).push(data);
+
+            // 收集3D数据点和气泡图数据点
+            const iphoneInfo = IPHONE_INFO_BY_PART.get(part);
+            const iphoneColor = iphoneInfo?.color || '不明';
+            data.forEach(point => {
+                if (Array.isArray(point) && point.length >= 2) {
+                    collect3DDataPoint(sid, sname, color, point[0], point[1], part, iphoneColor);
+                    collectBubbleDataPoint(sid, sname, color, point[0], point[1], part, iphoneColor);
+                }
+            });
         });
 
         try {
             await runWithLimit(tasks, RAW_CONC_LIMIT);
             renderAggregateOnMain(aggByShop, SELECTED_START_MS, SELECTED_END_MS);
+            render3DChartsFromCollectedData();  // 渲染3D图表
+            renderBubbleChartsFromCollectedData();  // 渲染气泡图
             ensureDailyTicksAll();
             applyWorkHoursOverlayAll(SELECTED_START_MS, SELECTED_END_MS);
             $('status') && ($('status').textContent = `B) 完了：${cohort.title || cohort.label}${clipped ? '（已截断显示）' : ''}`);
@@ -2838,10 +3239,6 @@ function adjustGridTopForLegend(inst) {
                     endIso
                 });
             }
-
-            // 渲染 Punch Card 图表
-            renderPunchCard();
-
         } catch (e) {
             $('err') && ($('err').textContent = `B) 読み込み失敗：${e.message}`);
         }
@@ -2872,6 +3269,8 @@ function adjustGridTopForLegend(inst) {
         SELECTED_START_MS = new Date(startIso).getTime();
         SELECTED_END_MS = new Date(endIso).getTime();
         disposeAllPartCharts();
+        clear3DCharts();  // 清空3D图表
+        clearBubbleCharts();  // 清空气泡图
 
         const shopIds = (profile.items || []).map(x => Number(x.shop_id));
         const pairs = shopIds.map(sid => [sid, part]);
@@ -2887,18 +3286,26 @@ function adjustGridTopForLegend(inst) {
             const r = await fetchOneShopSeries(SERIES_API_BASE, startIso, endIso, sid, sname, p);
             const color = getColorForShop({name: sname, id: sid}, sid);
             const data = appendShadowToNowIfNeeded(r.data.slice());
-
-            // 存储原始数据用于 Punch Card
-            storeRawPriceData(sid, p, r.data);
-
             addOrUpdateSeriesForPart(p, `s:${sid}`, sname, color, data);
             if (!aggByShop.has(sid)) aggByShop.set(sid, []);
             aggByShop.get(sid).push(data);
+
+            // 收集3D数据点和气泡图数据点
+            const iphoneInfo = IPHONE_INFO_BY_PART.get(p);
+            const iphoneColor = iphoneInfo?.color || '不明';
+            data.forEach(point => {
+                if (Array.isArray(point) && point.length >= 2) {
+                    collect3DDataPoint(sid, sname, color, point[0], point[1], p, iphoneColor);
+                    collectBubbleDataPoint(sid, sname, color, point[0], point[1], p, iphoneColor);
+                }
+            });
         });
 
         try {
             await runWithLimit(tasks, RAW_CONC_LIMIT);
             renderAggregateOnMain(aggByShop, SELECTED_START_MS, SELECTED_END_MS);
+            render3DChartsFromCollectedData();  // 渲染3D图表
+            renderBubbleChartsFromCollectedData();  // 渲染气泡图
             ensureDailyTicksAll();
             applyWorkHoursOverlayAll(SELECTED_START_MS, SELECTED_END_MS);
             $('status') && ($('status').textContent = `C) 完了：${profile.title || profile.label} × ${part}${clipped ? '（已截断显示）' : ''}`);
@@ -2914,10 +3321,6 @@ function adjustGridTopForLegend(inst) {
                     endIso
                 });
             }
-
-            // 渲染 Punch Card 图表
-            renderPunchCard();
-
         } catch (e) {
             $('err') && ($('err').textContent = `C) 読み込み失敗：${e.message}`);
         }
@@ -2949,6 +3352,8 @@ function adjustGridTopForLegend(inst) {
         SELECTED_START_MS = new Date(startIso).getTime();
         SELECTED_END_MS = new Date(endIso).getTime();
         disposeAllPartCharts();
+        clear3DCharts();  // 清空3D图表
+        clearBubbleCharts();  // 清空气泡图
 
         const pairs = (cohort.members || []).map(m => [sid, String(m.part_number)]);
         let clipped = false;
@@ -2961,15 +3366,23 @@ function adjustGridTopForLegend(inst) {
             const r = await fetchOneShopSeries(SERIES_API_BASE, startIso, endIso, s, sname, p);
             const color = getColorForShop({name: sname, id: s}, s);
             const data = appendShadowToNowIfNeeded(r.data.slice());
-
-            // 存储原始数据用于 Punch Card
-            storeRawPriceData(s, p, r.data);
-
             addOrUpdateSeriesForPart(p, `s:${s}`, sname, color, data);
+
+            // 收集3D数据点和气泡图数据点
+            const iphoneInfo = IPHONE_INFO_BY_PART.get(p);
+            const iphoneColor = iphoneInfo?.color || '不明';
+            data.forEach(point => {
+                if (Array.isArray(point) && point.length >= 2) {
+                    collect3DDataPoint(s, sname, color, point[0], point[1], p, iphoneColor);
+                    collectBubbleDataPoint(s, sname, color, point[0], point[1], p, iphoneColor);
+                }
+            });
         });
 
         try {
             await runWithLimit(tasks, RAW_CONC_LIMIT);
+            render3DChartsFromCollectedData();  // 渲染3D图表
+            renderBubbleChartsFromCollectedData();  // 渲染气泡图
             ensureDailyTicksAll();
             applyWorkHoursOverlayAll(SELECTED_START_MS, SELECTED_END_MS);
             $('status') && ($('status').textContent = `D) 完了：${sname} × ${cohort.title || cohort.label}${clipped ? '（已截断显示）' : ''}`);
@@ -2985,10 +3398,6 @@ function adjustGridTopForLegend(inst) {
                     endIso
                 });
             }
-
-            // 渲染 Punch Card 图表
-            renderPunchCard();
-
         } catch (e) {
             $('err') && ($('err').textContent = `D) 読み込み失敗：${e.message}`);
         }
@@ -3024,6 +3433,8 @@ function adjustGridTopForLegend(inst) {
         SELECTED_START_MS = new Date(startIso).getTime();
         SELECTED_END_MS = new Date(endIso).getTime();
         disposeAllPartCharts();
+        clear3DCharts();  // 清空3D图表
+        clearBubbleCharts();  // 清空气泡图
 
         const shopIds = (profile.items || []).map(x => Number(x.shop_id));
         const members = cohort.members || [];
@@ -3042,18 +3453,26 @@ function adjustGridTopForLegend(inst) {
             const r = await fetchOneShopSeries(SERIES_API_BASE, startIso, endIso, s, sname, p);
             const color = getColorForShop({name: sname, id: s}, s);
             const data = appendShadowToNowIfNeeded(r.data.slice());
-
-            // 存储原始数据用于 Punch Card
-            storeRawPriceData(s, p, r.data);
-
             addOrUpdateSeriesForPart(p, `s:${s}`, sname, color, data);
             if (!aggByShop.has(s)) aggByShop.set(s, []);
             aggByShop.get(s).push(data);
+
+            // 收集3D数据点和气泡图数据点
+            const iphoneInfo = IPHONE_INFO_BY_PART.get(p);
+            const iphoneColor = iphoneInfo?.color || '不明';
+            data.forEach(point => {
+                if (Array.isArray(point) && point.length >= 2) {
+                    collect3DDataPoint(s, sname, color, point[0], point[1], p, iphoneColor);
+                    collectBubbleDataPoint(s, sname, color, point[0], point[1], p, iphoneColor);
+                }
+            });
         });
 
         try {
             await runWithLimit(tasks, RAW_CONC_LIMIT);
             renderAggregateOnMain(aggByShop, SELECTED_START_MS, SELECTED_END_MS);
+            render3DChartsFromCollectedData();  // 渲染3D图表
+            renderBubbleChartsFromCollectedData();  // 渲染气泡图
             ensureDailyTicksAll();
             applyWorkHoursOverlayAll(SELECTED_START_MS, SELECTED_END_MS);
             $('status') && ($('status').textContent = `E) 完了：${profile.title || profile.label} × ${cohort.title || cohort.label}${clipped ? '（已截断显示）' : ''}`);
@@ -3072,10 +3491,6 @@ function adjustGridTopForLegend(inst) {
                     });
                 }
             }
-
-            // 渲染 Punch Card 图表
-            renderPunchCard();
-
         } catch (e) {
             $('err') && ($('err').textContent = `E) 読み込み失敗：${e.message}`);
         }
@@ -3087,10 +3502,8 @@ function adjustGridTopForLegend(inst) {
         const inst = getMainChart();
         if (inst) inst.setOption(baseOption, true);
         disposeAllPartCharts(); // 同时清空所有 PN 子图
-
-        // 清空 Punch Card 数据并重新渲染
-        RAW_PRICE_DATA.clear();
-        renderPunchCard();
+        clear3DCharts(); // 清空所有 3D 图表
+        clearBubbleCharts(); // 清空所有气泡图
     });
 
     [
@@ -3111,11 +3524,12 @@ function adjustGridTopForLegend(inst) {
         document.querySelectorAll('#shops input[type=checkbox][data-shop-id], #shops input[type=checkbox][value]').forEach(cb => cb.checked = false);
     });
 
-    /* 自動で終了時刻を現在の最近の分（JST）に同期 */
+    /* 自动把 end 输入同步到“当前最近整分钟（JST）”，若页面存在这些输入框 */
 
-    // toInputValueJST(): 行785-797で定義済み
-    // floorToMinute(): 行772-774で定義済み
-    // nearestPastMinuteInputValueJST(): 行804-807で定義済み
+
+
+
+
 
     function syncAllEndToNow() {
     const v = nearestPastMinuteInputValueJST();
