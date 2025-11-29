@@ -1,0 +1,27 @@
+# GPU 加速相关依赖
+# 可选依赖：如果需要 GPU 加速，请安装此文件中的依赖
+
+# CuPy - CUDA 加速的 NumPy 兼容库
+# 注意：需要根据 CUDA 版本选择合适的 cupy 版本
+# 请根据实际的 CUDA 版本安装对应的 cupy 包
+
+# CUDA 11.x (例如 CUDA 11.8)
+# cupy-cuda11x>=12.0.0
+
+# CUDA 12.x (例如 CUDA 12.1)
+# cupy-cuda12x>=12.0.0
+
+# 如果不确定 CUDA 版本，可以使用：
+cupy>=13.0.0
+
+# 说明：
+# 1. cupy 包会自动检测系统中的 CUDA 版本
+# 2. 如果没有 GPU 或 CUDA，安装会失败，但系统会自动降级到 CPU 模式
+# 3. 生产环境建议使用具体的 CUDA 版本包（如 cupy-cuda12x）以获得更好的性能
+
+# 安装方法：
+# 对于 GPU 服务器：
+#   pip install -r requirements-gpu.txt
+#
+# 对于 CPU 服务器：
+#   跳过此文件，系统会自动使用 numpy（已在 requirements.txt 中）

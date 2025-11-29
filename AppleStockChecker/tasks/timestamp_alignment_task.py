@@ -23,15 +23,47 @@ from typing import Any, Callable, Dict, Iterable, Tuple, Optional, Union
 from AppleStockChecker.features.api import FeatureWriter, FeatureRecord
 from typing import Optional, Dict, Any, List
 
+# GPU 加速相关导入
+from AppleStockChecker.tasks.compute_kernels import (
+    compute_std,
+    compute_quantile,
+    filter_outliers_by_mean_band as gpu_filter_outliers,
+    compute_sma,
+    compute_ema,
+    compute_wma_linear,
+    filter_price_range,
+)
+from AppleStockChecker.utils.gpu_utils import is_gpu_available
+
 logger = logging.getLogger(__name__)
 
 # 环境开关：参数严格度 & 版本阈值
 PARAM_STRICT = os.getenv("PSTA_PARAM_STRICT", "warn").strip().lower()  # ignore|warn|error
 MIN_ACCEPTED_TASK_VER = int(os.getenv("PSTA_MIN_ACCEPTED_VER", "0"))  # 小于此版本直接报错（可选）
 
+# GPU 加速开关（通过环境变量控制，默认启用）
+USE_GPU_ACCELERATION = os.getenv("PSTA_USE_GPU", "auto").strip().lower()  # auto|true|false
+
 # ---- 小工具：类型转换 ----
 _TRUE = {"1", "true", "t", "y", "yes", "on"}
 _FALSE = {"0", "false", "f", "n", "no", "off"}
+
+
+def _should_use_gpu() -> Optional[bool]:
+    """
+    根据环境变量确定是否使用 GPU
+
+    返回:
+        None: 自动检测
+        True: 强制使用 GPU
+        False: 强制使用 CPU
+    """
+    if USE_GPU_ACCELERATION == "true":
+        return True
+    elif USE_GPU_ACCELERATION == "false":
+        return False
+    else:  # "auto"
+        return None
 
 
 def to_bool(x: Any) -> bool:
@@ -224,48 +256,27 @@ def _d4(x):
 
 
 def _quantile(sorted_vals, p: float):
-    """最近邻分位数（sorted_vals 必须升序）。"""
-    if not sorted_vals:
-        return None
-    n = len(sorted_vals)
-    if n == 1:
-        return float(sorted_vals[0])
-    k = int(round((n - 1) * p))
-    k = 0 if k < 0 else (n - 1 if k > n - 1 else k)
-    return float(sorted_vals[k])
+    """最近邻分位数（sorted_vals 必须升序）。GPU 加速版本。"""
+    use_gpu = _should_use_gpu()
+    return compute_quantile(sorted_vals, p, use_gpu=use_gpu)
 
 
 def _pop_std(vals):
-    """总体标准差；N<=1 返回 0."""
-    n = len(vals)
-    if n <= 1:
-        return 0.0
-    mu = sum(vals) / n
-    s2 = sum((v - mu) ** 2 for v in vals) / n
-    return (s2 ** 0.5)
+    """总体标准差；N<=1 返回 0。GPU 加速版本。"""
+    use_gpu = _should_use_gpu()
+    return compute_std(vals, use_gpu=use_gpu)
 
 
 def _filter_outliers_by_mean_band(vals, lower_factor=0.5, upper_factor=1.5):
     """
-    按“相对平均值”过滤异常值：
+    按"相对平均值"过滤异常值（GPU 加速版本）：
     - 先算原始均值 m；
     - 保留 [m*lower_factor, m*upper_factor] 区间内的值；
     - 如果全部被过滤掉，则回退到原始列表。
     返回 (filtered_vals, m, low, high)。
     """
-    if not vals:
-        return [], None, None, None
-    m = sum(vals) / len(vals)
-    if m <= 0:
-        # 极端情况（不太会发生），直接不滤
-        return list(vals), m, None, None
-    low = m * lower_factor
-    high = m * upper_factor
-    filtered = [v for v in vals if low <= v <= high]
-    if not filtered:
-        # 全被判成异常，就用原始值，避免整组丢失
-        return list(vals), m, low, high
-    return filtered, m, low, high
+    use_gpu = _should_use_gpu()
+    return gpu_filter_outliers(vals, lower_factor, upper_factor, use_gpu=use_gpu)
 
 
 # ====== 统一的 FeatureSnapshot 安全 upsert（全局工具函数） ======
@@ -328,34 +339,21 @@ def safe_upsert_feature_snapshot(
 
 
 def _ema_from_series(series_old_to_new: List[float], alpha: float) -> float:
-    """旧->新序列 + alpha，返回 EMA 值。"""
-    if not series_old_to_new:
-        return 0.0
-    ema = float(series_old_to_new[0])
-    for v in series_old_to_new[1:]:
-        ema = alpha * float(v) + (1.0 - alpha) * ema
-    return ema
+    """旧->新序列 + alpha，返回 EMA 值。GPU 加速版本。"""
+    use_gpu = _should_use_gpu()
+    return compute_ema(series_old_to_new, alpha, use_gpu=use_gpu)
 
 
 def _sma(series_old_to_new: List[float], window: int) -> Optional[float]:
-    """简单移动平均（旧->新序列），返回 None 表示无数据。"""
-    if not series_old_to_new:
-        return None
-    w = max(1, int(window))
-    s = series_old_to_new[-w:] if w < len(series_old_to_new) else series_old_to_new
-    return sum(s) / float(len(s))
+    """简单移动平均（旧->新序列），返回 None 表示无数据。GPU 加速版本。"""
+    use_gpu = _should_use_gpu()
+    return compute_sma(series_old_to_new, window, use_gpu=use_gpu)
 
 
 def _wma_linear(series_old_to_new: List[float], window: int) -> Optional[float]:
-    """线性权重移动平均，越新的权重越大。"""
-    if not series_old_to_new:
-        return None
-    w = max(1, int(window))
-    s = series_old_to_new[-w:] if w < len(series_old_to_new) else series_old_to_new
-    n = len(s)
-    weights = list(range(1, n + 1))
-    denom = float(sum(weights))
-    return sum(v * w for v, w in zip(s, weights)) / denom if denom > 0 else None
+    """线性权重移动平均，越新的权重越大。GPU 加速版本。"""
+    use_gpu = _should_use_gpu()
+    return compute_wma_linear(series_old_to_new, window, use_gpu=use_gpu)
 
 
 def _fetch_prev_base(scope: str, base_name: str, base_version: str, limit: int, anchor_dt):
@@ -1769,6 +1767,14 @@ def psta_process_minute_bucket(
     """
     入口任务：参数守卫 + 写入分钟数据 +（可选）做聚合
     """
+
+    # ---------- GPU 状态检查 ----------
+    gpu_available = is_gpu_available()
+    use_gpu_mode = _should_use_gpu()
+    logger.info(
+        f"分钟桶任务启动 (ts={ts_iso}): "
+        f"GPU可用={gpu_available}, GPU模式={use_gpu_mode}"
+    )
 
     # ---------- 参数守卫 ----------
     incoming = dict(
