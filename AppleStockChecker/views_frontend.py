@@ -53,3 +53,7 @@ class AnalysisDashboardView(TemplateView):
 
 class StatisticalDataSummaryView(TemplateView):
     template_name = "apple_stock/EChart.html"
+
+
+class AutoMLView(TemplateView):
+    template_name = "apple_stock/AutoML.html"

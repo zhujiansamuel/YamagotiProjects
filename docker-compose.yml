@@ -149,6 +149,78 @@ services:
       - .:/app
     restart: unless-stopped
 
+  # Celery Worker - AutoML Preprocessing 专用队列
+  celery_worker_automl_preprocessing:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_automl_preprocessing
+    command: celery -A YamagotiProjects worker -Q automl_preprocessing -l info -c 2 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DATABASE_URL=postgres://samuelzhu:Xdb73008762@pgbouncer:5432/applestockchecker_dev
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=true
+    depends_on:
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - yapp_network
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
+  # Celery Worker - AutoML Cause and Effect Testing 专用队列
+  celery_worker_automl_cause_effect:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_automl_cause_effect
+    command: celery -A YamagotiProjects worker -Q automl_cause_effect -l info -c 2 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DATABASE_URL=postgres://samuelzhu:Xdb73008762@pgbouncer:5432/applestockchecker_dev
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=true
+    depends_on:
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - yapp_network
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
+  # Celery Worker - AutoML Quantification of Impact 专用队列
+  celery_worker_automl_impact:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_automl_impact
+    command: celery -A YamagotiProjects worker -Q automl_impact -l info -c 2 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DATABASE_URL=postgres://samuelzhu:Xdb73008762@pgbouncer:5432/applestockchecker_dev
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=true
+    depends_on:
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - yapp_network
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
   # Celery Beat - 定时任务调度器
   celery_beat:
     build:
