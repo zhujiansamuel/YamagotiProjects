@@ -55,6 +55,7 @@ INSTALLED_APPS = [
     "django_celery_beat",  # 定时任务(可在Admin里改间隔/暂停)
     "django_celery_results",  # 可选：任务结果持久化到DB
     "django_filters",
+    "buyrisk",  # 买方库存风控决策
 
 ]
 
@@ -702,4 +703,69 @@ CHANNEL_LAYERS = {
 
 ASGI_APPLICATION = "config.asgi.application"
 DATA_UPLOAD_MAX_MEMORY_SIZE=10 * 1024 * 1024
+
+# ============================================================
+# 买方库存风控决策配置 (BuyRisk)
+# ============================================================
+
+# === 适配现有"价格序列/库存"表的映射 ===
+# 价格 15m 表（必须）：如 AppleStockChecker.PurchasingShopTimeAnalysis
+BUY_RISK_PRICE_MODEL = "AppleStockChecker.PurchasingShopTimeAnalysis"
+BUY_RISK_PRICE_TIME_FIELD = "timestamp"           # DateTimeField/DateTimeTZ
+BUY_RISK_PRICE_VALUE_FIELD = "price_resale"       # Decimal/Float：收购价
+BUY_RISK_PRICE_SKU_FIELD = "sku"                  # Char/ForeignKey
+BUY_RISK_PRICE_WINDOW_DAYS = 7                    # 近 N 天用于 μ/σ 估计
+BUY_RISK_PRICE_STEP_MINUTES = 15                  # 采样步长（用于 τ→步数）
+
+# 库存（可选）：若你的项目已有库存表就填它；不填则用 buyrisk.InventoryLot
+BUY_RISK_INVENTORY_MODEL = None
+BUY_RISK_INVENTORY_SKU_FIELD = "sku"
+BUY_RISK_INVENTORY_COST_FIELD = "cost"
+BUY_RISK_INVENTORY_STATUS_FIELD = "status"
+BUY_RISK_INVENTORY_STATUS_VALUES = ["in_stock", "ready"]
+
+# SKU 列表（可选）：留空则从价格表 distinct 取
+BUY_RISK_SKUS = []
+
+# === 默认参数（无训练数据时启用；训练后会被模型参数覆盖）===
+BUY_RISK_DEFAULTS = {
+    "tau_hours": 2.0,           # 清货时长 τ
+    "q": 0.95,                  # 左尾分位
+    "alpha": 120.0,             # 卖-买固定价差
+    "beta": 1.0,                # 卖-买比例
+    "d_liq": 30.0,              # 极速清货折价
+    "cost_per_unit": 100.0,     # 单位成本
+    "min_margin": 150.0,        # 最小利润
+    "fx_buffer": 20.0,          # FX 缓冲
+    "i_star": 150.0,            # 目标库存
+    "lambda_I": 1.0,            # 库存惩罚（每超一件降价）
+    "b_ref": 3000.0,            # 供给曲线参考价
+    "lambda_ref": 6.0,          # 参考到货率（件/小时）
+    "b_elastic": 0.30,          # 每 +¥100 的指数弹性
+    "q_star": 12.0,             # 目标进货（件/小时）
+    "fx_sigma_daily": 0.008     # FX 日波动（无 FX 数据时）
+}
+
+# === Celery Beat 定时任务（已有 CELERY_BEAT_SCHEDULE 可追加）===
+# 注意：如果项目中已经定义了 CELERY_BEAT_SCHEDULE，需要合并而不是覆盖
+if 'CELERY_BEAT_SCHEDULE' not in locals():
+    CELERY_BEAT_SCHEDULE = {}
+
+CELERY_BEAT_SCHEDULE.update({
+    # 每 15 分钟跑一次全量 SKU 决策
+    "buyrisk_compute_all_skus_15m": {
+        "task": "buyrisk.tasks.compute_all_skus",
+        "schedule": 60 * 15,  # 15分钟
+    },
+    # 每日 03:30 训练
+    "buyrisk_train_daily": {
+        "task": "buyrisk.tasks.train_models_all_skus",
+        "schedule": 60 * 60 * 24,  # 每天一次，可配合 crontab
+    },
+    # 每日 04:10 覆盖率回测
+    "buyrisk_backtest_daily": {
+        "task": "buyrisk.tasks.backtest_coverage_all_skus",
+        "schedule": 60 * 60 * 24,  # 每天一次
+    },
+})
 
