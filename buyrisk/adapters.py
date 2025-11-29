@@ -11,6 +11,14 @@ def _get_model(model_path: str):
     return apps.get_model(app_label, model_name)
 
 
+def _sku_to_iphone_id(sku: str) -> int:
+    """
+    sku = str(iphone_id)
+    若未来改格式，可在这里解析
+    """
+    return int(sku)
+
+
 def fetch_price_series(sku: str) -> List[Tuple[int, float]]:
     """
     返回近 N 天的 (ts_ms, bid) 序列
@@ -18,10 +26,12 @@ def fetch_price_series(sku: str) -> List[Tuple[int, float]]:
     **重要变更**：现在读取市场层 30m 指数（MarketIphoneAgg30m）
     而不是原始价格表，这样得到的是跨门店稳健聚合的收购价指数。
 
-    这里的 bid = market 30m 指数的 bid_pref（优先 A，其次 B 再次 New）
+    这里的 bid = market 30m 指数的 bid_pref (= med_new，即中位数)
+
+    **SKU 映射**：sku 直接等于 str(iphone_id)
 
     Args:
-        sku: SKU 标识符
+        sku: SKU 标识符（实际上是 iphone_id 的字符串形式）
 
     Returns:
         列表，每个元素为 (时间戳毫秒, 市场收购价指数)
@@ -30,10 +40,11 @@ def fetch_price_series(sku: str) -> List[Tuple[int, float]]:
 
     days = getattr(settings, "BUY_RISK_PRICE_WINDOW_DAYS", 7)
     since = timezone.now() - timedelta(days=days)
+    iphone_id = _sku_to_iphone_id(sku)
 
-    # 直接从市场层30分钟聚合表读取
+    # 直接从市场层30分钟聚合表读取（通过 iphone_id）
     qs = (MarketIphoneAgg30m.objects
-          .filter(sku=sku, bin_start__gte=since)
+          .filter(iphone_id=iphone_id, bin_start__gte=since)
           .order_by("bin_start")
           .values_list("bin_start", "bid_pref"))
 
@@ -83,19 +94,21 @@ def fetch_inventory_costs(sku: str) -> List[float]:
 
 def list_skus() -> List[str]:
     """
-    优先从 settings.BUY_RISK_SKUS；否则从价格表 distinct 取
+    遍历所有可用的 iphone_id（以字符串形式返回）
+
+    优先从 settings.BUY_RISK_SKUS；否则从市场层聚合表获取所有 distinct 的 iphone_id
 
     Returns:
-        SKU 列表
+        SKU 列表（每个元素为 str(iphone_id)）
     """
     skus = getattr(settings, "BUY_RISK_SKUS", None)
     if skus:
         return list(skus)
 
-    model_path = getattr(settings, "BUY_RISK_PRICE_MODEL", None)
-    if not model_path:
-        return []
-
-    Model = _get_model(model_path)
-    sf = getattr(settings, "BUY_RISK_PRICE_SKU_FIELD", "sku")
-    return list(Model.objects.values_list(sf, flat=True).distinct())
+    # 从市场层聚合表获取所有不同的 iphone_id
+    from .models import MarketIphoneAgg30m
+    ids = (MarketIphoneAgg30m.objects
+           .order_by()
+           .values_list("iphone_id", flat=True)
+           .distinct())
+    return [str(i) for i in ids]

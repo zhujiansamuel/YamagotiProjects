@@ -237,7 +237,7 @@ class CoverageReport(models.Model):
 # ============================================================
 
 class ShopIphoneAgg30m(models.Model):
-    """门店层 30 分钟聚合（平滑）"""
+    """门店层 30 分钟聚合（平滑）- 仅 New_Product_Price"""
     # 外键引用 AppleStockChecker 的模型
     shop = models.ForeignKey(
         "AppleStockChecker.SecondHandShop",
@@ -253,10 +253,8 @@ class ShopIphoneAgg30m(models.Model):
     )
     bin_start = models.DateTimeField(verbose_name="30m时间桶起始", db_index=True)
 
-    # 30m 内该门店×iPhone的平滑均价（忽略空值）
+    # 30m 内该门店×iPhone的平滑均价（仅 New_Product_Price）
     avg_new = models.FloatField(null=True, blank=True, verbose_name="新品均价")
-    avg_a = models.FloatField(null=True, blank=True, verbose_name="A品均价")
-    avg_b = models.FloatField(null=True, blank=True, verbose_name="B品均价")
 
     # 统计辅助
     rec_cnt = models.IntegerField(default=0, verbose_name="记录条数")
@@ -285,8 +283,9 @@ class ShopIphoneAgg30m(models.Model):
 
 
 class MarketIphoneAgg30m(models.Model):
-    """市场层 30 分钟聚合（跨门店稳健指数）"""
-    sku = models.CharField(max_length=128, db_index=True, verbose_name="SKU")
+    """市场层 30 分钟聚合（跨门店稳健指数）- 仅 New_Product_Price"""
+    # sku 直接用 iphone_id 的字符串，便于沿用下游接口
+    sku = models.CharField(max_length=64, db_index=True, verbose_name="SKU (iphone_id)")
     iphone = models.ForeignKey(
         "AppleStockChecker.Iphone",
         on_delete=models.PROTECT,
@@ -295,17 +294,12 @@ class MarketIphoneAgg30m(models.Model):
     )
     bin_start = models.DateTimeField(verbose_name="30m时间桶起始", db_index=True)
 
-    # 跨门店稳健聚合：中位数/均值/截断均值（去掉两端各10%）
+    # 跨门店稳健聚合：中位数/均值/截断均值（仅 New_Product_Price）
     med_new = models.FloatField(null=True, blank=True, verbose_name="新品中位数")
-    med_a = models.FloatField(null=True, blank=True, verbose_name="A品中位数")
-    med_b = models.FloatField(null=True, blank=True, verbose_name="B品中位数")
     mean_new = models.FloatField(null=True, blank=True, verbose_name="新品均值")
-    mean_a = models.FloatField(null=True, blank=True, verbose_name="A品均值")
-    mean_b = models.FloatField(null=True, blank=True, verbose_name="B品均值")
-    tmean_a = models.FloatField(null=True, blank=True, verbose_name="A品截断均值")
-    tmean_b = models.FloatField(null=True, blank=True, verbose_name="B品截断均值")
+    tmean_new = models.FloatField(null=True, blank=True, verbose_name="新品截断均值")
 
-    # 供决策引擎直接读取的"首选报价"——优先 A，其次 B，再次 New
+    # 供决策引擎直接读取的"首选报价"（= med_new）
     bid_pref = models.FloatField(null=True, blank=True, verbose_name="首选报价")
 
     shops_included = models.IntegerField(default=0, verbose_name="包含门店数")

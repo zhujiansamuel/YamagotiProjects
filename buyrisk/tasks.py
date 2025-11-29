@@ -369,7 +369,7 @@ def aggregate_shop_30m():
 
     逻辑：
       group by (shop, iphone, bin_start)：
-        avg_new/avg_a/avg_b = 该桶内均值（忽略空值）
+        avg_new = 该桶内均值（仅 New_Product_Price，忽略空值）
         rec_cnt/min_ts/max_ts
     upsert 到 ShopIphoneAgg30m
 
@@ -394,26 +394,25 @@ def aggregate_shop_30m():
     qs = (PurchasingShopTimeAnalysis.objects
           .filter(Timestamp_Time__gte=since)
           .select_related("shop", "iphone")
-          .only("shop_id", "iphone_id", "Timestamp_Time",
-                "New_Product_Price", "Price_A", "Price_B"))
+          .only("shop_id", "iphone_id", "Timestamp_Time", "New_Product_Price"))
 
     # 先在 Python 侧做桶归并，避免跨数据库差异
     buckets = defaultdict(lambda: {
-        "new": [], "a": [], "b": [],
-        "min_ts": None, "max_ts": None
+        "vals": [],
+        "min_ts": None,
+        "max_ts": None
     })
 
     for rec in qs.iterator(chunk_size=5000):
+        v = rec.New_Product_Price
+        if v is None:  # 只看 New_Product_Price
+            continue
+
         bin_start = floor_to_30m(rec.Timestamp_Time)
         key = (rec.shop_id, rec.iphone_id, bin_start)
         b = buckets[key]
 
-        if rec.New_Product_Price is not None:
-            b["new"].append(float(rec.New_Product_Price))
-        if rec.Price_A is not None:
-            b["a"].append(float(rec.Price_A))
-        if rec.Price_B is not None:
-            b["b"].append(float(rec.Price_B))
+        b["vals"].append(float(v))
 
         if b["min_ts"] is None or rec.Timestamp_Time < b["min_ts"]:
             b["min_ts"] = rec.Timestamp_Time
@@ -423,10 +422,8 @@ def aggregate_shop_30m():
     # 写入/更新
     upserted = 0
     for (shop_id, iphone_id, bin_start), v in buckets.items():
-        avg_new = float(np.mean(v["new"])) if v["new"] else None
-        avg_a = float(np.mean(v["a"])) if v["a"] else None
-        avg_b = float(np.mean(v["b"])) if v["b"] else None
-        rec_cnt = len(v["new"]) + len(v["a"]) + len(v["b"])
+        avg_new = float(np.mean(v["vals"])) if v["vals"] else None
+        rec_cnt = len(v["vals"])
 
         ShopIphoneAgg30m.objects.update_or_create(
             shop_id=shop_id,
@@ -434,8 +431,6 @@ def aggregate_shop_30m():
             bin_start=bin_start,
             defaults=dict(
                 avg_new=avg_new,
-                avg_a=avg_a,
-                avg_b=avg_b,
                 rec_cnt=rec_cnt,
                 min_src_ts=v["min_ts"],
                 max_src_ts=v["max_ts"]
@@ -453,8 +448,8 @@ def aggregate_market_30m():
 
     逻辑：
       对每个 (iphone, bin_start)：
-        med_* / mean_* / trimmed mean(10%)
-        bid_pref = 优先 med_a，其次 med_b，再次 med_new
+        med_new / mean_new / tmean_new (10% 截断均值)
+        bid_pref = med_new
 
     Returns:
         聚合结果统计
@@ -462,33 +457,27 @@ def aggregate_market_30m():
     from collections import defaultdict
     import numpy as np
     from .models import ShopIphoneAgg30m, MarketIphoneAgg30m
-    from .aggregations import sku_from_iphone
 
     AGG_BACKFILL_DAYS = getattr(settings, "BUY_RISK_AGG_BACKFILL_DAYS", 3)
 
     since = timezone.now() - timedelta(days=AGG_BACKFILL_DAYS)
     qs = (ShopIphoneAgg30m.objects
           .filter(bin_start__gte=since)
-          .select_related("iphone")
-          .only("iphone_id", "bin_start", "avg_new", "avg_a", "avg_b", "iphone"))
+          .only("iphone_id", "bin_start", "avg_new", "shop_id"))
 
     # 收集 -> 聚合
     groups = defaultdict(lambda: {
-        "new": [], "a": [], "b": [],
-        "iphone": None
+        "vals": [],
+        "shop_ids": set()
     })
 
     for r in qs.iterator(chunk_size=5000):
         key = (r.iphone_id, r.bin_start)
         g = groups[key]
-        g["iphone"] = r.iphone  # 保存对象供生成 sku
 
         if r.avg_new is not None:
-            g["new"].append(float(r.avg_new))
-        if r.avg_a is not None:
-            g["a"].append(float(r.avg_a))
-        if r.avg_b is not None:
-            g["b"].append(float(r.avg_b))
+            g["vals"].append(float(r.avg_new))
+            g["shop_ids"].add(r.shop_id)
 
     def _tmean(arr, trim=0.1):
         """截断均值：去掉两端各 trim 比例的数据"""
@@ -501,28 +490,25 @@ def aggregate_market_30m():
 
     upserts = 0
     for (iphone_id, bin_start), g in groups.items():
+        vals = g["vals"]
+        if not vals:
+            continue
+
         # 中位数
-        med_new = float(np.median(g["new"])) if g["new"] else None
-        med_a = float(np.median(g["a"])) if g["a"] else None
-        med_b = float(np.median(g["b"])) if g["b"] else None
-
+        med_new = float(np.median(vals))
         # 均值
-        mean_new = float(np.mean(g["new"])) if g["new"] else None
-        mean_a = float(np.mean(g["a"])) if g["a"] else None
-        mean_b = float(np.mean(g["b"])) if g["b"] else None
-
+        mean_new = float(np.mean(vals))
         # 截断均值
-        tmean_a = _tmean(g["a"])
-        tmean_b = _tmean(g["b"])
+        tmean_new = _tmean(vals)
 
-        # 首选报价：优先 A，其次 B，再次新机
-        bid_pref = med_a or med_b or med_new
+        # 首选报价 = 中位数
+        bid_pref = med_new
 
-        # 生成 SKU
-        sku = sku_from_iphone(g["iphone"]) if g["iphone"] else str(iphone_id)
+        # sku 直接用 iphone_id 的字符串
+        sku = str(iphone_id)
 
-        # 门店数（近似）
-        shops_included = len(set(g["a"] + g["b"] + g["new"]))
+        # 门店数
+        shops_included = len(g["shop_ids"])
 
         MarketIphoneAgg30m.objects.update_or_create(
             iphone_id=iphone_id,
@@ -530,13 +516,8 @@ def aggregate_market_30m():
             defaults=dict(
                 sku=sku,
                 med_new=med_new,
-                med_a=med_a,
-                med_b=med_b,
                 mean_new=mean_new,
-                mean_a=mean_a,
-                mean_b=mean_b,
-                tmean_a=tmean_a,
-                tmean_b=tmean_b,
+                tmean_new=tmean_new,
                 bid_pref=bid_pref,
                 shops_included=shops_included
             )

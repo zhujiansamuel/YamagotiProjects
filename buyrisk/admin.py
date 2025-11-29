@@ -125,7 +125,7 @@ class CoverageReportAdmin(admin.ModelAdmin):
 class ShopIphoneAgg30mAdmin(admin.ModelAdmin):
     list_display = [
         'shop', 'iphone', 'bin_start',
-        'avg_new', 'avg_a', 'avg_b', 'rec_cnt'
+        'avg_new', 'rec_cnt'
     ]
     list_filter = ['bin_start', 'shop']
     search_fields = ['shop__name', 'iphone__model_name']
@@ -137,8 +137,8 @@ class ShopIphoneAgg30mAdmin(admin.ModelAdmin):
         ('基本信息', {
             'fields': ('shop', 'iphone', 'bin_start')
         }),
-        ('聚合价格', {
-            'fields': ('avg_new', 'avg_a', 'avg_b')
+        ('聚合价格（仅新品）', {
+            'fields': ('avg_new',)
         }),
         ('统计信息', {
             'fields': ('rec_cnt', 'min_src_ts', 'max_src_ts', 'updated_at')
@@ -149,8 +149,8 @@ class ShopIphoneAgg30mAdmin(admin.ModelAdmin):
 @admin.register(MarketIphoneAgg30m)
 class MarketIphoneAgg30mAdmin(admin.ModelAdmin):
     list_display = [
-        'sku', 'bin_start', 'bid_pref',
-        'med_a', 'med_b', 'shops_included'
+        'sku', 'iphone', 'bin_start', 'bid_pref',
+        'med_new', 'shops_included'
     ]
     list_filter = ['bin_start']
     search_fields = ['sku', 'iphone__model_name']
@@ -162,14 +162,8 @@ class MarketIphoneAgg30mAdmin(admin.ModelAdmin):
         ('基本信息', {
             'fields': ('sku', 'iphone', 'bin_start', 'bid_pref')
         }),
-        ('中位数', {
-            'fields': ('med_new', 'med_a', 'med_b')
-        }),
-        ('均值', {
-            'fields': ('mean_new', 'mean_a', 'mean_b')
-        }),
-        ('截断均值', {
-            'fields': ('tmean_a', 'tmean_b')
+        ('市场指数（仅新品）', {
+            'fields': ('med_new', 'mean_new', 'tmean_new')
         }),
         ('统计信息', {
             'fields': ('shops_included', 'updated_at')

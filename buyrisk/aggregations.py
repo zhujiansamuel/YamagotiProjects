@@ -30,35 +30,19 @@ def floor_to_30m(dt):
 
 def sku_from_iphone(iphone_obj):
     """
-    把 iPhone 实体转成 '机型-容量-颜色' 的逻辑 SKU 字符串
+    **简化版**：sku 直接等于 iphone_id
+
+    把 iPhone 实体转成 SKU 字符串（就是 iphone_id）
 
     Args:
         iphone_obj: iPhone 模型实例
 
     Returns:
-        SKU 字符串，格式：model-capacity-color
+        SKU 字符串（= str(iphone_id)）
 
     Examples:
-        >>> iphone = Iphone(model_name="iPhone 15 Pro", storage_gb=256, color="Natural Titanium")
+        >>> iphone = Iphone(id=123)
         >>> sku_from_iphone(iphone)
-        'iphone-15-pro-256g-natural-titanium'
+        '123'
     """
-    # 尝试多种可能的字段名
-    model = getattr(iphone_obj, "model", None) or \
-            getattr(iphone_obj, "model_name", None) or \
-            getattr(iphone_obj, "name", "unknown")
-
-    # 容量字段
-    cap = getattr(iphone_obj, "capacity_gb", None) or \
-          getattr(iphone_obj, "storage_gb", None) or \
-          getattr(iphone_obj, "storage", "na")
-
-    # 颜色字段
-    color = getattr(iphone_obj, "color", None) or \
-            getattr(iphone_obj, "colour", "na")
-
-    # 生成 SKU（小写，替换空格为短横线）
-    sku = f"{model}-{cap}g-{color}"
-    sku = sku.lower().replace(" ", "-").replace("_", "-")
-
-    return sku
+    return str(iphone_obj.id if hasattr(iphone_obj, 'id') else iphone_obj.pk)
