@@ -4,6 +4,11 @@
     <meta charset="utf-8"/>
     <title>AutoML Analysis Dashboard</title>
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
+
+    <!-- MathJax for LaTeX rendering -->
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+
     <style>
         :root {
             --primary-color: #3b82f6;
@@ -26,6 +31,7 @@
             background-color: var(--bg-color);
             color: var(--text-primary);
             padding: 20px;
+            line-height: 1.6;
         }
 
         .container {
@@ -133,6 +139,7 @@
             padding: 24px;
             border-radius: 12px;
             box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            margin-bottom: 24px;
         }
 
         .results-section h2 {
@@ -202,6 +209,73 @@
             color: var(--text-secondary);
         }
 
+        /* Mathematical Model Section Styles */
+        .math-section {
+            background: var(--card-bg);
+            padding: 32px;
+            border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            margin-bottom: 24px;
+        }
+
+        .math-section h2 {
+            font-size: 28px;
+            margin-bottom: 24px;
+            color: var(--text-primary);
+            border-bottom: 3px solid var(--primary-color);
+            padding-bottom: 12px;
+        }
+
+        .math-section h3 {
+            font-size: 22px;
+            margin-top: 32px;
+            margin-bottom: 16px;
+            color: var(--primary-color);
+        }
+
+        .math-section h4 {
+            font-size: 18px;
+            margin-top: 24px;
+            margin-bottom: 12px;
+            color: var(--secondary-color);
+        }
+
+        .math-section p {
+            margin-bottom: 16px;
+            line-height: 1.8;
+        }
+
+        .math-section ul {
+            margin-left: 24px;
+            margin-bottom: 16px;
+        }
+
+        .math-section li {
+            margin-bottom: 8px;
+        }
+
+        .formula-block {
+            background: #f8fafc;
+            border-left: 4px solid var(--primary-color);
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            overflow-x: auto;
+        }
+
+        .highlight-box {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(139, 92, 246, 0.1));
+            border: 2px solid var(--primary-color);
+            border-radius: 12px;
+            padding: 24px;
+            margin: 24px 0;
+        }
+
+        .highlight-box h4 {
+            margin-top: 0;
+            color: var(--primary-color);
+        }
+
         @media (max-width: 768px) {
             .image-grid {
                 grid-template-columns: 1fr;
@@ -214,6 +288,18 @@
             header h1 {
                 font-size: 24px;
             }
+
+            .math-section {
+                padding: 20px;
+            }
+
+            .math-section h2 {
+                font-size: 24px;
+            }
+
+            .math-section h3 {
+                font-size: 20px;
+            }
         }
     </style>
 </head>
@@ -221,7 +307,7 @@
     <div class="container">
         <header>
             <h1>AutoML Analysis Dashboard</h1>
-            <p>Machine Learning and Deep Learning Results Visualization</p>
+            <p>Machine Learning and Deep Learning Results Visualization - 多店铺×多机种×时间的因果分析系统</p>
         </header>
 
         <div class="controls">
@@ -239,6 +325,228 @@
                 <button class="task-button" onclick="triggerTask('quantification-of-impact')">
                     📊 Quantification of Impact
                 </button>
+            </div>
+        </div>
+
+        <!-- Mathematical Model Description -->
+        <div class="math-section">
+            <h2>📐 数学模型：多店铺 × 多机种 × 时间的因果分析框架</h2>
+
+            <p>本系统采用统一的数学符号体系来描述"多店铺 × 多机种 × 时间"的价格动态，支持因果分析、VAR建模和特征工程。</p>
+
+            <h3>1. 索引与集合</h3>
+
+            <h4>店铺集合</h4>
+            <div class="formula-block">
+                $$\mathcal{S} = \{1,2,\dots,S\}, \quad s \in \mathcal{S}$$
+            </div>
+            <p>例如：海峡通信、アキモバ、買取一丁目、森森買取 等。</p>
+
+            <h4>机种/型号集合（精细到型号×容量×颜色的SKU）</h4>
+            <div class="formula-block">
+                $$\mathcal{P} = \{1,2,\dots,P\}, \quad p \in \mathcal{P}$$
+            </div>
+            <p>对应数据库里的 Iphone / part_number 或 "model × capacity × color" 唯一组合。</p>
+
+            <h4>离散时间（分钟级bucket）</h4>
+            <div class="formula-block">
+                $$\mathcal{T} = \{\dots, t-1, t, t+1, \dots\}, \quad t \in \mathbb{Z}$$
+            </div>
+            <p>等间隔时间点（每1分钟、每15分钟），系统中为JST对齐后的 bucket_start_ts。</p>
+
+            <h3>2. 原始观测数据：多维张量表示</h3>
+
+            <p>对每一个「店铺 \(s\) × 机种 \(p\) × 时间 \(t\)」，观测到多个变量：</p>
+
+            <h4>价格（回收价）</h4>
+            <div class="formula-block">
+                $$P_{s,p,t} \in \mathbb{R}_{+}$$
+            </div>
+
+            <h4>可用库存数量（可选）</h4>
+            <div class="formula-block">
+                $$Q_{s,p,t} \in \mathbb{N}_0$$
+            </div>
+
+            <h4>其他属性特征向量</h4>
+            <div class="formula-block">
+                $$\mathbf{F}_{s,p,t} \in \mathbb{R}^{K}$$
+            </div>
+
+            <p>整体上有一个三维（甚至四维）张量：</p>
+            <div class="formula-block">
+                $$\mathbf{X}_t = \left\{ X_{s,p,t} \right\}_{s \in \mathcal{S},\, p \in \mathcal{P}}$$
+            </div>
+
+            <p>其中每个元素 \(X_{s,p,t}\) 是一个特征向量：</p>
+            <div class="formula-block">
+                $$X_{s,p,t} = \big(P_{s,p,t}, Q_{s,p,t}, \mathbf{F}_{s,p,t}\big) \in \mathbb{R}^{1+1+K}$$
+            </div>
+
+            <div class="highlight-box">
+                <h4>💡 直观理解</h4>
+                <p>每个时间 \(t\)，有一个 "店 × 机种" 的大表格，格子里放的是这个店对这个机种的各种数值特征。</p>
+            </div>
+
+            <h3>3. 数据清洗与对齐（对应PSTA模型）</h3>
+
+            <h4>3.1 清洗（去异常）</h4>
+            <p>定义清洗算子 \(C(\cdot)\)：</p>
+            <div class="formula-block">
+                $$\tilde{P}_{s,p,t} = C\big(P_{s,p,t}\big)$$
+            </div>
+            <ul>
+                <li>若 \(P_{s,p,t} < 10000\) 或 \(P_{s,p,t} > 350000\) 则标记为缺失或丢弃</li>
+                <li>否则保留原值</li>
+            </ul>
+
+            <h4>3.2 时间对齐（bucket化）</h4>
+            <p>PSTA对同一时间bucket内的记录做聚合：</p>
+            <div class="formula-block">
+                $$\bar{P}_{s,p,t} = \operatorname{Agg}\big(\{\tilde{P}_{s,p,\tau}\ |\ \tau \in \text{bucket}(t)\}\big)$$
+            </div>
+            <p>其中：</p>
+            <ul>
+                <li>\(\text{bucket}(t)\) 是落在该时间桶内的原始时间点集合</li>
+                <li>\(\operatorname{Agg}(\cdot)\) 可以是平均值、加权平均、中位数等</li>
+            </ul>
+
+            <p>得到对齐后（时间桶级）的主价格序列：</p>
+            <div class="formula-block">
+                $$\bar{P}_{s,p,t}, \quad t \in \mathcal{T}$$
+            </div>
+
+            <h3>4. 平稳化与标准化：价格变化过程</h3>
+
+            <h4>4.1 对数与差分</h4>
+            <p>为处理比例变化、消除趋势，先取对数：</p>
+            <div class="formula-block">
+                $$Y_{s,p,t} = \log \bar{P}_{s,p,t}$$
+            </div>
+
+            <p>然后在时间上做一阶差分得到"涨跌幅"：</p>
+            <div class="formula-block">
+                $$\Delta Y_{s,p,t} = Y_{s,p,t} - Y_{s,p,t-1}$$
+            </div>
+            <p>这是一个平稳时间序列近似，代表在 \(t\) 时刻相对于 \(t-1\) 的价格变化（以log形式）。</p>
+
+            <h4>4.2 Z-score标准化（跨店、跨机种可比）</h4>
+            <p>为了让不同店、不同机种的序列在同一数值尺度上进行因果和VAR分析，对 \(\Delta Y_{s,p,t}\) 做标准化。</p>
+
+            <p>定义在时间窗口 \(\mathcal{T}_0\) 上的均值和标准差：</p>
+            <div class="formula-block">
+                $$\mu_{s,p} = \mathbb{E}_{t \in \mathcal{T}_0}[\Delta Y_{s,p,t}], \qquad
+\sigma_{s,p} = \operatorname{Std}_{t \in \mathcal{T}_0}[\Delta Y_{s,p,t}]$$
+            </div>
+
+            <p>然后计算标准化变量：</p>
+            <div class="formula-block">
+                $$Z_{s,p,t} = \frac{\Delta Y_{s,p,t} - \mu_{s,p}}{\sigma_{s,p}}$$
+            </div>
+
+            <div class="highlight-box">
+                <h4>🎯 关键变量</h4>
+                <p>\(Z_{s,p,t}\) 是进行因果分析、建VAR模型、学习图结构时的<strong>主工作变量</strong>。</p>
+            </div>
+
+            <h3>5. 按机种聚合：跨店的向量时间序列</h3>
+
+            <p>对每一个机种 \(p \in \mathcal{P}\)，整理出一个"跨店向量"序列：</p>
+            <div class="formula-block">
+                $$\mathbf{z}_{p,t} =
+\begin{bmatrix}
+Z_{1,p,t} \\
+Z_{2,p,t} \\
+\vdots \\
+Z_{S,p,t}
+\end{bmatrix}
+\in \mathbb{R}^{S}, \quad t \in \mathcal{T}$$
+            </div>
+
+            <p>这表示：在时间 \(t\) 时刻，对机种 \(p\) 来说，所有店铺在这一刻的"标准化价格变化"组成一个 \(S\) 维向量。</p>
+
+            <p>于是对于每一个机种 \(p\)，有一个多变量时间序列：</p>
+            <div class="formula-block">
+                $$\{\mathbf{z}_{p,t}\}_{t \in \mathcal{T}}$$
+            </div>
+
+            <p>这将直接作为：</p>
+            <ul>
+                <li>VAR / SVAR 模型的输入</li>
+                <li>Granger 因果测试的输入</li>
+                <li>动态因果图（DAG）的学习输入</li>
+            </ul>
+
+            <h3>6. 结构模型（以VAR为例）</h3>
+
+            <p>对固定机种 \(p\)，一个标准的 VAR(\(L\)) 模型可以写成：</p>
+            <div class="formula-block">
+                $$\mathbf{z}_{p,t}
+=
+A^{(p)}_1 \mathbf{z}_{p,t-1}
++ A^{(p)}_2 \mathbf{z}_{p,t-2}
++ \dots
++ A^{(p)}_L \mathbf{z}_{p,t-L}
++ \boldsymbol{\varepsilon}_{p,t}$$
+            </div>
+
+            <p>其中：</p>
+            <ul>
+                <li>\(\mathbf{z}_{p,t} \in \mathbb{R}^S\)：机种 \(p\) 在时间 \(t\) 的跨店价格变化向量</li>
+                <li>\(A^{(p)}_\ell \in \mathbb{R}^{S \times S}\)：滞后 \(\ell\) 对应的影响矩阵</li>
+                <li>\(\boldsymbol{\varepsilon}_{p,t} \sim \mathcal{N}(0, \Sigma_p)\)：噪声项</li>
+            </ul>
+
+            <div class="highlight-box">
+                <h4>📊 解释</h4>
+                <ul>
+                    <li>\(A^{(p)}_\ell(i,j)\) 表示：在机种 \(p\) 上，店 \(j\) 在时间 \(t-\ell\) 的价格变化，对店 \(i\) 在时间 \(t\) 的价格变化的线性影响强度</li>
+                    <li>若 \(A^{(p)}_\ell(i,j)\) 在统计上显著非零，可以解释为"店 \(j\) 的变化（在滞后 \(\ell\)）Granger因果地影响店 \(i\)"</li>
+                </ul>
+            </div>
+
+            <p>可以对每个机种 \(p\) 估计一整套矩阵 \(A^{(p)}_{1..L}\)，也可以把多机种拼成更大的块结构模型。</p>
+
+            <h3>7. 因果图表示（跨店、跨机种）</h3>
+
+            <p>可以把上面的VAR参数或Granger结果转化为一个有向图：</p>
+
+            <h4>图的节点</h4>
+            <p>可以是「店铺维度」或「店铺 × 机种维度」：</p>
+            <div class="formula-block">
+                $$\mathcal{V} = \{(s,p)\ |\ s \in \mathcal{S}, p \in \mathcal{P}\}$$
+            </div>
+
+            <h4>有向边</h4>
+            <div class="formula-block">
+                $$(s',p) \to (s,p)$$
+            </div>
+            <p>若存在某个滞后 \(\ell\)，使得在机种 \(p\) 上的VAR中 \(A^{(p)}_\ell(s, s')\) 显著非零。</p>
+
+            <p>这样可以构造出一个<strong>"市场因果网络"</strong>：</p>
+            <ul>
+                <li>哪些店是 <strong>price leader</strong>（出度大、影响强）</li>
+                <li>哪些店是 <strong>follower</strong>（入度大）</li>
+                <li>不同机种 \(p\) 上的结构是否不同</li>
+            </ul>
+
+            <h3>8. 总结</h3>
+
+            <div class="highlight-box">
+                <h4>🎯 核心概述</h4>
+                <p>本系统处理一个三维时间序列：</p>
+                <div class="formula-block">
+                    $$\big\{X_{s,p,t}\big\}_{s \in \mathcal{S},\, p \in \mathcal{P},\, t \in \mathcal{T}}$$
+                </div>
+                <p>其中 \(X_{s,p,t}\) 主要包含价格 \(P_{s,p,t}\) 等特征。</p>
+
+                <p><strong>处理流程：</strong></p>
+                <ol>
+                    <li>清洗、时间对齐、差分与标准化 → 得到平稳的价格变化过程 \(Z_{s,p,t}\)</li>
+                    <li>按机种 \(p\) 组织成跨店向量时间序列 \(\mathbf{z}_{p,t}\)</li>
+                    <li>构建 VAR / 因果模型</li>
+                    <li>学习和分析店铺之间随时间演化的因果结构与价格传导关系</li>
+                </ol>
             </div>
         </div>
 

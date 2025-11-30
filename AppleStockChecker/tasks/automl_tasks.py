@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-AutoML Celery Tasks - 三阶段因果分析 Pipeline
-机器学习和深度学习分析任务
+AutoML Celery Tasks - 三阶段因果分析 Pipeline (GPU Accelerated)
+机器学习和深度学习分析任务 - 支持 GPU 加速与自动降级
 """
 from __future__ import annotations
 from celery import shared_task
@@ -11,7 +11,27 @@ import pandas as pd
 import numpy as np
 import logging
 
+# 导入 GPU 工具模块
+from AppleStockChecker.utils.gpu_utils import (
+    check_gpu_availability,
+    get_array_module,
+    to_cpu,
+    to_gpu,
+    ensure_cpu_for_pandas,
+    get_gpu_memory_info,
+)
+
 logger = logging.getLogger(__name__)
+
+# 在任务模块加载时检查 GPU
+logger.info("Checking GPU availability for AutoML tasks...")
+GPU_AVAILABLE = check_gpu_availability()
+if GPU_AVAILABLE:
+    logger.info("✓ GPU acceleration enabled for AutoML pipeline")
+    mem_info = get_gpu_memory_info()
+    logger.info(f"  GPU Memory: {mem_info['free_gb']:.2f} GB free / {mem_info['total_gb']:.2f} GB total")
+else:
+    logger.info("✗ GPU not available, using CPU for AutoML pipeline")
 
 
 # ============================================================================
@@ -159,9 +179,30 @@ def run_preprocessing_for_job(self, job_id: int):
               .agg(price=("price", "mean"))
         )
 
-        # 7) 计算 log_price / dlog / z-score
+        # 7) 计算 log_price / dlog / z-score (GPU 加速)
         df_agg = df_agg.sort_values(["shop_id", "bucket_ts"])
-        df_agg["log_price"] = np.log(df_agg["price"])
+
+        try:
+            # 尝试使用 GPU 加速 numpy 运算
+            if GPU_AVAILABLE:
+                logger.info(f"[Job {job_id}] Using GPU for preprocessing calculations")
+
+                # 转换到 GPU
+                xp = get_array_module()
+                prices_gpu = to_gpu(df_agg["price"].values)
+
+                # GPU 加速的 log 运算
+                log_prices_gpu = xp.log(prices_gpu)
+                df_agg["log_price"] = ensure_cpu_for_pandas(log_prices_gpu)
+            else:
+                # CPU 版本
+                df_agg["log_price"] = np.log(df_agg["price"])
+
+        except Exception as e:
+            logger.warning(f"[Job {job_id}] GPU calculation failed: {e}, falling back to CPU")
+            df_agg["log_price"] = np.log(df_agg["price"])
+
+        # diff 运算（pandas groupby，保持在 CPU）
         df_agg["dlog_price"] = df_agg.groupby("shop_id", group_keys=False)["log_price"].diff()
 
         # 计算每个店铺的均值和标准差
@@ -173,9 +214,29 @@ def run_preprocessing_for_job(self, job_id: int):
         )
         df_agg = df_agg.join(stats, on="shop_id")
 
-        # 标准化
-        df_agg["z_dlog_price"] = (df_agg["dlog_price"] - df_agg["dlog_mean"]) / df_agg["dlog_std"]
-        df_agg.loc[df_agg["dlog_std"] == 0, "z_dlog_price"] = 0.0
+        # 标准化 (GPU 加速)
+        try:
+            if GPU_AVAILABLE:
+                xp = get_array_module()
+
+                # 转换到 GPU
+                dlog_gpu = to_gpu(df_agg["dlog_price"].fillna(0).values)
+                mean_gpu = to_gpu(df_agg["dlog_mean"].fillna(0).values)
+                std_gpu = to_gpu(df_agg["dlog_std"].fillna(1).values)
+
+                # GPU 加速的标准化
+                z_dlog_gpu = (dlog_gpu - mean_gpu) / xp.where(std_gpu > 0, std_gpu, 1.0)
+                df_agg["z_dlog_price"] = ensure_cpu_for_pandas(z_dlog_gpu)
+                df_agg.loc[df_agg["dlog_std"] == 0, "z_dlog_price"] = 0.0
+            else:
+                # CPU 版本
+                df_agg["z_dlog_price"] = (df_agg["dlog_price"] - df_agg["dlog_mean"]) / df_agg["dlog_std"]
+                df_agg.loc[df_agg["dlog_std"] == 0, "z_dlog_price"] = 0.0
+
+        except Exception as e:
+            logger.warning(f"[Job {job_id}] GPU normalization failed: {e}, falling back to CPU")
+            df_agg["z_dlog_price"] = (df_agg["dlog_price"] - df_agg["dlog_mean"]) / df_agg["dlog_std"]
+            df_agg.loc[df_agg["dlog_std"] == 0, "z_dlog_price"] = 0.0
 
         # 8) 写入 AutomlPreprocessedSeries（幂等：先删旧、再写新）
         with transaction.atomic():
@@ -260,6 +321,14 @@ def run_var_for_job(self, job_id: int):
         raise ImportError("Please install statsmodels: pip install statsmodels")
 
     logger.info(f"[Job {job_id}] Starting VAR modeling...")
+
+    # 记录 GPU 状态
+    if GPU_AVAILABLE:
+        mem_info = get_gpu_memory_info()
+        logger.info(
+            f"[Job {job_id}] GPU Memory: {mem_info['free_gb']:.2f} GB free, "
+            f"Utilization: {mem_info['utilization']*100:.1f}%"
+        )
 
     job = AutomlCausalJob.objects.select_for_update().get(pk=job_id)
 
@@ -393,6 +462,14 @@ def run_impact_for_job(self, job_id: int):
 
     logger.info(f"[Job {job_id}] Starting Impact quantification (Granger)...")
 
+    # 记录 GPU 状态
+    if GPU_AVAILABLE:
+        mem_info = get_gpu_memory_info()
+        logger.info(
+            f"[Job {job_id}] GPU Memory: {mem_info['free_gb']:.2f} GB free, "
+            f"Utilization: {mem_info['utilization']*100:.1f}%"
+        )
+
     job = AutomlCausalJob.objects.select_for_update().get(pk=job_id)
 
     if job.cause_effect_status != AutomlCausalJob.StageStatus.SUCCESS:
@@ -428,6 +505,21 @@ def run_impact_for_job(self, job_id: int):
 
         logger.info(f"[Job {job_id}] Running Granger tests for {len(shop_ids)} shops (maxlag={maxlag})")
 
+        # 预先计算 VAR 系数（GPU 加速）
+        coefs_array = np.array(var_model.coefs["data"])
+        if GPU_AVAILABLE:
+            try:
+                logger.info(f"[Job {job_id}] Loading VAR coefficients to GPU for weight calculation")
+                xp = get_array_module()
+                coefs_gpu = to_gpu(coefs_array)
+            except Exception as e:
+                logger.warning(f"[Job {job_id}] Failed to load coefficients to GPU: {e}, using CPU")
+                coefs_gpu = coefs_array
+                xp = np
+        else:
+            coefs_gpu = coefs_array
+            xp = np
+
         granger_rows = []
         edges_rows = []
 
@@ -442,6 +534,7 @@ def run_impact_for_job(self, job_id: int):
                     continue
 
                 try:
+                    # Granger 检验（statsmodels，保持在 CPU）
                     res = grangercausalitytests(data, maxlag=maxlag, verbose=False)
                     pvalues_by_lag = {}
                     min_p = 1.0
@@ -470,11 +563,22 @@ def run_impact_for_job(self, job_id: int):
                     )
 
                     if is_sig:
-                        # 计算权重：VAR 系数的绝对值总和
-                        coefs = np.array(var_model.coefs["data"])
+                        # 计算权重：VAR 系数的绝对值总和（GPU 加速）
                         idx_cause = shop_ids.index(cause)
                         idx_effect = shop_ids.index(effect)
-                        weight = float(np.abs(coefs[:, idx_effect, idx_cause]).sum())
+
+                        try:
+                            if GPU_AVAILABLE and hasattr(coefs_gpu, 'get'):
+                                # GPU 版本
+                                weight_gpu = xp.abs(coefs_gpu[:, idx_effect, idx_cause]).sum()
+                                weight = float(ensure_cpu_for_pandas(weight_gpu))
+                            else:
+                                # CPU 版本
+                                weight = float(xp.abs(coefs_gpu[:, idx_effect, idx_cause]).sum())
+                        except Exception as e:
+                            logger.warning(f"[Job {job_id}] GPU weight calculation failed: {e}, using CPU")
+                            weight = float(np.abs(coefs_array[:, idx_effect, idx_cause]).sum())
+
                         confidence = max(0.0, min(1.0, 1.0 - min_p))
 
                         edges_rows.append(
