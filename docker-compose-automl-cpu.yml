@@ -1,0 +1,360 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 20s
+      timeout: 15s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  db:
+    image: postgres:16
+    env_file: .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 9s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    environment:
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
+      - POOL_MODE=session
+      - DEFAULT_POOL_SIZE=200
+      - MAX_CLIENT_CONN=2000
+      - QUERY_WAIT_TIMEOUT=6000
+      - IGNORE_STARTUP_PARAMETERS=extra_float_digits,options
+    ports:
+      - "6432:5432"
+    depends_on:
+      - db
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    image: apple-web-cpu:latest
+    env_file: .env
+    environment:
+      - USE_PGBOUNCER=1
+      - PGBOUNCER_HOST=pgbouncer
+      - PGBOUNCER_PORT=5432
+      - PGBOUNCER_DATABASE=${POSTGRES_DB}
+      - PGBOUNCER_USER=${POSTGRES_USER}
+      - PGBOUNCER_PASSWORD=${POSTGRES_PASSWORD}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_URL_RESULT=redis://redis:6379/1
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    command:
+      - bash
+      - -lc
+      - >
+        python manage.py collectstatic --noinput &&
+        python manage.py makemigrations &&
+        python manage.py migrate &&
+        daphne -b 0.0.0.0 -p 8000 YamagotiProjects.asgi:application
+    expose: ["8000"]
+    volumes:
+      - static_data:/app/staticfiles
+      - media_data:/app/media
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket;s=socket.socket();s.settimeout(2);s.connect(('127.0.0.1',8000));print('ok')"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  worker_webscraper:
+    image: apple-web-cpu:latest
+    container_name: apple-worker-webscraper
+    command: ["celery", "-A", "YamagotiProjects", "worker", "-Q", "webscraper", "-l", "info", "-c", "12"]
+    depends_on:
+      - db
+      - pgbouncer
+      - redis
+    env_file: .env
+    environment:
+      - USE_PGBOUNCER=1
+      - PGBOUNCER_HOST=pgbouncer
+      - PGBOUNCER_PORT=5432
+      - PGBOUNCER_DATABASE=${POSTGRES_DB}
+      - PGBOUNCER_USER=${POSTGRES_USER}
+      - PGBOUNCER_PASSWORD=${POSTGRES_PASSWORD}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    restart: unless-stopped
+
+  worker:
+    image: apple-web-cpu:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    env_file: .env
+    environment:
+      - USE_PGBOUNCER=1
+      - PGBOUNCER_HOST=pgbouncer
+      - PGBOUNCER_PORT=5432
+      - PGBOUNCER_DATABASE=${POSTGRES_DB}
+      - PGBOUNCER_USER=${POSTGRES_USER}
+      - PGBOUNCER_PASSWORD=${POSTGRES_PASSWORD}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    command: ["celery", "-A", "YamagotiProjects", "worker", "-l", "info", "-P", "threads", "--concurrency=8","--max-tasks-per-child=200"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ============================================================================
+  # AutoML CPU Workers - 三阶段因果分析专用队列（CPU 模式）
+  # ============================================================================
+
+  # Stage 1: Preprocessing-Rapid (预处理) - CPU 模式
+  worker_automl_preprocessing:
+    image: apple-web-cpu:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    container_name: apple-worker-automl-preprocessing
+    command: ["celery", "-A", "YamagotiProjects", "worker", "-Q", "automl_preprocessing", "-l", "info", "-c", "2", "--max-tasks-per-child=50"]
+    env_file: .env
+    environment:
+      - USE_PGBOUNCER=1
+      - PGBOUNCER_HOST=pgbouncer
+      - PGBOUNCER_PORT=5432
+      - PGBOUNCER_DATABASE=${POSTGRES_DB}
+      - PGBOUNCER_USER=${POSTGRES_USER}
+      - PGBOUNCER_PASSWORD=${POSTGRES_PASSWORD}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_started
+    restart: unless-stopped
+
+  # Stage 2: Cause-and-Effect-Testing (VAR 建模) - CPU 模式
+  worker_automl_cause_effect:
+    image: apple-web-cpu:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    container_name: apple-worker-automl-cause-effect
+    command: ["celery", "-A", "YamagotiProjects", "worker", "-Q", "automl_cause_effect", "-l", "info", "-c", "2", "--max-tasks-per-child=50"]
+    env_file: .env
+    environment:
+      - USE_PGBOUNCER=1
+      - PGBOUNCER_HOST=pgbouncer
+      - PGBOUNCER_PORT=5432
+      - PGBOUNCER_DATABASE=${POSTGRES_DB}
+      - PGBOUNCER_USER=${POSTGRES_USER}
+      - PGBOUNCER_PASSWORD=${POSTGRES_PASSWORD}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_started
+    restart: unless-stopped
+
+  # Stage 3: Quantification-of-Impact (影响量化) - CPU 模式
+  worker_automl_impact:
+    image: apple-web-cpu:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    container_name: apple-worker-automl-impact
+    command: ["celery", "-A", "YamagotiProjects", "worker", "-Q", "automl_impact", "-l", "info", "-c", "2", "--max-tasks-per-child=50"]
+    env_file: .env
+    environment:
+      - USE_PGBOUNCER=1
+      - PGBOUNCER_HOST=pgbouncer
+      - PGBOUNCER_PORT=5432
+      - PGBOUNCER_DATABASE=${POSTGRES_DB}
+      - PGBOUNCER_USER=${POSTGRES_USER}
+      - PGBOUNCER_PASSWORD=${POSTGRES_PASSWORD}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_started
+    restart: unless-stopped
+
+  beat:
+    image: apple-web-cpu:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    env_file: .env
+    environment:
+      - USE_PGBOUNCER=1
+      - PGBOUNCER_HOST=pgbouncer
+      - PGBOUNCER_PORT=5432
+      - PGBOUNCER_DATABASE=${POSTGRES_DB}
+      - PGBOUNCER_USER=${POSTGRES_USER}
+      - PGBOUNCER_PASSWORD=${POSTGRES_PASSWORD}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    command: ["celery", "-A", "YamagotiProjects", "beat", "--loglevel=info", "--scheduler", "django_celery_beat.schedulers:DatabaseScheduler"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    image: apple-flower-cpu
+    env_file: .env
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+    command: celery -A YamagotiProjects flower --address=0.0.0.0 --port=5555 --url-prefix=/flower
+    ports: ["5555:5555"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.25-alpine
+    depends_on:
+      web:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    volumes:
+      - static_data:/srv/static:ro
+      - media_data:/srv/media:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./.nginx_htpasswd:/etc/nginx/.htpasswd:ro
+    restart: unless-stopped
+
+  metabase:
+    image: metabase/metabase:latest
+    env_file: .env
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_DBNAME: metabase_app2
+      MB_DB_HOST: pgbouncer
+      MB_DB_PORT: 5432
+      MB_DB_USER: ${POSTGRES_USER}
+      MB_DB_PASS: ${POSTGRES_PASSWORD}
+      MB_ENCRYPTION_SECRET_KEY: ${MB_ENCRYPTION_SECRET_KEY:-change_me_please}
+      MB_SITE_URL: ${MB_SITE_URL:-http://localhost/metabase}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    expose: ["3000"]
+    restart: unless-stopped
+
+  mindsdb:
+    image: mindsdb/mindsdb:latest
+    environment:
+      MKL_SERVICE_FORCE_INTEL: "1"
+      MINDSDB_DEFAULT_SERVER: flask
+    volumes:
+      - mindsdb_storage:/root/mdb_storage
+    ports:
+      - "47334:47334"
+      - "47335:47335"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+
+volumes:
+  static_data:
+  media_data:
+  postgres_data:
+  mindsdb_storage:
