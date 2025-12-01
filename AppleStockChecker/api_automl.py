@@ -321,6 +321,8 @@ class IphoneListView(APIView):
                         "id": iphone.id,
                         "part_number": iphone.part_number,
                         "model_name": iphone.model_name or iphone.part_number,
+                        "capacity_gb": iphone.capacity_gb,
+                        "color": iphone.color,
                     }
                     for iphone in iphones
                 ]

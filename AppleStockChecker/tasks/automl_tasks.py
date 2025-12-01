@@ -369,10 +369,21 @@ def run_var_for_job(self, job_id: int):
             values="z_dlog_price",
         ).sort_index()
 
-        # 简单处理缺失
-        panel = panel.dropna(how="any")
+        logger.info(f"[Job {job_id}] Panel shape (before cleaning): {panel.shape} (T={panel.shape[0]}, S={panel.shape[1]})")
 
-        logger.info(f"[Job {job_id}] Panel shape: {panel.shape} (T={panel.shape[0]}, S={panel.shape[1]})")
+        # 改进的缺失值处理策略
+        # 1. 先用 forward fill 填充相邻的小缺口（最多填充 2 个连续缺失）
+        panel = panel.ffill(limit=2)
+
+        # 2. 对于剩余的缺失值，只要求每行至少有 70% 的店铺有数据
+        min_shops = max(2, int(0.7 * panel.shape[1]))
+        panel = panel.dropna(thresh=min_shops)
+
+        # 3. 对于仍然存在的缺失值，填充为 0（z-score 标准化后，0 表示均值，即无变化）
+        panel = panel.fillna(0)
+
+        logger.info(f"[Job {job_id}] Panel shape (after cleaning): {panel.shape} (T={panel.shape[0]}, S={panel.shape[1]})")
+        logger.info(f"[Job {job_id}] Missing value strategy: ffill(limit=2) + dropna(thresh={min_shops}) + fillna(0)")
 
         if panel.shape[0] < 20 or panel.shape[1] < 2:
             logger.warning(f"[Job {job_id}] Insufficient data for VAR, skipping")
@@ -502,7 +513,15 @@ def run_impact_for_job(self, job_id: int):
             columns="shop_id",
             values="z_dlog_price",
         ).sort_index()
-        panel = panel[shop_ids].dropna(how="any")
+        panel = panel[shop_ids]
+
+        # 使用与 VAR 阶段相同的缺失值处理策略
+        panel = panel.ffill(limit=2)
+        min_shops = max(2, int(0.7 * panel.shape[1]))
+        panel = panel.dropna(thresh=min_shops)
+        panel = panel.fillna(0)
+
+        logger.info(f"[Job {job_id}] Panel shape for Granger: {panel.shape} (T={panel.shape[0]}, S={panel.shape[1]})")
 
         maxlag = min(5, var_model.lag_order)
 
