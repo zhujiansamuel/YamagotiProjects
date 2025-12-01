@@ -627,7 +627,10 @@ class CompletedJobsListView(APIView):
                 if iphone_id not in jobs_by_iphone:
                     jobs_by_iphone[iphone_id] = {
                         "iphone_id": iphone_id,
-                        "iphone_name": job.iphone.part_number,
+                        "part_number": job.iphone.part_number,
+                        "model_name": job.iphone.model_name,
+                        "capacity_gb": job.iphone.capacity_gb,
+                        "color": job.iphone.color,
                         "jobs": []
                     }
 
