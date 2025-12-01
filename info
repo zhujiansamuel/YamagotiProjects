@@ -62,7 +62,8 @@ git reset --hard FETCH_HEAD  # 同步到远程 claude 的最新提交
 
 git log -1 --oneline         # 看一下当前版本（可选）
 
-docker compose build
+docker compose build && docker compose up -d --scale worker=5
+
 docker compose up -d
 ---------------------------------------------------------------------
 docker compose up -d \
