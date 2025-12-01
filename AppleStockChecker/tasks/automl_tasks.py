@@ -118,18 +118,19 @@ def run_preprocessing_for_job(self, job_id: int):
 
     logger.info(f"[Job {job_id}] Starting preprocessing...")
 
-    job = AutomlCausalJob.objects.select_for_update().get(pk=job_id)
+    with transaction.atomic():
+        job = AutomlCausalJob.objects.select_for_update().get(pk=job_id)
 
-    # 如果已经成功,跳过
-    if job.preprocessing_status == AutomlCausalJob.StageStatus.SUCCESS:
-        logger.info(f"[Job {job_id}] Already preprocessed, skipping")
-        return {"status": "already_done", "job_id": job_id}
+        # 如果已经成功,跳过
+        if job.preprocessing_status == AutomlCausalJob.StageStatus.SUCCESS:
+            logger.info(f"[Job {job_id}] Already preprocessed, skipping")
+            return {"status": "already_done", "job_id": job_id}
 
-    # 更新状态为运行中
-    job.preprocessing_status = AutomlCausalJob.StageStatus.RUNNING
-    job.preprocessing_started_at = timezone.now()
-    job.last_error = None
-    job.save(update_fields=["preprocessing_status", "preprocessing_started_at", "last_error"])
+        # 更新状态为运行中
+        job.preprocessing_status = AutomlCausalJob.StageStatus.RUNNING
+        job.preprocessing_started_at = timezone.now()
+        job.last_error = None
+        job.save(update_fields=["preprocessing_status", "preprocessing_started_at", "last_error"])
 
     try:
         # 1) 从 PSTA 读取原始对齐记录
@@ -330,21 +331,22 @@ def run_var_for_job(self, job_id: int):
             f"Utilization: {mem_info['utilization']*100:.1f}%"
         )
 
-    job = AutomlCausalJob.objects.select_for_update().get(pk=job_id)
+    with transaction.atomic():
+        job = AutomlCausalJob.objects.select_for_update().get(pk=job_id)
 
-    # 只有在预处理成功后才跑 VAR
-    if job.preprocessing_status != AutomlCausalJob.StageStatus.SUCCESS:
-        logger.warning(f"[Job {job_id}] Preprocessing not complete, skipping VAR")
-        return {"status": "skipped", "reason": "preprocessing_incomplete"}
+        # 只有在预处理成功后才跑 VAR
+        if job.preprocessing_status != AutomlCausalJob.StageStatus.SUCCESS:
+            logger.warning(f"[Job {job_id}] Preprocessing not complete, skipping VAR")
+            return {"status": "skipped", "reason": "preprocessing_incomplete"}
 
-    if job.cause_effect_status == AutomlCausalJob.StageStatus.SUCCESS:
-        logger.info(f"[Job {job_id}] VAR already complete, skipping")
-        return {"status": "already_done", "job_id": job_id}
+        if job.cause_effect_status == AutomlCausalJob.StageStatus.SUCCESS:
+            logger.info(f"[Job {job_id}] VAR already complete, skipping")
+            return {"status": "already_done", "job_id": job_id}
 
-    job.cause_effect_status = AutomlCausalJob.StageStatus.RUNNING
-    job.cause_effect_started_at = timezone.now()
-    job.last_error = None
-    job.save(update_fields=["cause_effect_status", "cause_effect_started_at", "last_error"])
+        job.cause_effect_status = AutomlCausalJob.StageStatus.RUNNING
+        job.cause_effect_started_at = timezone.now()
+        job.last_error = None
+        job.save(update_fields=["cause_effect_status", "cause_effect_started_at", "last_error"])
 
     try:
         # 1) 读取预处理序列
@@ -470,20 +472,21 @@ def run_impact_for_job(self, job_id: int):
             f"Utilization: {mem_info['utilization']*100:.1f}%"
         )
 
-    job = AutomlCausalJob.objects.select_for_update().get(pk=job_id)
+    with transaction.atomic():
+        job = AutomlCausalJob.objects.select_for_update().get(pk=job_id)
 
-    if job.cause_effect_status != AutomlCausalJob.StageStatus.SUCCESS:
-        logger.warning(f"[Job {job_id}] VAR not complete, skipping Impact")
-        return {"status": "skipped", "reason": "var_incomplete"}
+        if job.cause_effect_status != AutomlCausalJob.StageStatus.SUCCESS:
+            logger.warning(f"[Job {job_id}] VAR not complete, skipping Impact")
+            return {"status": "skipped", "reason": "var_incomplete"}
 
-    if job.impact_status == AutomlCausalJob.StageStatus.SUCCESS:
-        logger.info(f"[Job {job_id}] Impact already complete, skipping")
-        return {"status": "already_done", "job_id": job_id}
+        if job.impact_status == AutomlCausalJob.StageStatus.SUCCESS:
+            logger.info(f"[Job {job_id}] Impact already complete, skipping")
+            return {"status": "already_done", "job_id": job_id}
 
-    job.impact_status = AutomlCausalJob.StageStatus.RUNNING
-    job.impact_started_at = timezone.now()
-    job.last_error = None
-    job.save(update_fields=["impact_status", "impact_started_at", "last_error"])
+        job.impact_status = AutomlCausalJob.StageStatus.RUNNING
+        job.impact_started_at = timezone.now()
+        job.last_error = None
+        job.save(update_fields=["impact_status", "impact_started_at", "last_error"])
 
     try:
         var_model = job.var_model
