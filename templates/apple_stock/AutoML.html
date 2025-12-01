@@ -463,6 +463,56 @@
             </div>
         </div>
 
+        <!-- Sliding Window Analysis Configuration -->
+        <div class="controls">
+            <h2>⏱️ 滑动时间窗口分析 (Sliding Window Analysis)</h2>
+
+            <p style="margin-bottom: 16px; color: var(--text-secondary);">
+                创建多个时间窗口的分析任务，追踪因果关系随时间的演化。默认参数：总时长 30 天，窗口大小 3 天，步长 6 小时。
+            </p>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="slidingIphoneSelect">选择机型:</label>
+                    <select id="slidingIphoneSelect">
+                        <option value="">加载中...</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="totalDaysInput">总分析时长 (天):</label>
+                    <input type="number" id="totalDaysInput" value="30" min="1" max="90"
+                           style="width: 100%; padding: 12px; border: 2px solid var(--border-color); border-radius: 8px;">
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="windowSizeInput">窗口大小 (天):</label>
+                    <input type="number" id="windowSizeInput" value="3" min="1" max="30"
+                           style="width: 100%; padding: 12px; border: 2px solid var(--border-color); border-radius: 8px;">
+                </div>
+                <div class="form-group">
+                    <label for="stepSizeInput">步长 (小时):</label>
+                    <input type="number" id="stepSizeInput" value="6" min="1" max="24"
+                           style="width: 100%; padding: 12px; border: 2px solid var(--border-color); border-radius: 8px;">
+                </div>
+            </div>
+
+            <div style="background: linear-gradient(135deg, rgba(59, 130, 246, 0.05), rgba(139, 92, 246, 0.05));
+                        border: 2px solid var(--primary-color); border-radius: 12px; padding: 16px; margin-bottom: 16px;">
+                <p id="slidingWindowEstimate" style="margin: 0; font-size: 14px; color: var(--text-primary);">
+                    <strong>预计创建任务数:</strong> 请填写参数
+                </p>
+            </div>
+
+            <div class="button-group">
+                <button class="task-button" onclick="startSlidingWindowAnalysis()"
+                        style="background: linear-gradient(135deg, #f59e0b, #d97706);">
+                    🌊 开始滑动窗口分析
+                </button>
+            </div>
+        </div>
+
         <!-- Historical Results Selector -->
         <div id="historySection" class="controls" style="display: none;">
             <h2>📜 Historical Results</h2>
