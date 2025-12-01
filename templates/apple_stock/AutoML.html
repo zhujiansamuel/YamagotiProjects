@@ -935,7 +935,21 @@ A^{(p)}_1 \mathbf{z}_{p,t-1}
                     if (data.status === 'success' && data.count > 0 && data.jobs_by_iphone) {
                         data.jobs_by_iphone.forEach(group => {
                             const optgroup = document.createElement('optgroup');
-                            optgroup.label = `${group.iphone_name} (${group.jobs.length} 条记录)`;
+
+                            // 构建详细的机型显示文本
+                            let iphoneLabel = group.part_number;
+                            if (group.model_name) {
+                                iphoneLabel += ` - ${group.model_name}`;
+                            }
+                            if (group.capacity_gb) {
+                                iphoneLabel += ` ${group.capacity_gb}GB`;
+                            }
+                            if (group.color) {
+                                iphoneLabel += ` ${group.color}`;
+                            }
+                            iphoneLabel += ` (${group.jobs.length} 条记录)`;
+
+                            optgroup.label = iphoneLabel;
 
                             group.jobs.forEach(job => {
                                 const option = document.createElement('option');
