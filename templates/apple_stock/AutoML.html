@@ -825,6 +825,7 @@ A^{(p)}_1 \mathbf{z}_{p,t-1}
             batchCreate: '/AppleStockChecker/automl/jobs/batch-create/',
             completedJobs: '/AppleStockChecker/automl/jobs/completed/',
             jobResult: (id) => `/AppleStockChecker/automl/jobs/result/${id}/`,
+            slidingWindow: '/AppleStockChecker/automl/jobs/sliding-window/',
         };
 
         let currentHeatmapChart = null;
@@ -832,6 +833,8 @@ A^{(p)}_1 \mathbf{z}_{p,t-1}
         // Initialize page
         document.addEventListener('DOMContentLoaded', () => {
             loadIphones();
+            loadIphonesForSlidingWindow();
+            setupSlidingWindowEventListeners();
         });
 
         function showStatus(message, type = 'info') {
@@ -1229,6 +1232,147 @@ A^{(p)}_1 \mathbf{z}_{p,t-1}
                 `;
                 tbody.appendChild(row);
             });
+        }
+
+        // === Sliding Window Analysis Functions ===
+
+        async function loadIphonesForSlidingWindow() {
+            try {
+                const response = await fetch(API.iphones);
+                const data = await response.json();
+
+                const select = document.getElementById('slidingIphoneSelect');
+                select.innerHTML = '<option value="">-- 请选择机型 --</option>';
+
+                if (data.status === 'success' && data.iphones.length > 0) {
+                    data.iphones.forEach(iphone => {
+                        const option = document.createElement('option');
+                        option.value = iphone.id;
+
+                        // 构建详细的显示文本
+                        let displayText = iphone.part_number;
+
+                        if (iphone.model_name) {
+                            displayText += ` - ${iphone.model_name}`;
+                        }
+
+                        if (iphone.capacity_gb) {
+                            displayText += ` ${iphone.capacity_gb}GB`;
+                        }
+
+                        if (iphone.color) {
+                            displayText += ` ${iphone.color}`;
+                        }
+
+                        option.textContent = displayText;
+                        select.appendChild(option);
+                    });
+                } else {
+                    select.innerHTML = '<option value="">暂无可用机型</option>';
+                }
+            } catch (error) {
+                console.error('Error loading iPhones for sliding window:', error);
+                showStatus('加载机型列表失败', 'error');
+            }
+        }
+
+        function setupSlidingWindowEventListeners() {
+            const totalDaysInput = document.getElementById('totalDaysInput');
+            const windowSizeInput = document.getElementById('windowSizeInput');
+            const stepSizeInput = document.getElementById('stepSizeInput');
+
+            // 添加事件监听器，当参数改变时更新估计
+            [totalDaysInput, windowSizeInput, stepSizeInput].forEach(input => {
+                input.addEventListener('input', updateSlidingWindowEstimate);
+            });
+
+            // 初始化估计显示
+            updateSlidingWindowEstimate();
+        }
+
+        function updateSlidingWindowEstimate() {
+            const totalDays = parseFloat(document.getElementById('totalDaysInput').value) || 0;
+            const windowSize = parseFloat(document.getElementById('windowSizeInput').value) || 0;
+            const stepSize = parseFloat(document.getElementById('stepSizeInput').value) || 0;
+
+            const estimateEl = document.getElementById('slidingWindowEstimate');
+
+            if (totalDays <= 0 || windowSize <= 0 || stepSize <= 0) {
+                estimateEl.innerHTML = '<strong>预计创建任务数:</strong> 请填写参数';
+                return;
+            }
+
+            if (windowSize > totalDays) {
+                estimateEl.innerHTML = '<strong>预计创建任务数:</strong> <span style="color: red;">窗口大小不能大于总时长</span>';
+                return;
+            }
+
+            // 计算滑动窗口数量: floor((total_days - window_size) * 24 / step_size) + 1
+            const numWindows = Math.floor((totalDays - windowSize) * 24 / stepSize) + 1;
+
+            estimateEl.innerHTML = `<strong>预计创建任务数:</strong> <span style="color: #2196F3; font-size: 1.2em; font-weight: bold;">${numWindows}</span> 个窗口`;
+        }
+
+        async function startSlidingWindowAnalysis() {
+            const iphoneId = document.getElementById('slidingIphoneSelect').value;
+            const totalDays = parseInt(document.getElementById('totalDaysInput').value);
+            const windowSize = parseInt(document.getElementById('windowSizeInput').value);
+            const stepSize = parseInt(document.getElementById('stepSizeInput').value);
+
+            // 验证输入
+            if (!iphoneId) {
+                showStatus('请先选择机型', 'error');
+                return;
+            }
+
+            if (totalDays <= 0 || windowSize <= 0 || stepSize <= 0) {
+                showStatus('请填写有效的参数', 'error');
+                return;
+            }
+
+            if (windowSize > totalDays) {
+                showStatus('窗口大小不能大于总时长', 'error');
+                return;
+            }
+
+            try {
+                showStatus('正在创建滑动窗口分析任务...', 'info');
+
+                const response = await fetch(API.slidingWindow, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': getCookie('csrftoken')
+                    },
+                    body: JSON.stringify({
+                        iphone_id: iphoneId,
+                        total_days: totalDays,
+                        window_size_days: windowSize,
+                        step_size_hours: stepSize
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    const message = `✅ 滑动窗口分析任务创建成功！\n` +
+                                    `• 新建任务: ${data.created_count}\n` +
+                                    `• 已存在任务: ${data.existing_count}\n` +
+                                    `• 跳过任务: ${data.skipped_count}\n` +
+                                    `• 总窗口数: ${data.total_windows}`;
+                    showStatus(message, 'success');
+
+                    // 5秒后刷新历史结果列表
+                    setTimeout(() => {
+                        loadHistoricalResults();
+                    }, 5000);
+                } else {
+                    showStatus(`创建失败: ${data.message || '未知错误'}`, 'error');
+                }
+            } catch (error) {
+                console.error('Error creating sliding window analysis:', error);
+                showStatus('创建滑动窗口分析任务失败', 'error');
+            }
         }
     </script>
 </body>
