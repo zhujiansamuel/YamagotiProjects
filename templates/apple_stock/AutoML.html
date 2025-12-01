@@ -933,15 +933,18 @@ A^{(p)}_1 \mathbf{z}_{p,t-1}
                     const historySelect = document.getElementById('historySelect');
                     historySelect.innerHTML = '<option value="">-- 请选择 --</option>';
 
-                    if (data.status === 'success' && data.count > 0) {
-                        data.results.forEach(group => {
+                    if (data.status === 'success' && data.count > 0 && data.jobs_by_iphone) {
+                        data.jobs_by_iphone.forEach(group => {
                             const optgroup = document.createElement('optgroup');
-                            optgroup.label = `${group.part_number} (${group.jobs.length} 条记录)`;
+                            optgroup.label = `${group.iphone_name} (${group.jobs.length} 条记录)`;
 
                             group.jobs.forEach(job => {
                                 const option = document.createElement('option');
-                                option.value = job.id;
-                                option.textContent = `${job.created_at} - ${job.status}`;
+                                option.value = job.job_id;
+                                // 格式化日期显示
+                                const date = new Date(job.created_at);
+                                const dateStr = date.toLocaleString('zh-CN');
+                                option.textContent = `${dateStr}`;
                                 optgroup.appendChild(option);
                             });
 
@@ -949,7 +952,7 @@ A^{(p)}_1 \mathbf{z}_{p,t-1}
                         });
 
                         document.getElementById('historySection').style.display = 'block';
-                        showStatus(`找到 ${data.count} 条历史记录`, 'success');
+                        showStatus(`找到 ${data.count} 个机型的历史记录`, 'success');
                     } else {
                         showStatus('暂无历史记录', 'info');
                     }
@@ -993,10 +996,11 @@ A^{(p)}_1 \mathbf{z}_{p,t-1}
 
             // Display summary cards
             const summaryGrid = document.getElementById('summaryGrid');
+            const shopCount = data.var_model?.shop_ids?.length || 'N/A';
             summaryGrid.innerHTML = `
                 <div class="summary-card">
                     <h3>分析店铺数</h3>
-                    <p>${data.var_model?.n_shops || 'N/A'}</p>
+                    <p>${shopCount}</p>
                 </div>
                 <div class="summary-card">
                     <h3>VAR 滞后阶数</h3>
@@ -1148,16 +1152,16 @@ A^{(p)}_1 \mathbf{z}_{p,t-1}
 
             causalEdges.forEach(edge => {
                 const row = document.createElement('tr');
-                const significanceBadge = edge.p_value < 0.05
+                const significanceBadge = edge.min_pvalue < 0.05
                     ? '<span class="badge high">显著 ✓</span>'
                     : '<span class="badge low">不显著</span>';
 
                 row.innerHTML = `
-                    <td>${edge.source_shop}</td>
-                    <td>${edge.target_shop}</td>
-                    <td>${edge.lag}</td>
+                    <td>${edge.cause_shop_name}</td>
+                    <td>${edge.effect_shop_name}</td>
+                    <td>${edge.main_lag}</td>
                     <td>${edge.weight.toFixed(4)}</td>
-                    <td>${edge.p_value.toFixed(4)}</td>
+                    <td>${edge.min_pvalue.toFixed(4)}</td>
                     <td>${significanceBadge}</td>
                 `;
                 tbody.appendChild(row);
