@@ -56,6 +56,10 @@ from .api_automl import (
     ScheduleAutoMLJobsView,
     CreateAutoMLJobView,
     AutoMLJobStatusView,
+    IphoneListView,
+    BatchCreateAutoMLJobsView,
+    AutoMLJobResultView,
+    CompletedJobsListView,
 )
 
 router = DefaultRouter()
@@ -235,6 +239,12 @@ urlpatterns = [
                   path('automl/jobs/create/', CreateAutoMLJobView.as_view(), name='automl-create-job'),
                   path('automl/jobs/status/', AutoMLJobStatusView.as_view(), name='automl-job-status-list'),
                   path('automl/jobs/status/<int:job_id>/', AutoMLJobStatusView.as_view(), name='automl-job-status'),
+                  # 机型管理 API
+                  path('automl/iphones/', IphoneListView.as_view(), name='automl-iphone-list'),
+                  path('automl/jobs/batch-create/', BatchCreateAutoMLJobsView.as_view(), name='automl-batch-create'),
+                  # 结果查询 API
+                  path('automl/jobs/result/<int:job_id>/', AutoMLJobResultView.as_view(), name='automl-job-result'),
+                  path('automl/jobs/completed/', CompletedJobsListView.as_view(), name='automl-completed-jobs'),
 
                   path("options/scopes/", ScopeOptionsView.as_view(), name="options-scopes"),
                   path("options/shops/", options_shops, name="options-shops"),

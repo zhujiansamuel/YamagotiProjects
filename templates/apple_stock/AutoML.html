@@ -9,6 +9,10 @@
     <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
     <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 
+    <!-- Chart.js for Heatmap -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-matrix@2.0.1"></script>
+
     <style>
         :root {
             --primary-color: #3b82f6;
@@ -73,9 +77,42 @@
             color: var(--text-primary);
         }
 
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+        }
+
+        .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 14px;
+            background-color: white;
+            cursor: pointer;
+            transition: border-color 0.3s;
+        }
+
+        .form-group select:focus {
+            outline: none;
+            border-color: var(--primary-color);
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 16px;
+        }
+
         .button-group {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 16px;
             margin-bottom: 20px;
         }
@@ -106,6 +143,14 @@
             opacity: 0.5;
             cursor: not-allowed;
             transform: none;
+        }
+
+        .task-button.secondary {
+            background: linear-gradient(135deg, #10b981, #059669);
+        }
+
+        .task-button.secondary:hover {
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
         }
 
         .status-message {
@@ -140,6 +185,11 @@
             border-radius: 12px;
             box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
             margin-bottom: 24px;
+            display: none;
+        }
+
+        .results-section.visible {
+            display: block;
         }
 
         .results-section h2 {
@@ -148,65 +198,103 @@
             color: var(--text-primary);
         }
 
-        .image-grid {
+        .summary-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-            gap: 24px;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 32px;
         }
 
-        .image-card {
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
+        .summary-card {
+            background: linear-gradient(135deg, #f0f9ff, #e0f2fe);
+            padding: 20px;
             border-radius: 12px;
-            overflow: hidden;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            border: 2px solid var(--primary-color);
         }
 
-        .image-card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.12);
+        .summary-card h3 {
+            font-size: 14px;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
         }
 
-        .image-card-header {
-            padding: 16px;
+        .summary-card p {
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--primary-color);
+        }
+
+        .interpretation-box {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.05), rgba(139, 92, 246, 0.05));
+            border: 2px solid var(--primary-color);
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 32px;
+        }
+
+        .interpretation-box h3 {
+            color: var(--primary-color);
+            margin-bottom: 12px;
+        }
+
+        .interpretation-box ul {
+            margin-left: 24px;
+        }
+
+        .interpretation-box li {
+            margin-bottom: 8px;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 500px;
+            margin-bottom: 32px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 24px;
+        }
+
+        table th {
             background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
             color: white;
-        }
-
-        .image-card-header h3 {
-            font-size: 18px;
+            padding: 12px;
+            text-align: left;
             font-weight: 600;
         }
 
-        .image-card-body {
-            padding: 16px;
+        table td {
+            padding: 12px;
+            border-bottom: 1px solid var(--border-color);
         }
 
-        .image-card img {
-            width: 100%;
-            height: auto;
-            border-radius: 8px;
-            display: block;
+        table tr:hover {
+            background-color: #f9fafb;
         }
 
-        .image-placeholder {
-            width: 100%;
-            height: 300px;
-            background: linear-gradient(135deg, #f0f0f0, #e0e0e0);
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: var(--text-secondary);
-            font-size: 16px;
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
         }
 
-        .image-card-footer {
-            padding: 12px 16px;
-            border-top: 1px solid var(--border-color);
-            font-size: 13px;
-            color: var(--text-secondary);
+        .badge.high {
+            background-color: #fee2e2;
+            color: #991b1b;
+        }
+
+        .badge.medium {
+            background-color: #fef3c7;
+            color: #92400e;
+        }
+
+        .badge.low {
+            background-color: #d1fae5;
+            color: #065f46;
         }
 
         /* Mathematical Model Section Styles */
@@ -216,6 +304,28 @@
             border-radius: 12px;
             box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
             margin-bottom: 24px;
+        }
+
+        .math-section details {
+            margin-bottom: 16px;
+        }
+
+        .math-section summary {
+            cursor: pointer;
+            padding: 16px;
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+            border-radius: 8px;
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .math-section summary:hover {
+            opacity: 0.9;
+        }
+
+        .math-content {
+            padding: 24px 16px;
         }
 
         .math-section h2 {
@@ -277,7 +387,11 @@
         }
 
         @media (max-width: 768px) {
-            .image-grid {
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+
+            .summary-grid {
                 grid-template-columns: 1fr;
             }
 
@@ -300,6 +414,10 @@
             .math-section h3 {
                 font-size: 20px;
             }
+
+            .chart-container {
+                height: 300px;
+            }
         }
     </style>
 </head>
@@ -311,149 +429,246 @@
         </header>
 
         <div class="controls">
-            <h2>Analysis Tasks</h2>
+            <h2>🎯 Analysis Configuration</h2>
 
             <div id="statusMessage" class="status-message"></div>
 
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="iphoneSelect">选择机型 (iPhone Model):</label>
+                    <select id="iphoneSelect">
+                        <option value="">加载中...</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="daysSelect">分析窗口 (Time Window):</label>
+                    <select id="daysSelect">
+                        <option value="3">3 天</option>
+                        <option value="7" selected>7 天</option>
+                        <option value="14">14 天</option>
+                        <option value="30">30 天</option>
+                    </select>
+                </div>
+            </div>
+
             <div class="button-group">
-                <button class="task-button" onclick="triggerTask('preprocessing-rapid')">
-                    🚀 Preprocessing Rapid
+                <button class="task-button" onclick="analyzeSingle()">
+                    🔍 分析选中机型
                 </button>
-                <button class="task-button" onclick="triggerTask('cause-and-effect-testing')">
-                    🔬 Cause and Effect Testing
+                <button class="task-button secondary" onclick="analyzeAll()">
+                    🚀 批量分析全部机型
                 </button>
-                <button class="task-button" onclick="triggerTask('quantification-of-impact')">
-                    📊 Quantification of Impact
+                <button class="task-button" onclick="viewResults()">
+                    📊 查看历史结果
                 </button>
             </div>
         </div>
 
-        <!-- Mathematical Model Description -->
+        <!-- Historical Results Selector -->
+        <div id="historySection" class="controls" style="display: none;">
+            <h2>📜 Historical Results</h2>
+            <div class="form-group">
+                <label for="historySelect">选择历史分析结果:</label>
+                <select id="historySelect" onchange="loadSelectedResult()">
+                    <option value="">-- 请选择 --</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Results Display Section -->
+        <div id="resultsSection" class="results-section">
+            <h2>📈 Analysis Results</h2>
+
+            <!-- Summary Cards -->
+            <div class="summary-grid" id="summaryGrid">
+                <!-- Cards will be populated by JavaScript -->
+            </div>
+
+            <!-- Interpretation Guide -->
+            <div class="interpretation-box">
+                <h3>📖 结果解读方法</h3>
+                <ul>
+                    <li><strong>领头店 (Leader Shops):</strong> 这些店铺的价格变动对其他店铺产生最大影响。影响力计算为：出度数量 × 平均因果权重。</li>
+                    <li><strong>因果邻接矩阵 (Causal Adjacency Matrix):</strong> 矩阵中 A[i][j] 表示店铺 j 对店铺 i 的因果影响强度。颜色越深表示影响越强。</li>
+                    <li><strong>Granger 显著性:</strong> p-value < 0.05 表示因果关系在统计上显著，即店铺 j 的历史价格变化能够预测店铺 i 的价格变化。</li>
+                    <li><strong>VAR 模型:</strong> 向量自回归模型，滞后阶数 (lag_order) 表示使用过去多少个时间点的数据来预测当前价格。AIC 越小表示模型拟合越好。</li>
+                </ul>
+            </div>
+
+            <!-- Leader Shops Table -->
+            <h3>🏆 领头店排名 (Leader Shops Ranking)</h3>
+            <table id="leaderShopsTable">
+                <thead>
+                    <tr>
+                        <th>排名</th>
+                        <th>店铺名称</th>
+                        <th>影响力得分</th>
+                        <th>出度数量</th>
+                        <th>平均权重</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Rows will be populated by JavaScript -->
+                </tbody>
+            </table>
+
+            <!-- Causal Adjacency Matrix Heatmap -->
+            <h3>🔥 因果邻接矩阵热力图 (Causal Adjacency Matrix)</h3>
+            <p style="margin-bottom: 16px; color: var(--text-secondary);">
+                横轴: 影响源店铺 (Source Shop) | 纵轴: 被影响店铺 (Target Shop) | 颜色强度: 因果影响权重
+            </p>
+            <div class="chart-container">
+                <canvas id="heatmapChart"></canvas>
+            </div>
+
+            <!-- Significant Causal Edges Table -->
+            <h3>🔗 显著因果关系 (Significant Causal Edges)</h3>
+            <table id="causalEdgesTable">
+                <thead>
+                    <tr>
+                        <th>源店铺 (Source)</th>
+                        <th>目标店铺 (Target)</th>
+                        <th>滞后阶数 (Lag)</th>
+                        <th>权重 (Weight)</th>
+                        <th>P-value</th>
+                        <th>显著性</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Rows will be populated by JavaScript -->
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Mathematical Model Description (Collapsible) -->
         <div class="math-section">
-            <h2>📐 数学模型：多店铺 × 多机种 × 时间的因果分析框架</h2>
+            <details>
+                <summary>📐 数学模型详解 (Mathematical Model Documentation)</summary>
+                <div class="math-content">
+                    <h2>多店铺 × 多机种 × 时间的因果分析框架</h2>
 
-            <p>本系统采用统一的数学符号体系来描述"多店铺 × 多机种 × 时间"的价格动态，支持因果分析、VAR建模和特征工程。</p>
+                    <p>本系统采用统一的数学符号体系来描述"多店铺 × 多机种 × 时间"的价格动态，支持因果分析、VAR建模和特征工程。</p>
 
-            <h3>1. 索引与集合</h3>
+                    <h3>1. 索引与集合</h3>
 
-            <h4>店铺集合</h4>
-            <div class="formula-block">
-                $$\mathcal{S} = \{1,2,\dots,S\}, \quad s \in \mathcal{S}$$
-            </div>
-            <p>例如：海峡通信、アキモバ、買取一丁目、森森買取 等。</p>
+                    <h4>店铺集合</h4>
+                    <div class="formula-block">
+                        $$\mathcal{S} = \{1,2,\dots,S\}, \quad s \in \mathcal{S}$$
+                    </div>
+                    <p>例如：海峡通信、アキモバ、買取一丁目、森森買取 等。</p>
 
-            <h4>机种/型号集合（精细到型号×容量×颜色的SKU）</h4>
-            <div class="formula-block">
-                $$\mathcal{P} = \{1,2,\dots,P\}, \quad p \in \mathcal{P}$$
-            </div>
-            <p>对应数据库里的 Iphone / part_number 或 "model × capacity × color" 唯一组合。</p>
+                    <h4>机种/型号集合（精细到型号×容量×颜色的SKU）</h4>
+                    <div class="formula-block">
+                        $$\mathcal{P} = \{1,2,\dots,P\}, \quad p \in \mathcal{P}$$
+                    </div>
+                    <p>对应数据库里的 Iphone / part_number 或 "model × capacity × color" 唯一组合。</p>
 
-            <h4>离散时间（分钟级bucket）</h4>
-            <div class="formula-block">
-                $$\mathcal{T} = \{\dots, t-1, t, t+1, \dots\}, \quad t \in \mathbb{Z}$$
-            </div>
-            <p>等间隔时间点（每1分钟、每15分钟），系统中为JST对齐后的 bucket_start_ts。</p>
+                    <h4>离散时间（分钟级bucket）</h4>
+                    <div class="formula-block">
+                        $$\mathcal{T} = \{\dots, t-1, t, t+1, \dots\}, \quad t \in \mathbb{Z}$$
+                    </div>
+                    <p>等间隔时间点（每1分钟、每15分钟），系统中为JST对齐后的 bucket_start_ts。</p>
 
-            <h3>2. 原始观测数据：多维张量表示</h3>
+                    <h3>2. 原始观测数据：多维张量表示</h3>
 
-            <p>对每一个「店铺 \(s\) × 机种 \(p\) × 时间 \(t\)」，观测到多个变量：</p>
+                    <p>对每一个「店铺 \(s\) × 机种 \(p\) × 时间 \(t\)」，观测到多个变量：</p>
 
-            <h4>价格（回收价）</h4>
-            <div class="formula-block">
-                $$P_{s,p,t} \in \mathbb{R}_{+}$$
-            </div>
+                    <h4>价格（回收价）</h4>
+                    <div class="formula-block">
+                        $$P_{s,p,t} \in \mathbb{R}_{+}$$
+                    </div>
 
-            <h4>可用库存数量（可选）</h4>
-            <div class="formula-block">
-                $$Q_{s,p,t} \in \mathbb{N}_0$$
-            </div>
+                    <h4>可用库存数量（可选）</h4>
+                    <div class="formula-block">
+                        $$Q_{s,p,t} \in \mathbb{N}_0$$
+                    </div>
 
-            <h4>其他属性特征向量</h4>
-            <div class="formula-block">
-                $$\mathbf{F}_{s,p,t} \in \mathbb{R}^{K}$$
-            </div>
+                    <h4>其他属性特征向量</h4>
+                    <div class="formula-block">
+                        $$\mathbf{F}_{s,p,t} \in \mathbb{R}^{K}$$
+                    </div>
 
-            <p>整体上有一个三维（甚至四维）张量：</p>
-            <div class="formula-block">
-                $$\mathbf{X}_t = \left\{ X_{s,p,t} \right\}_{s \in \mathcal{S},\, p \in \mathcal{P}}$$
-            </div>
+                    <p>整体上有一个三维（甚至四维）张量：</p>
+                    <div class="formula-block">
+                        $$\mathbf{X}_t = \left\{ X_{s,p,t} \right\}_{s \in \mathcal{S},\, p \in \mathcal{P}}$$
+                    </div>
 
-            <p>其中每个元素 \(X_{s,p,t}\) 是一个特征向量：</p>
-            <div class="formula-block">
-                $$X_{s,p,t} = \big(P_{s,p,t}, Q_{s,p,t}, \mathbf{F}_{s,p,t}\big) \in \mathbb{R}^{1+1+K}$$
-            </div>
+                    <p>其中每个元素 \(X_{s,p,t}\) 是一个特征向量：</p>
+                    <div class="formula-block">
+                        $$X_{s,p,t} = \big(P_{s,p,t}, Q_{s,p,t}, \mathbf{F}_{s,p,t}\big) \in \mathbb{R}^{1+1+K}$$
+                    </div>
 
-            <div class="highlight-box">
-                <h4>💡 直观理解</h4>
-                <p>每个时间 \(t\)，有一个 "店 × 机种" 的大表格，格子里放的是这个店对这个机种的各种数值特征。</p>
-            </div>
+                    <div class="highlight-box">
+                        <h4>💡 直观理解</h4>
+                        <p>每个时间 \(t\)，有一个 "店 × 机种" 的大表格，格子里放的是这个店对这个机种的各种数值特征。</p>
+                    </div>
 
-            <h3>3. 数据清洗与对齐（对应PSTA模型）</h3>
+                    <h3>3. 数据清洗与对齐（对应PSTA模型）</h3>
 
-            <h4>3.1 清洗（去异常）</h4>
-            <p>定义清洗算子 \(C(\cdot)\)：</p>
-            <div class="formula-block">
-                $$\tilde{P}_{s,p,t} = C\big(P_{s,p,t}\big)$$
-            </div>
-            <ul>
-                <li>若 \(P_{s,p,t} < 10000\) 或 \(P_{s,p,t} > 350000\) 则标记为缺失或丢弃</li>
-                <li>否则保留原值</li>
-            </ul>
+                    <h4>3.1 清洗（去异常）</h4>
+                    <p>定义清洗算子 \(C(\cdot)\)：</p>
+                    <div class="formula-block">
+                        $$\tilde{P}_{s,p,t} = C\big(P_{s,p,t}\big)$$
+                    </div>
+                    <ul>
+                        <li>若 \(P_{s,p,t} < 10000\) 或 \(P_{s,p,t} > 350000\) 则标记为缺失或丢弃</li>
+                        <li>否则保留原值</li>
+                    </ul>
 
-            <h4>3.2 时间对齐（bucket化）</h4>
-            <p>PSTA对同一时间bucket内的记录做聚合：</p>
-            <div class="formula-block">
-                $$\bar{P}_{s,p,t} = \operatorname{Agg}\big(\{\tilde{P}_{s,p,\tau}\ |\ \tau \in \text{bucket}(t)\}\big)$$
-            </div>
-            <p>其中：</p>
-            <ul>
-                <li>\(\text{bucket}(t)\) 是落在该时间桶内的原始时间点集合</li>
-                <li>\(\operatorname{Agg}(\cdot)\) 可以是平均值、加权平均、中位数等</li>
-            </ul>
+                    <h4>3.2 时间对齐（bucket化）</h4>
+                    <p>PSTA对同一时间bucket内的记录做聚合：</p>
+                    <div class="formula-block">
+                        $$\bar{P}_{s,p,t} = \operatorname{Agg}\big(\{\tilde{P}_{s,p,\tau}\ |\ \tau \in \text{bucket}(t)\}\big)$$
+                    </div>
+                    <p>其中：</p>
+                    <ul>
+                        <li>\(\text{bucket}(t)\) 是落在该时间桶内的原始时间点集合</li>
+                        <li>\(\operatorname{Agg}(\cdot)\) 可以是平均值、加权平均、中位数等</li>
+                    </ul>
 
-            <p>得到对齐后（时间桶级）的主价格序列：</p>
-            <div class="formula-block">
-                $$\bar{P}_{s,p,t}, \quad t \in \mathcal{T}$$
-            </div>
+                    <p>得到对齐后（时间桶级）的主价格序列：</p>
+                    <div class="formula-block">
+                        $$\bar{P}_{s,p,t}, \quad t \in \mathcal{T}$$
+                    </div>
 
-            <h3>4. 平稳化与标准化：价格变化过程</h3>
+                    <h3>4. 平稳化与标准化：价格变化过程</h3>
 
-            <h4>4.1 对数与差分</h4>
-            <p>为处理比例变化、消除趋势，先取对数：</p>
-            <div class="formula-block">
-                $$Y_{s,p,t} = \log \bar{P}_{s,p,t}$$
-            </div>
+                    <h4>4.1 对数与差分</h4>
+                    <p>为处理比例变化、消除趋势，先取对数：</p>
+                    <div class="formula-block">
+                        $$Y_{s,p,t} = \log \bar{P}_{s,p,t}$$
+                    </div>
 
-            <p>然后在时间上做一阶差分得到"涨跌幅"：</p>
-            <div class="formula-block">
-                $$\Delta Y_{s,p,t} = Y_{s,p,t} - Y_{s,p,t-1}$$
-            </div>
-            <p>这是一个平稳时间序列近似，代表在 \(t\) 时刻相对于 \(t-1\) 的价格变化（以log形式）。</p>
+                    <p>然后在时间上做一阶差分得到"涨跌幅"：</p>
+                    <div class="formula-block">
+                        $$\Delta Y_{s,p,t} = Y_{s,p,t} - Y_{s,p,t-1}$$
+                    </div>
+                    <p>这是一个平稳时间序列近似，代表在 \(t\) 时刻相对于 \(t-1\) 的价格变化（以log形式）。</p>
 
-            <h4>4.2 Z-score标准化（跨店、跨机种可比）</h4>
-            <p>为了让不同店、不同机种的序列在同一数值尺度上进行因果和VAR分析，对 \(\Delta Y_{s,p,t}\) 做标准化。</p>
+                    <h4>4.2 Z-score标准化（跨店、跨机种可比）</h4>
+                    <p>为了让不同店、不同机种的序列在同一数值尺度上进行因果和VAR分析，对 \(\Delta Y_{s,p,t}\) 做标准化。</p>
 
-            <p>定义在时间窗口 \(\mathcal{T}_0\) 上的均值和标准差：</p>
-            <div class="formula-block">
-                $$\mu_{s,p} = \mathbb{E}_{t \in \mathcal{T}_0}[\Delta Y_{s,p,t}], \qquad
+                    <p>定义在时间窗口 \(\mathcal{T}_0\) 上的均值和标准差：</p>
+                    <div class="formula-block">
+                        $$\mu_{s,p} = \mathbb{E}_{t \in \mathcal{T}_0}[\Delta Y_{s,p,t}], \qquad
 \sigma_{s,p} = \operatorname{Std}_{t \in \mathcal{T}_0}[\Delta Y_{s,p,t}]$$
-            </div>
+                    </div>
 
-            <p>然后计算标准化变量：</p>
-            <div class="formula-block">
-                $$Z_{s,p,t} = \frac{\Delta Y_{s,p,t} - \mu_{s,p}}{\sigma_{s,p}}$$
-            </div>
+                    <p>然后计算标准化变量：</p>
+                    <div class="formula-block">
+                        $$Z_{s,p,t} = \frac{\Delta Y_{s,p,t} - \mu_{s,p}}{\sigma_{s,p}}$$
+                    </div>
 
-            <div class="highlight-box">
-                <h4>🎯 关键变量</h4>
-                <p>\(Z_{s,p,t}\) 是进行因果分析、建VAR模型、学习图结构时的<strong>主工作变量</strong>。</p>
-            </div>
+                    <div class="highlight-box">
+                        <h4>🎯 关键变量</h4>
+                        <p>\(Z_{s,p,t}\) 是进行因果分析、建VAR模型、学习图结构时的<strong>主工作变量</strong>。</p>
+                    </div>
 
-            <h3>5. 按机种聚合：跨店的向量时间序列</h3>
+                    <h3>5. 按机种聚合：跨店的向量时间序列</h3>
 
-            <p>对每一个机种 \(p \in \mathcal{P}\)，整理出一个"跨店向量"序列：</p>
-            <div class="formula-block">
-                $$\mathbf{z}_{p,t} =
+                    <p>对每一个机种 \(p \in \mathcal{P}\)，整理出一个"跨店向量"序列：</p>
+                    <div class="formula-block">
+                        $$\mathbf{z}_{p,t} =
 \begin{bmatrix}
 Z_{1,p,t} \\
 Z_{2,p,t} \\
@@ -461,117 +676,115 @@ Z_{2,p,t} \\
 Z_{S,p,t}
 \end{bmatrix}
 \in \mathbb{R}^{S}, \quad t \in \mathcal{T}$$
-            </div>
+                    </div>
 
-            <p>这表示：在时间 \(t\) 时刻，对机种 \(p\) 来说，所有店铺在这一刻的"标准化价格变化"组成一个 \(S\) 维向量。</p>
+                    <p>这表示：在时间 \(t\) 时刻，对机种 \(p\) 来说，所有店铺在这一刻的"标准化价格变化"组成一个 \(S\) 维向量。</p>
 
-            <p>于是对于每一个机种 \(p\)，有一个多变量时间序列：</p>
-            <div class="formula-block">
-                $$\{\mathbf{z}_{p,t}\}_{t \in \mathcal{T}}$$
-            </div>
+                    <p>于是对于每一个机种 \(p\)，有一个多变量时间序列：</p>
+                    <div class="formula-block">
+                        $$\{\mathbf{z}_{p,t}\}_{t \in \mathcal{T}}$$
+                    </div>
 
-            <p>这将直接作为：</p>
-            <ul>
-                <li>VAR / SVAR 模型的输入</li>
-                <li>Granger 因果测试的输入</li>
-                <li>动态因果图（DAG）的学习输入</li>
-            </ul>
+                    <p>这将直接作为：</p>
+                    <ul>
+                        <li>VAR / SVAR 模型的输入</li>
+                        <li>Granger 因果测试的输入</li>
+                        <li>动态因果图（DAG）的学习输入</li>
+                    </ul>
 
-            <h3>6. 结构模型（以VAR为例）</h3>
+                    <h3>6. 结构模型（以VAR为例）</h3>
 
-            <p>对固定机种 \(p\)，一个标准的 VAR(\(L\)) 模型可以写成：</p>
-            <div class="formula-block">
-                $$\mathbf{z}_{p,t}
+                    <p>对固定机种 \(p\)，一个标准的 VAR(\(L\)) 模型可以写成：</p>
+                    <div class="formula-block">
+                        $$\mathbf{z}_{p,t}
 =
 A^{(p)}_1 \mathbf{z}_{p,t-1}
 + A^{(p)}_2 \mathbf{z}_{p,t-2}
 + \dots
 + A^{(p)}_L \mathbf{z}_{p,t-L}
 + \boldsymbol{\varepsilon}_{p,t}$$
-            </div>
-
-            <p>其中：</p>
-            <ul>
-                <li>\(\mathbf{z}_{p,t} \in \mathbb{R}^S\)：机种 \(p\) 在时间 \(t\) 的跨店价格变化向量</li>
-                <li>\(A^{(p)}_\ell \in \mathbb{R}^{S \times S}\)：滞后 \(\ell\) 对应的影响矩阵</li>
-                <li>\(\boldsymbol{\varepsilon}_{p,t} \sim \mathcal{N}(0, \Sigma_p)\)：噪声项</li>
-            </ul>
-
-            <div class="highlight-box">
-                <h4>📊 解释</h4>
-                <ul>
-                    <li>\(A^{(p)}_\ell(i,j)\) 表示：在机种 \(p\) 上，店 \(j\) 在时间 \(t-\ell\) 的价格变化，对店 \(i\) 在时间 \(t\) 的价格变化的线性影响强度</li>
-                    <li>若 \(A^{(p)}_\ell(i,j)\) 在统计上显著非零，可以解释为"店 \(j\) 的变化（在滞后 \(\ell\)）Granger因果地影响店 \(i\)"</li>
-                </ul>
-            </div>
-
-            <p>可以对每个机种 \(p\) 估计一整套矩阵 \(A^{(p)}_{1..L}\)，也可以把多机种拼成更大的块结构模型。</p>
-
-            <h3>7. 因果图表示（跨店、跨机种）</h3>
-
-            <p>可以把上面的VAR参数或Granger结果转化为一个有向图：</p>
-
-            <h4>图的节点</h4>
-            <p>可以是「店铺维度」或「店铺 × 机种维度」：</p>
-            <div class="formula-block">
-                $$\mathcal{V} = \{(s,p)\ |\ s \in \mathcal{S}, p \in \mathcal{P}\}$$
-            </div>
-
-            <h4>有向边</h4>
-            <div class="formula-block">
-                $$(s',p) \to (s,p)$$
-            </div>
-            <p>若存在某个滞后 \(\ell\)，使得在机种 \(p\) 上的VAR中 \(A^{(p)}_\ell(s, s')\) 显著非零。</p>
-
-            <p>这样可以构造出一个<strong>"市场因果网络"</strong>：</p>
-            <ul>
-                <li>哪些店是 <strong>price leader</strong>（出度大、影响强）</li>
-                <li>哪些店是 <strong>follower</strong>（入度大）</li>
-                <li>不同机种 \(p\) 上的结构是否不同</li>
-            </ul>
-
-            <h3>8. 总结</h3>
-
-            <div class="highlight-box">
-                <h4>🎯 核心概述</h4>
-                <p>本系统处理一个三维时间序列：</p>
-                <div class="formula-block">
-                    $$\big\{X_{s,p,t}\big\}_{s \in \mathcal{S},\, p \in \mathcal{P},\, t \in \mathcal{T}}$$
-                </div>
-                <p>其中 \(X_{s,p,t}\) 主要包含价格 \(P_{s,p,t}\) 等特征。</p>
-
-                <p><strong>处理流程：</strong></p>
-                <ol>
-                    <li>清洗、时间对齐、差分与标准化 → 得到平稳的价格变化过程 \(Z_{s,p,t}\)</li>
-                    <li>按机种 \(p\) 组织成跨店向量时间序列 \(\mathbf{z}_{p,t}\)</li>
-                    <li>构建 VAR / 因果模型</li>
-                    <li>学习和分析店铺之间随时间演化的因果结构与价格传导关系</li>
-                </ol>
-            </div>
-        </div>
-
-        <div class="results-section">
-            <h2>Analysis Results</h2>
-            <div class="image-grid" id="imageGrid">
-                <!-- Image cards will be dynamically added here -->
-                <div class="image-card">
-                    <div class="image-card-header">
-                        <h3>Sample Result</h3>
                     </div>
-                    <div class="image-card-body">
-                        <div class="image-placeholder">
-                            No results yet. Run an analysis task to see results.
+
+                    <p>其中：</p>
+                    <ul>
+                        <li>\(\mathbf{z}_{p,t} \in \mathbb{R}^S\)：机种 \(p\) 在时间 \(t\) 的跨店价格变化向量</li>
+                        <li>\(A^{(p)}_\ell \in \mathbb{R}^{S \times S}\)：滞后 \(\ell\) 对应的影响矩阵</li>
+                        <li>\(\boldsymbol{\varepsilon}_{p,t} \sim \mathcal{N}(0, \Sigma_p)\)：噪声项</li>
+                    </ul>
+
+                    <div class="highlight-box">
+                        <h4>📊 解释</h4>
+                        <ul>
+                            <li>\(A^{(p)}_\ell(i,j)\) 表示：在机种 \(p\) 上，店 \(j\) 在时间 \(t-\ell\) 的价格变化，对店 \(i\) 在时间 \(t\) 的价格变化的线性影响强度</li>
+                            <li>若 \(A^{(p)}_\ell(i,j)\) 在统计上显著非零，可以解释为"店 \(j\) 的变化（在滞后 \(\ell\)）Granger因果地影响店 \(i\)"</li>
+                        </ul>
+                    </div>
+
+                    <p>可以对每个机种 \(p\) 估计一整套矩阵 \(A^{(p)}_{1..L}\)，也可以把多机种拼成更大的块结构模型。</p>
+
+                    <h3>7. 因果图表示（跨店、跨机种）</h3>
+
+                    <p>可以把上面的VAR参数或Granger结果转化为一个有向图：</p>
+
+                    <h4>图的节点</h4>
+                    <p>可以是「店铺维度」或「店铺 × 机种维度」：</p>
+                    <div class="formula-block">
+                        $$\mathcal{V} = \{(s,p)\ |\ s \in \mathcal{S}, p \in \mathcal{P}\}$$
+                    </div>
+
+                    <h4>有向边</h4>
+                    <div class="formula-block">
+                        $$(s',p) \to (s,p)$$
+                    </div>
+                    <p>若存在某个滞后 \(\ell\)，使得在机种 \(p\) 上的VAR中 \(A^{(p)}_\ell(s, s')\) 显著非零。</p>
+
+                    <p>这样可以构造出一个<strong>"市场因果网络"</strong>：</p>
+                    <ul>
+                        <li>哪些店是 <strong>price leader</strong>（出度大、影响强）</li>
+                        <li>哪些店是 <strong>follower</strong>（入度大）</li>
+                        <li>不同机种 \(p\) 上的结构是否不同</li>
+                    </ul>
+
+                    <h3>8. 总结</h3>
+
+                    <div class="highlight-box">
+                        <h4>🎯 核心概述</h4>
+                        <p>本系统处理一个三维时间序列：</p>
+                        <div class="formula-block">
+                            $$\big\{X_{s,p,t}\big\}_{s \in \mathcal{S},\, p \in \mathcal{P},\, t \in \mathcal{T}}$$
                         </div>
-                    </div>
-                    <div class="image-card-footer">
-                        Waiting for analysis...
+                        <p>其中 \(X_{s,p,t}\) 主要包含价格 \(P_{s,p,t}\) 等特征。</p>
+
+                        <p><strong>处理流程：</strong></p>
+                        <ol>
+                            <li>清洗、时间对齐、差分与标准化 → 得到平稳的价格变化过程 \(Z_{s,p,t}\)</li>
+                            <li>按机种 \(p\) 组织成跨店向量时间序列 \(\mathbf{z}_{p,t}\)</li>
+                            <li>构建 VAR / 因果模型</li>
+                            <li>学习和分析店铺之间随时间演化的因果结构与价格传导关系</li>
+                        </ol>
                     </div>
                 </div>
-            </div>
+            </details>
         </div>
     </div>
 
     <script>
+        // API endpoints
+        const API = {
+            iphones: '/AppleStockChecker/automl/iphones/',
+            createJob: '/AppleStockChecker/automl/jobs/create/',
+            batchCreate: '/AppleStockChecker/automl/jobs/batch-create/',
+            completedJobs: '/AppleStockChecker/automl/jobs/completed/',
+            jobResult: (id) => `/AppleStockChecker/automl/jobs/result/${id}/`,
+        };
+
+        let currentHeatmapChart = null;
+
+        // Initialize page
+        document.addEventListener('DOMContentLoaded', () => {
+            loadIphones();
+        });
+
         function showStatus(message, type = 'info') {
             const statusEl = document.getElementById('statusMessage');
             statusEl.textContent = message;
@@ -581,35 +794,6 @@ A^{(p)}_1 \mathbf{z}_{p,t-1}
             setTimeout(() => {
                 statusEl.style.display = 'none';
             }, 5000);
-        }
-
-        async function triggerTask(taskName) {
-            const button = event.target;
-            button.disabled = true;
-
-            try {
-                showStatus(`Triggering ${taskName}...`, 'info');
-
-                const response = await fetch(`/AppleStockChecker/automl/trigger/${taskName}/`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-CSRFToken': getCookie('csrftoken')
-                    }
-                });
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    showStatus(data.message || `Task ${taskName} triggered successfully!`, 'success');
-                } else {
-                    showStatus(data.error || 'Failed to trigger task', 'error');
-                }
-            } catch (error) {
-                showStatus(`Error: ${error.message}`, 'error');
-            } finally {
-                button.disabled = false;
-            }
         }
 
         function getCookie(name) {
@@ -627,25 +811,341 @@ A^{(p)}_1 \mathbf{z}_{p,t-1}
             return cookieValue;
         }
 
-        // Function to add image to grid (for future use)
-        function addImageToGrid(title, imagePath, timestamp) {
-            const imageGrid = document.getElementById('imageGrid');
+        async function loadIphones() {
+            try {
+                const response = await fetch(API.iphones);
+                const data = await response.json();
 
-            const card = document.createElement('div');
-            card.className = 'image-card';
-            card.innerHTML = `
-                <div class="image-card-header">
-                    <h3>${title}</h3>
+                const select = document.getElementById('iphoneSelect');
+                select.innerHTML = '<option value="">-- 请选择机型 --</option>';
+
+                if (data.status === 'success' && data.iphones.length > 0) {
+                    data.iphones.forEach(iphone => {
+                        const option = document.createElement('option');
+                        option.value = iphone.id;
+                        option.textContent = `${iphone.part_number} - ${iphone.model_name || 'N/A'}`;
+                        select.appendChild(option);
+                    });
+                } else {
+                    select.innerHTML = '<option value="">暂无可用机型</option>';
+                }
+            } catch (error) {
+                console.error('Error loading iPhones:', error);
+                showStatus('加载机型列表失败', 'error');
+            }
+        }
+
+        async function analyzeSingle() {
+            const iphoneId = document.getElementById('iphoneSelect').value;
+            const days = document.getElementById('daysSelect').value;
+
+            if (!iphoneId) {
+                showStatus('请先选择机型', 'error');
+                return;
+            }
+
+            try {
+                showStatus(`正在创建分析任务... (机型 ID: ${iphoneId}, 窗口: ${days}天)`, 'info');
+
+                const response = await fetch(API.createJob, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': getCookie('csrftoken')
+                    },
+                    body: JSON.stringify({
+                        iphone_id: parseInt(iphoneId),
+                        days: parseInt(days)
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    showStatus(`分析任务已创建成功! Job ID: ${data.job_id}`, 'success');
+                } else {
+                    showStatus(data.error || '创建任务失败', 'error');
+                }
+            } catch (error) {
+                console.error('Error creating job:', error);
+                showStatus(`错误: ${error.message}`, 'error');
+            }
+        }
+
+        async function analyzeAll() {
+            const days = document.getElementById('daysSelect').value;
+
+            if (!confirm(`确定要批量分析所有机型吗？(分析窗口: ${days}天)`)) {
+                return;
+            }
+
+            try {
+                showStatus(`正在批量创建分析任务... (窗口: ${days}天)`, 'info');
+
+                const response = await fetch(API.batchCreate, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': getCookie('csrftoken')
+                    },
+                    body: JSON.stringify({
+                        days: parseInt(days)
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    showStatus(`批量任务已创建! 共 ${data.jobs_created.length} 个任务`, 'success');
+                } else {
+                    showStatus(data.error || '批量创建任务失败', 'error');
+                }
+            } catch (error) {
+                console.error('Error batch creating jobs:', error);
+                showStatus(`错误: ${error.message}`, 'error');
+            }
+        }
+
+        async function viewResults() {
+            try {
+                showStatus('正在加载历史结果...', 'info');
+
+                const response = await fetch(API.completedJobs);
+                const data = await response.json();
+
+                if (response.ok) {
+                    const historySelect = document.getElementById('historySelect');
+                    historySelect.innerHTML = '<option value="">-- 请选择 --</option>';
+
+                    if (data.status === 'success' && data.count > 0) {
+                        data.results.forEach(group => {
+                            const optgroup = document.createElement('optgroup');
+                            optgroup.label = `${group.part_number} (${group.jobs.length} 条记录)`;
+
+                            group.jobs.forEach(job => {
+                                const option = document.createElement('option');
+                                option.value = job.id;
+                                option.textContent = `${job.created_at} - ${job.status}`;
+                                optgroup.appendChild(option);
+                            });
+
+                            historySelect.appendChild(optgroup);
+                        });
+
+                        document.getElementById('historySection').style.display = 'block';
+                        showStatus(`找到 ${data.count} 条历史记录`, 'success');
+                    } else {
+                        showStatus('暂无历史记录', 'info');
+                    }
+                } else {
+                    showStatus(data.error || '加载历史记录失败', 'error');
+                }
+            } catch (error) {
+                console.error('Error loading results:', error);
+                showStatus(`错误: ${error.message}`, 'error');
+            }
+        }
+
+        async function loadSelectedResult() {
+            const jobId = document.getElementById('historySelect').value;
+
+            if (!jobId) {
+                return;
+            }
+
+            try {
+                showStatus(`正在加载 Job #${jobId} 的分析结果...`, 'info');
+
+                const response = await fetch(API.jobResult(jobId));
+                const data = await response.json();
+
+                if (response.ok) {
+                    displayResult(data);
+                    showStatus('结果加载成功', 'success');
+                } else {
+                    showStatus(data.error || '加载结果失败', 'error');
+                }
+            } catch (error) {
+                console.error('Error loading job result:', error);
+                showStatus(`错误: ${error.message}`, 'error');
+            }
+        }
+
+        function displayResult(data) {
+            const resultsSection = document.getElementById('resultsSection');
+            resultsSection.classList.add('visible');
+
+            // Display summary cards
+            const summaryGrid = document.getElementById('summaryGrid');
+            summaryGrid.innerHTML = `
+                <div class="summary-card">
+                    <h3>分析店铺数</h3>
+                    <p>${data.var_model?.n_shops || 'N/A'}</p>
                 </div>
-                <div class="image-card-body">
-                    <img src="${imagePath}" alt="${title}" onerror="this.parentElement.innerHTML='<div class=\\'image-placeholder\\'>Failed to load image</div>'">
+                <div class="summary-card">
+                    <h3>VAR 滞后阶数</h3>
+                    <p>${data.var_model?.lag_order || 'N/A'}</p>
                 </div>
-                <div class="image-card-footer">
-                    Generated: ${timestamp || new Date().toLocaleString()}
+                <div class="summary-card">
+                    <h3>因果边数量</h3>
+                    <p>${data.causal_edges?.length || 0}</p>
+                </div>
+                <div class="summary-card">
+                    <h3>模型 AIC</h3>
+                    <p>${data.var_model?.aic ? data.var_model.aic.toFixed(2) : 'N/A'}</p>
                 </div>
             `;
 
-            imageGrid.appendChild(card);
+            // Display leader shops
+            if (data.leader_shops && data.leader_shops.length > 0) {
+                displayLeaderShops(data.leader_shops);
+            }
+
+            // Display heatmap
+            if (data.adjacency_matrix) {
+                displayHeatmap(data.adjacency_matrix);
+            }
+
+            // Display causal edges
+            if (data.causal_edges && data.causal_edges.length > 0) {
+                displayCausalEdges(data.causal_edges);
+            }
+
+            // Scroll to results
+            resultsSection.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function displayLeaderShops(leaderShops) {
+            const tbody = document.querySelector('#leaderShopsTable tbody');
+            tbody.innerHTML = '';
+
+            leaderShops.forEach((shop, index) => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td><strong>#${index + 1}</strong></td>
+                    <td>${shop.shop_name}</td>
+                    <td><strong>${shop.influence.toFixed(4)}</strong></td>
+                    <td>${shop.outgoing_count}</td>
+                    <td>${shop.avg_weight.toFixed(4)}</td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        function displayHeatmap(adjacencyMatrix) {
+            const ctx = document.getElementById('heatmapChart').getContext('2d');
+
+            // Destroy previous chart if exists
+            if (currentHeatmapChart) {
+                currentHeatmapChart.destroy();
+            }
+
+            // Prepare data for Chart.js matrix
+            const matrixData = [];
+            const shopNames = adjacencyMatrix.shop_names;
+
+            for (let i = 0; i < adjacencyMatrix.matrix.length; i++) {
+                for (let j = 0; j < adjacencyMatrix.matrix[i].length; j++) {
+                    matrixData.push({
+                        x: shopNames[j],
+                        y: shopNames[i],
+                        v: adjacencyMatrix.matrix[i][j]
+                    });
+                }
+            }
+
+            currentHeatmapChart = new Chart(ctx, {
+                type: 'matrix',
+                data: {
+                    datasets: [{
+                        label: 'Causal Influence',
+                        data: matrixData,
+                        backgroundColor(context) {
+                            const value = context.dataset.data[context.dataIndex].v;
+                            const alpha = Math.abs(value);
+                            return value > 0
+                                ? `rgba(59, 130, 246, ${alpha})`
+                                : `rgba(239, 68, 68, ${Math.min(alpha, 0.8)})`;
+                        },
+                        borderWidth: 1,
+                        borderColor: 'rgba(0, 0, 0, 0.1)',
+                        width: ({chart}) => (chart.chartArea || {}).width / shopNames.length - 1,
+                        height: ({chart}) => (chart.chartArea || {}).height / shopNames.length - 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            callbacks: {
+                                title() {
+                                    return '';
+                                },
+                                label(context) {
+                                    const v = context.dataset.data[context.dataIndex];
+                                    return [
+                                        `Source: ${v.x}`,
+                                        `Target: ${v.y}`,
+                                        `Weight: ${v.v.toFixed(4)}`
+                                    ];
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'category',
+                            labels: shopNames,
+                            ticks: {
+                                display: true,
+                                autoSkip: false,
+                                maxRotation: 90,
+                                minRotation: 45
+                            },
+                            grid: {
+                                display: false
+                            }
+                        },
+                        y: {
+                            type: 'category',
+                            labels: shopNames,
+                            offset: true,
+                            ticks: {
+                                display: true
+                            },
+                            grid: {
+                                display: false
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function displayCausalEdges(causalEdges) {
+            const tbody = document.querySelector('#causalEdgesTable tbody');
+            tbody.innerHTML = '';
+
+            causalEdges.forEach(edge => {
+                const row = document.createElement('tr');
+                const significanceBadge = edge.p_value < 0.05
+                    ? '<span class="badge high">显著 ✓</span>'
+                    : '<span class="badge low">不显著</span>';
+
+                row.innerHTML = `
+                    <td>${edge.source_shop}</td>
+                    <td>${edge.target_shop}</td>
+                    <td>${edge.lag}</td>
+                    <td>${edge.weight.toFixed(4)}</td>
+                    <td>${edge.p_value.toFixed(4)}</td>
+                    <td>${significanceBadge}</td>
+                `;
+                tbody.appendChild(row);
+            });
         }
     </script>
 </body>

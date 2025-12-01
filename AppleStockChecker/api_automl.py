@@ -22,7 +22,17 @@ from AppleStockChecker.tasks.automl_tasks import (
     run_var_for_job,
     run_impact_for_job,
 )
-from AppleStockChecker.models import AutomlCausalJob, Iphone
+from AppleStockChecker.models import (
+    AutomlCausalJob,
+    AutomlCausalEdge,
+    AutomlGrangerResult,
+    AutomlVarModel,
+    AutomlPreprocessedSeries,
+    Iphone,
+    SecondHandShop,
+)
+from django.db.models import Count, Q
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -283,3 +293,356 @@ class AutoMLJobStatusView(APIView):
             "created_at": job.created_at.isoformat(),
             "updated_at": job.updated_at.isoformat(),
         }
+
+
+# ============================================================================
+# 机型管理 API
+# ============================================================================
+
+@method_decorator(csrf_exempt, name='dispatch')
+class IphoneListView(APIView):
+    """
+    获取所有机型列表
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request, *args, **kwargs):
+        try:
+            # 获取所有有数据的机型
+            iphones = Iphone.objects.filter(
+                purchasing_time_analysis__isnull=False
+            ).distinct().order_by('part_number')
+
+            return Response({
+                "status": "success",
+                "count": iphones.count(),
+                "iphones": [
+                    {
+                        "id": iphone.id,
+                        "part_number": iphone.part_number,
+                        "model_name": iphone.model_name or iphone.part_number,
+                    }
+                    for iphone in iphones
+                ]
+            }, status=http_status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error fetching iPhone list: {str(e)}", exc_info=True)
+            return Response({
+                "status": "error",
+                "error": str(e)
+            }, status=http_status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class BatchCreateAutoMLJobsView(APIView):
+    """
+    批量创建 AutoML 任务（所有机型或指定机型列表）
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        try:
+            days = request.data.get('days', 7)
+            iphone_ids = request.data.get('iphone_ids', None)  # 如果为 None，则分析所有机型
+
+            now = timezone.now()
+            window_end = now
+            window_start = now - timezone.timedelta(days=days)
+
+            if iphone_ids:
+                # 指定机型
+                iphones = Iphone.objects.filter(id__in=iphone_ids)
+            else:
+                # 所有有数据的机型
+                iphones = Iphone.objects.filter(
+                    purchasing_time_analysis__Timestamp_Time__gte=window_start
+                ).distinct()
+
+            created_jobs = []
+            existing_jobs = []
+
+            for iphone in iphones:
+                job, created = AutomlCausalJob.objects.get_or_create(
+                    iphone=iphone,
+                    window_start=window_start,
+                    window_end=window_end,
+                    bucket_freq="10min",
+                    defaults={"priority": 100},
+                )
+
+                # 触发预处理任务
+                if job.preprocessing_status in [
+                    AutomlCausalJob.StageStatus.PENDING,
+                    AutomlCausalJob.StageStatus.FAILED,
+                ]:
+                    task = run_preprocessing_for_job.apply_async(
+                        args=[job.id],
+                        queue="automl_preprocessing"
+                    )
+                    logger.info(f"Created job {job.id} for {iphone.part_number}, task {task.id}")
+
+                if created:
+                    created_jobs.append({
+                        "job_id": job.id,
+                        "iphone": iphone.part_number,
+                    })
+                else:
+                    existing_jobs.append({
+                        "job_id": job.id,
+                        "iphone": iphone.part_number,
+                        "status": job.preprocessing_status,
+                    })
+
+            return Response({
+                "status": "success",
+                "created_count": len(created_jobs),
+                "existing_count": len(existing_jobs),
+                "created_jobs": created_jobs,
+                "existing_jobs": existing_jobs,
+            }, status=http_status.HTTP_201_CREATED)
+
+        except Exception as e:
+            logger.error(f"Error batch creating AutoML jobs: {str(e)}", exc_info=True)
+            return Response({
+                "status": "error",
+                "error": str(e)
+            }, status=http_status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ============================================================================
+# 结果查询 API
+# ============================================================================
+
+@method_decorator(csrf_exempt, name='dispatch')
+class AutoMLJobResultView(APIView):
+    """
+    获取 AutoML 任务的详细结果
+    包括 VAR 系数、Granger 结果、因果边
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request, job_id, *args, **kwargs):
+        try:
+            job = AutomlCausalJob.objects.select_related('iphone').get(pk=job_id)
+
+            # 检查任务是否完成
+            if job.impact_status != AutomlCausalJob.StageStatus.SUCCESS:
+                return Response({
+                    "status": "incomplete",
+                    "message": "Analysis not yet complete",
+                    "preprocessing_status": job.preprocessing_status,
+                    "cause_effect_status": job.cause_effect_status,
+                    "impact_status": job.impact_status,
+                }, status=http_status.HTTP_200_OK)
+
+            # 获取 VAR 模型
+            var_model = AutomlVarModel.objects.filter(job=job).first()
+
+            # 获取因果边（显著的因果关系）
+            causal_edges = AutomlCausalEdge.objects.filter(
+                job=job,
+                enabled=True
+            ).select_related('cause_shop', 'effect_shop').order_by('-weight')
+
+            # 获取 Granger 结果
+            granger_results = AutomlGrangerResult.objects.filter(
+                job=job,
+                is_significant=True
+            ).select_related('cause_shop', 'effect_shop').order_by('min_pvalue')
+
+            # 计算领头店排名
+            leader_shops = self._calculate_leader_shops(causal_edges)
+
+            # 构建因果邻接矩阵
+            adjacency_matrix = self._build_adjacency_matrix(causal_edges, var_model)
+
+            return Response({
+                "status": "success",
+                "job": {
+                    "id": job.id,
+                    "iphone": job.iphone.part_number,
+                    "window_start": job.window_start.isoformat(),
+                    "window_end": job.window_end.isoformat(),
+                },
+                "var_model": {
+                    "shop_ids": var_model.shop_ids if var_model else [],
+                    "lag_order": var_model.lag_order if var_model else 0,
+                    "aic": var_model.aic if var_model else None,
+                    "bic": var_model.bic if var_model else None,
+                    "sample_size": var_model.sample_size if var_model else 0,
+                } if var_model else None,
+                "causal_edges": [
+                    {
+                        "cause_shop_id": edge.cause_shop_id,
+                        "cause_shop_name": edge.cause_shop.name,
+                        "effect_shop_id": edge.effect_shop_id,
+                        "effect_shop_name": edge.effect_shop.name,
+                        "weight": edge.weight,
+                        "min_pvalue": edge.min_pvalue,
+                        "confidence": edge.confidence,
+                        "main_lag": edge.main_lag,
+                    }
+                    for edge in causal_edges
+                ],
+                "granger_results": [
+                    {
+                        "cause_shop_id": gr.cause_shop_id,
+                        "cause_shop_name": gr.cause_shop.name,
+                        "effect_shop_id": gr.effect_shop_id,
+                        "effect_shop_name": gr.effect_shop.name,
+                        "min_pvalue": gr.min_pvalue,
+                        "best_lag": gr.best_lag,
+                        "pvalues_by_lag": gr.pvalues_by_lag,
+                    }
+                    for gr in granger_results[:20]  # 限制返回数量
+                ],
+                "leader_shops": leader_shops,
+                "adjacency_matrix": adjacency_matrix,
+            }, status=http_status.HTTP_200_OK)
+
+        except AutomlCausalJob.DoesNotExist:
+            return Response({
+                "status": "error",
+                "error": f"Job with id {job_id} not found"
+            }, status=http_status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Error fetching AutoML job result: {str(e)}", exc_info=True)
+            return Response({
+                "status": "error",
+                "error": str(e)
+            }, status=http_status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def _calculate_leader_shops(self, causal_edges):
+        """
+        计算领头店排名
+        领头店 = 对其他店铺有最多/最强因果影响的店铺
+        """
+        shop_influence = {}
+
+        for edge in causal_edges:
+            cause_id = edge.cause_shop_id
+            if cause_id not in shop_influence:
+                shop_influence[cause_id] = {
+                    "shop_id": cause_id,
+                    "shop_name": edge.cause_shop.name,
+                    "outgoing_count": 0,
+                    "total_weight": 0.0,
+                    "avg_weight": 0.0,
+                    "incoming_count": 0,
+                }
+
+            shop_influence[cause_id]["outgoing_count"] += 1
+            shop_influence[cause_id]["total_weight"] += edge.weight
+
+            # 同时统计被影响的次数
+            effect_id = edge.effect_shop_id
+            if effect_id not in shop_influence:
+                shop_influence[effect_id] = {
+                    "shop_id": effect_id,
+                    "shop_name": edge.effect_shop.name,
+                    "outgoing_count": 0,
+                    "total_weight": 0.0,
+                    "avg_weight": 0.0,
+                    "incoming_count": 0,
+                }
+            shop_influence[effect_id]["incoming_count"] += 1
+
+        # 计算平均权重
+        for shop_id, data in shop_influence.items():
+            if data["outgoing_count"] > 0:
+                data["avg_weight"] = data["total_weight"] / data["outgoing_count"]
+
+        # 按影响力排序（出度 * 平均权重）
+        ranked_shops = sorted(
+            shop_influence.values(),
+            key=lambda x: x["outgoing_count"] * x["avg_weight"],
+            reverse=True
+        )
+
+        return ranked_shops[:10]  # 返回前10名
+
+    def _build_adjacency_matrix(self, causal_edges, var_model):
+        """
+        构建因果邻接矩阵
+        矩阵元素 A[i][j] = 店铺 j 对店铺 i 的因果影响强度
+        """
+        if not var_model:
+            return None
+
+        shop_ids = var_model.shop_ids
+        n_shops = len(shop_ids)
+
+        # 初始化邻接矩阵
+        matrix = [[0.0 for _ in range(n_shops)] for _ in range(n_shops)]
+
+        # 填充因果边的权重
+        for edge in causal_edges:
+            try:
+                cause_idx = shop_ids.index(edge.cause_shop_id)
+                effect_idx = shop_ids.index(edge.effect_shop_id)
+                matrix[effect_idx][cause_idx] = edge.weight
+            except ValueError:
+                continue
+
+        # 获取店铺名称
+        shop_names = []
+        for shop_id in shop_ids:
+            try:
+                shop = SecondHandShop.objects.get(pk=shop_id)
+                shop_names.append(shop.name)
+            except SecondHandShop.DoesNotExist:
+                shop_names.append(f"Shop {shop_id}")
+
+        return {
+            "shop_ids": shop_ids,
+            "shop_names": shop_names,
+            "matrix": matrix,
+            "size": n_shops,
+        }
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class CompletedJobsListView(APIView):
+    """
+    获取已完成的 AutoML 任务列表（按机型分组）
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request, *args, **kwargs):
+        try:
+            # 只获取已完成的任务
+            completed_jobs = AutomlCausalJob.objects.filter(
+                impact_status=AutomlCausalJob.StageStatus.SUCCESS
+            ).select_related('iphone').order_by('-created_at')
+
+            # 按机型分组
+            jobs_by_iphone = {}
+            for job in completed_jobs:
+                iphone_id = job.iphone_id
+                if iphone_id not in jobs_by_iphone:
+                    jobs_by_iphone[iphone_id] = {
+                        "iphone_id": iphone_id,
+                        "iphone_name": job.iphone.part_number,
+                        "jobs": []
+                    }
+
+                jobs_by_iphone[iphone_id]["jobs"].append({
+                    "job_id": job.id,
+                    "window_start": job.window_start.isoformat(),
+                    "window_end": job.window_end.isoformat(),
+                    "created_at": job.created_at.isoformat(),
+                })
+
+            return Response({
+                "status": "success",
+                "count": len(jobs_by_iphone),
+                "jobs_by_iphone": list(jobs_by_iphone.values()),
+            }, status=http_status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error fetching completed jobs: {str(e)}", exc_info=True)
+            return Response({
+                "status": "error",
+                "error": str(e)
+            }, status=http_status.HTTP_500_INTERNAL_SERVER_ERROR)
