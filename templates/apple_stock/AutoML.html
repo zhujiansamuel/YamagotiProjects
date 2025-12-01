@@ -823,7 +823,23 @@ A^{(p)}_1 \mathbf{z}_{p,t-1}
                     data.iphones.forEach(iphone => {
                         const option = document.createElement('option');
                         option.value = iphone.id;
-                        option.textContent = `${iphone.part_number} - ${iphone.model_name || 'N/A'}`;
+
+                        // 构建详细的显示文本
+                        let displayText = iphone.part_number;
+
+                        if (iphone.model_name) {
+                            displayText += ` - ${iphone.model_name}`;
+                        }
+
+                        if (iphone.capacity_gb) {
+                            displayText += ` ${iphone.capacity_gb}GB`;
+                        }
+
+                        if (iphone.color) {
+                            displayText += ` ${iphone.color}`;
+                        }
+
+                        option.textContent = displayText;
                         select.appendChild(option);
                     });
                 } else {
