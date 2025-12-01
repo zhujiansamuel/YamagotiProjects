@@ -4844,7 +4844,7 @@ def _iter_records(df: pd.DataFrame):
     if all(k in cols for k in ["jan", "price", "time-scraped"]):
         JAN_col, price_col, ts_col = cols["jan"], cols["price"], cols["time-scraped"]
         for _, row in df.iterrows():
-            yield {"JAN": row.get(JAN_col), "price": row.get(price_col), "time-scraped": row.get(ts_col)}
+            yield {"JAN": row[JAN_col], "price": row[price_col], "time-scraped": row[ts_col]}
         return
 
     # B) JSON 列
@@ -4854,8 +4854,8 @@ def _iter_records(df: pd.DataFrame):
         return
 
     for _, row in df.iterrows():
-        default_ts = row.get(ts_col)
-        cell = row.get(json_col)
+        default_ts = row[ts_col] if ts_col else None
+        cell = row[json_col]
         parsed = None
 
         if isinstance(cell, (dict, list)):
@@ -4894,26 +4894,39 @@ def clean_shop1(df: pd.DataFrame) -> pd.DataFrame:
     shop_name 固定为「買取商店」。
     仅输出 _load_iphone17_info_df_for_shop2() 中存在的机型。
     """
+    print(f"shop1 清洗器: 输入 DataFrame 形状={df.shape}, 列={list(df.columns)}")
+
     # 准备 JAN->PN 映射
     info_df = _load_iphone17_info_df_for_shop2()
     jan_map = _build_jan_to_pn_map_shop1(info_df)
+    print(f"shop1 清洗器: JAN 映射表大小={len(jan_map)}, 前5个映射={dict(list(jan_map.items())[:5])}")
 
     rows: List[dict] = []
+    total_records = 0
+    skipped_no_jan = 0
+    skipped_no_pn = 0
+    skipped_no_price = 0
 
     for rec in _iter_records(df):
+        total_records += 1
         jan = _extract_jan_digits_shop1(rec.get("JAN"))
 
         if not jan:
+            skipped_no_jan += 1
             continue
         pn = jan_map.get(jan)
 
         if not pn:
+            skipped_no_pn += 1
+            if total_records <= 3:  # 只打印前几条以避免日志过多
+                print(f"  跳过记录 (JAN={jan} 未找到映射): {rec}")
             continue
 
         price_val = rec.get("price")
         # 既支持数值，也支持 "181,500" / "181500円"
         price_new = to_int_yen(price_val)
         if price_new is None:
+            skipped_no_price += 1
             continue
 
         recorded_at = parse_dt_aware(rec.get("time-scraped"))
@@ -4925,10 +4938,13 @@ def clean_shop1(df: pd.DataFrame) -> pd.DataFrame:
             "recorded_at": recorded_at,
         })
 
+    print(f"shop1 清洗器: 处理了 {total_records} 条记录, 跳过 {skipped_no_jan} 条(无JAN), "
+          f"{skipped_no_pn} 条(JAN未映射), {skipped_no_price} 条(价格无效)")
+    print(f"shop1 清洗器: 成功生成 {len(rows)} 条清洗结果")
+
     out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
     if not out.empty:
         out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
         out["part_number"] = out["part_number"].astype(str)
         out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
-    # print("+++++++++++++++out",out)
     return out
