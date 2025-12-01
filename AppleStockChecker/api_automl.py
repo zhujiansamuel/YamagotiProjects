@@ -550,15 +550,17 @@ class AutoMLJobResultView(APIView):
                 }
             shop_influence[effect_id]["incoming_count"] += 1
 
-        # 计算平均权重
+        # 计算平均权重和影响力
         for shop_id, data in shop_influence.items():
             if data["outgoing_count"] > 0:
                 data["avg_weight"] = data["total_weight"] / data["outgoing_count"]
+            # 计算影响力得分：出度数量 × 平均权重
+            data["influence"] = data["outgoing_count"] * data["avg_weight"]
 
-        # 按影响力排序（出度 * 平均权重）
+        # 按影响力排序
         ranked_shops = sorted(
             shop_influence.values(),
-            key=lambda x: x["outgoing_count"] * x["avg_weight"],
+            key=lambda x: x["influence"],
             reverse=True
         )
 
