@@ -392,9 +392,71 @@ def run_var_for_job(self, job_id: int):
             job.save(update_fields=["cause_effect_status", "cause_effect_finished_at"])
             return {"status": "skipped", "reason": "insufficient_data"}
 
+        # 数据质量检查和预处理
+        logger.info(f"[Job {job_id}] Performing data quality checks...")
+
+        # 1. 移除常数列（方差为0或接近0）
+        std_values = panel.std()
+        constant_cols = std_values[std_values < 1e-8].index.tolist()
+        if constant_cols:
+            logger.warning(f"[Job {job_id}] Removing {len(constant_cols)} constant columns (near-zero variance): {constant_cols}")
+            panel = panel.drop(columns=constant_cols)
+
+        if panel.shape[1] < 2:
+            logger.warning(f"[Job {job_id}] After removing constant columns, only {panel.shape[1]} shops remain, skipping")
+            job.cause_effect_status = AutomlCausalJob.StageStatus.SKIPPED
+            job.cause_effect_finished_at = timezone.now()
+            job.save(update_fields=["cause_effect_status", "cause_effect_finished_at"])
+            return {"status": "skipped", "reason": "insufficient_variance"}
+
+        # 2. 检查并移除高度相关的列（相关系数 > 0.999）
+        corr_matrix = panel.corr().abs()
+        # 将对角线设为0，避免自相关
+        np.fill_diagonal(corr_matrix.values, 0)
+
+        highly_correlated = []
+        checked = set()
+        for col in corr_matrix.columns:
+            if col in checked:
+                continue
+            # 找出与当前列高度相关的其他列
+            correlated_cols = corr_matrix[col][corr_matrix[col] > 0.999].index.tolist()
+            if correlated_cols:
+                # 保留第一个，移除其他的
+                for c in correlated_cols:
+                    if c != col and c not in checked:
+                        highly_correlated.append(c)
+                        checked.add(c)
+
+        if highly_correlated:
+            logger.warning(f"[Job {job_id}] Removing {len(highly_correlated)} highly correlated columns: {highly_correlated}")
+            panel = panel.drop(columns=highly_correlated)
+
+        if panel.shape[1] < 2:
+            logger.warning(f"[Job {job_id}] After removing correlated columns, only {panel.shape[1]} shops remain, skipping")
+            job.cause_effect_status = AutomlCausalJob.StageStatus.SKIPPED
+            job.cause_effect_finished_at = timezone.now()
+            job.save(update_fields=["cause_effect_status", "cause_effect_finished_at"])
+            return {"status": "skipped", "reason": "excessive_correlation"}
+
+        # 3. 添加微小的随机噪声来提高数值稳定性（仅当需要时）
+        # 检查条件数
+        try:
+            condition_number = np.linalg.cond(panel.values)
+            if condition_number > 1e10:
+                logger.warning(f"[Job {job_id}] High condition number ({condition_number:.2e}), adding small noise")
+                # 添加非常小的噪声（相对于数据标准差的 0.01%）
+                noise_scale = panel.std().mean() * 0.0001
+                panel = panel + np.random.normal(0, noise_scale, panel.shape)
+        except Exception as e:
+            logger.warning(f"[Job {job_id}] Could not compute condition number: {e}")
+
+        logger.info(f"[Job {job_id}] Final panel shape for VAR: {panel.shape} (T={panel.shape[0]}, S={panel.shape[1]})")
+
         # 3) 拟合 VAR
         model = VAR(panel)
-        var_res = model.fit(maxlags=12, ic="aic")
+        # 使用更稳健的参数
+        var_res = model.fit(maxlags=min(12, panel.shape[0] // 5), ic="aic", trend="c")
 
         logger.info(f"[Job {job_id}] VAR fitted: lag_order={var_res.k_ar}, AIC={var_res.aic:.2f}")
 
