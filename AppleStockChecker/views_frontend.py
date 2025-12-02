@@ -61,3 +61,7 @@ class AutoMLView(TemplateView):
 
 class RawPriceChartsView(TemplateView):
     template_name = "apple_stock/raw_price_charts.html"
+
+
+class PstaRawChartsView(TemplateView):
+    template_name = "apple_stock/psta_raw_charts.html"
