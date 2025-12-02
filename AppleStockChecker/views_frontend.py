@@ -57,3 +57,7 @@ class StatisticalDataSummaryView(TemplateView):
 
 class AutoMLView(TemplateView):
     template_name = "apple_stock/AutoML.html"
+
+
+class RawPriceChartsView(TemplateView):
+    template_name = "apple_stock/raw_price_charts.html"
