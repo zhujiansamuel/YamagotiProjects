@@ -44,6 +44,7 @@ from .views_frontend import (
     StockDashboardView,
     StatisticalDataSummaryView,
     AutoMLView,
+    RawPriceChartsView,
 )
 from .api_trends_TrendsAvgOnly import TrendsAvgOnlyApiView
 from .api_trends_model_colors import trends_model_colors
@@ -206,6 +207,8 @@ urlpatterns = [
                   # CSV 导入：二手店回收价格((好像这里没有清洗数据))
                   path("resale-trend-pn-merged/", ResaleTrendPNMergedView.as_view(), name="resale-trend-pn-merged"),
                   # 二手店回收价历史（按 PN → 各店）
+                  path("raw-price-charts/", RawPriceChartsView.as_view(), name="raw-price-charts"),
+                  # 最近2天所有机种原始价格数据图表
                   path("delivery-trend/", DeliveryTrendView.as_view(), name="delivery-trend"),  # 送达天数趋势（按 PN → 门店）
 
                   path("import-tradein-csv/", ImportTradeinCSVView.as_view(), name="import-tradein-csv"),

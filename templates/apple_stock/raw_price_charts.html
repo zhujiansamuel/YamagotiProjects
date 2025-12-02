@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>最近2天所有机种原始价格数据</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,Microsoft YaHei,Segoe UI Emoji,Segoe UI Symbol,sans-serif;background:#fafafa;color:#111;margin:0}
+    .wrap{max-width:1400px;margin:0 auto;padding:16px}
+    .card{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:16px;margin-bottom:20px}
+    .header{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:16px;margin-bottom:20px;position:sticky;top:0;z-index:100}
+    .chart-container{margin-bottom:32px}
+    .chart-title{font-size:16px;font-weight:600;color:#111;margin-bottom:8px;padding:8px 0}
+    .chart-meta{font-size:12px;color:#6b7280;margin-bottom:8px}
+    .loading{text-align:center;padding:40px;font-size:14px;color:#6b7280}
+    .error{text-align:center;padding:40px;font-size:14px;color:#ef4444}
+    button{padding:9px 14px;border-radius:10px;border:1px solid #111;background:#111;color:#fff;cursor:pointer;font-size:14px}
+    button:hover{background:#333}
+    .controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+    input[type=number]{width:80px;padding:8px 10px;border:1px solid #e5e7eb;border-radius:10px;outline:0;background:#fff}
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <h2 style="margin:0 0 12px 0">最近2天所有机种原始价格数据</h2>
+    <div class="controls">
+      <label style="display:flex;gap:6px;align-items:center">
+        天数: <input id="daysInput" type="number" min="1" max="7" value="2"/>
+      </label>
+      <label style="display:flex;gap:6px;align-items:center">
+        <input id="showPoints" type="checkbox"/> 显示点
+      </label>
+      <button id="refreshBtn">刷新</button>
+    </div>
+    <div id="summary" style="margin-top:8px;font-size:12px;color:#6b7280"></div>
+  </div>
+
+  <div id="loading" class="loading">正在加载数据...</div>
+  <div id="error" class="error" style="display:none"></div>
+  <div id="charts"></div>
+</div>
+
+<script>
+const API_BASE = "/AppleStockChecker";
+const PALETTE = [
+  "#2563eb","#16a34a","#f59e0b","#ef4444","#8b5cf6",
+  "#06b6d4","#a855f7","#f97316","#22c55e","#3b82f6",
+  "#e11d48","#14b8a6","#7c3aed","#0ea5e9","#84cc16",
+  "#ec4899","#10b981","#f43f5e","#6366f1","#14b8a6"
+];
+
+let charts = {};  // 存储所有图表实例
+
+// 认证与拉取
+function handleAuth(resp){
+  if (resp.status === 401 || resp.status === 403 || (resp.redirected && resp.url.includes("/accounts/login"))){
+    const next = encodeURIComponent(location.pathname + location.search);
+    location.href = `/accounts/login/?next=${next}`;
+    return false;
+  }
+  return true;
+}
+
+async function fetchJSON(url){
+  const r = await fetch(url, {credentials:"same-origin"});
+  if(!handleAuth(r)) throw new Error("未登录");
+  if(!r.ok) throw new Error(`请求失败：${r.status}`);
+  return r.json();
+}
+
+// 绘制单个图表
+function drawChart(containerId, pn, iphoneLabel, datasets, showPoints){
+  const canvas = document.createElement('canvas');
+  canvas.height = 300;
+  containerId.appendChild(canvas);
+
+  const dsLines = datasets.map((ds,i)=>({
+    label: ds.label,
+    data:  ds.data.map(p=>({x:new Date(p.x), y:p.y})),
+    borderColor: PALETTE[i % PALETTE.length],
+    backgroundColor: PALETTE[i % PALETTE.length],
+    borderWidth: 2,
+    pointRadius: showPoints ? 3 : 0,
+    spanGaps: true,
+    tension: 0.2
+  }));
+
+  const chart = new Chart(canvas, {
+    type: 'line',
+    data: { datasets: dsLines },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: {
+          type: 'time',
+          time: { unit: 'hour' },
+          title: { display: true, text: '记录时间' }
+        },
+        y: {
+          beginAtZero: false,
+          title: { display: true, text: '价格（円）' }
+        }
+      },
+      plugins: {
+        legend: {
+          position: 'top',
+          labels: { boxWidth: 12, padding: 8, font: { size: 11 } }
+        },
+        tooltip: {
+          callbacks: {
+            label: it => `${it.dataset.label}: ¥${Number(it.parsed.y).toLocaleString()}`
+          }
+        }
+      }
+    }
+  });
+
+  charts[pn] = chart;
+}
+
+// 主流程
+async function loadAllCharts(){
+  const days = Math.max(1, parseInt(document.getElementById('daysInput').value || '2', 10));
+  const showPoints = document.getElementById('showPoints').checked;
+
+  document.getElementById('loading').style.display = 'block';
+  document.getElementById('error').style.display = 'none';
+  document.getElementById('charts').innerHTML = '';
+  document.getElementById('summary').textContent = '';
+
+  // 销毁旧图表
+  Object.values(charts).forEach(c => c.destroy());
+  charts = {};
+
+  try {
+    // 1. 获取所有机型
+    const iphonesResp = await fetchJSON(`${API_BASE}/options/iphones/`);
+    const iphones = iphonesResp || [];
+
+    if (iphones.length === 0) {
+      throw new Error("未找到机型数据");
+    }
+
+    // 2. 计算时间范围
+    const recorded_after = new Date(Date.now() - days*24*60*60*1000).toISOString();
+
+    // 3. 获取所有价格数据（一次性请求）
+    const params = new URLSearchParams({
+      recorded_after,
+      ordering: 'recorded_at',
+      page_size: 100000  // 大量数据
+    });
+
+    const priceResp = await fetchJSON(`${API_BASE}/purchasing-price-records/?${params.toString()}`);
+    const allRecords = priceResp.results || priceResp || [];
+
+    if (allRecords.length === 0) {
+      throw new Error("未找到价格数据");
+    }
+
+    // 4. 按 part_number 分组数据
+    const dataByPN = new Map();
+
+    allRecords.forEach(r => {
+      const pn = r.iphone_part_number;
+      if (!pn) return;
+
+      if (!dataByPN.has(pn)) {
+        dataByPN.set(pn, {
+          label: r.iphone_label || `${r.iphone_part_number}`,
+          shopData: new Map()  // shop_name -> [{x,y}]
+        });
+      }
+
+      const pnData = dataByPN.get(pn);
+      const shopName = r.shop_name || `Shop#${r.shop}`;
+
+      if (!pnData.shopData.has(shopName)) {
+        pnData.shopData.set(shopName, []);
+      }
+
+      pnData.shopData.get(shopName).push({
+        x: r.recorded_at,
+        y: r.price_new
+      });
+    });
+
+    // 5. 为每个 part_number 创建图表
+    const chartsContainer = document.getElementById('charts');
+    let chartCount = 0;
+
+    dataByPN.forEach((pnData, pn) => {
+      const chartDiv = document.createElement('div');
+      chartDiv.className = 'chart-container';
+
+      const title = document.createElement('div');
+      title.className = 'chart-title';
+      title.textContent = `${pnData.label}`;
+
+      const meta = document.createElement('div');
+      meta.className = 'chart-meta';
+      const totalPoints = Array.from(pnData.shopData.values()).reduce((sum, arr) => sum + arr.length, 0);
+      meta.textContent = `店铺数: ${pnData.shopData.size} | 数据点: ${totalPoints}`;
+
+      const canvasContainer = document.createElement('div');
+      canvasContainer.style.height = '300px';
+      canvasContainer.style.position = 'relative';
+
+      chartDiv.appendChild(title);
+      chartDiv.appendChild(meta);
+      chartDiv.appendChild(canvasContainer);
+      chartsContainer.appendChild(chartDiv);
+
+      // 构造 datasets
+      const datasets = Array.from(pnData.shopData.entries()).map(([shopName, points]) => ({
+        label: shopName,
+        data: points
+      }));
+
+      drawChart(canvasContainer, pn, pnData.label, datasets, showPoints);
+      chartCount++;
+    });
+
+    document.getElementById('summary').textContent =
+      `已加载 ${chartCount} 个机型，共 ${allRecords.length} 条记录`;
+    document.getElementById('loading').style.display = 'none';
+
+  } catch(e) {
+    console.error(e);
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('error').style.display = 'block';
+    document.getElementById('error').textContent = `加载失败：${e.message || e}`;
+  }
+}
+
+// 事件监听
+document.getElementById('refreshBtn').addEventListener('click', loadAllCharts);
+
+// 页面加载时自动运行
+window.addEventListener('DOMContentLoaded', loadAllCharts);
+</script>
+</body>
+</html>
