@@ -1,0 +1,195 @@
+from __future__ import annotations
+from typing import Protocol, Dict, Callable, Optional,List
+from ..helpers import to_int_yen, parse_dt_aware
+import os
+from functools import lru_cache
+from pathlib import Path
+import re
+import pandas as pd
+from typing import Optional, Tuple
+from urllib.parse import urlparse
+from typing import Dict, Optional, List, Iterable, Union
+import os, re, json, pathlib
+from datetime import datetime
+import pytz
+import time
+
+def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
+    """
+    读取 iphone17_info，并尽量保留 jan 列以供 shop1 做 JAN→PN 映射。
+    输出列至少包含：part_number, model_name, capacity_gb, color，
+    若检测到任何 jan 列，则额外返回标准化列 'jan'。
+    """
+    try:
+        from django.conf import settings
+        p = getattr(settings, "EXTERNAL_IPHONE17_INFO_PATH", None)
+        if p:
+            path = str(p)
+        else:
+            raise AttributeError
+    except Exception:
+        path = os.getenv("IPHONE17_INFO_CSV") or str(Path(__file__).resolve().parents[2] / "data" / "iphone17_info.csv")
+
+    pth = Path(path)
+    if not pth.exists():
+        raise FileNotFoundError(f"未找到 iphone17_info：{pth}")
+
+    if re.search(r"\.(xlsx|xlsm|xls|ods)$", str(pth), re.I):
+        df = pd.read_excel(pth)
+    else:
+        df = pd.read_csv(pth, encoding="utf-8-sig")
+
+    need = {"part_number", "model_name", "capacity_gb", "color"}
+    missing = need - set(df.columns)
+    if missing:
+        raise ValueError(f"iphone17_info 缺少必要列：{missing}")
+
+    df = df.copy()
+    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
+    df = df.dropna(subset=["model_name", "capacity_gb", "part_number", "color"])
+
+    # ★ 检测并标准化 jan 列（尽最大可能适配命名）
+    jan_candidates = []
+    for c in df.columns:
+        cl = str(c).strip().lower()
+        if cl in {"jan", "jancode", "jan_code", "jan13", "jan14"}:
+            jan_candidates.append(c)
+        elif "jan" in cl or "jan" in str(c):  # 兼容 'JANコード' 等
+            jan_candidates.append(c)
+    jan_candidates = list(dict.fromkeys(jan_candidates))  # 去重保序
+
+    cols = ["part_number", "model_name", "capacity_gb", "color"]
+    if jan_candidates:
+        src = jan_candidates[0]
+        df["jan"] = df[src]
+        cols.append("jan")
+
+    return df[cols]
+
+JAN_RE_shop1 = re.compile(r"(\d{8,})")
+
+def _extract_jan_digits_shop1(v) -> Optional[str]:
+    if v is None:
+        return None
+    m = JAN_RE_shop1.search(str(v))
+    return m.group(1) if m else None
+
+def _pick_info_jan_col_shop1(info_df: pd.DataFrame) -> Optional[str]:
+    for c in info_df.columns:
+        if str(c).strip().lower() in {"jan", "jancode", "jan_code"}:
+            return c
+    return None
+
+def _build_jan_to_pn_map_shop1(info_df: pd.DataFrame) -> Dict[str, str]:
+    jan_map: Dict[str, str] = {}
+    jcol = _pick_info_jan_col_shop1(info_df)
+    if not jcol:
+        return jan_map
+    for _, r in info_df.iterrows():
+        jan_digits = _extract_jan_digits_shop1(r.get(jcol))
+        pn = r.get("part_number")
+        if jan_digits and pd.notna(pn):
+            jan_map[str(jan_digits)] = str(pn)
+    return jan_map
+
+def _iter_records(df: pd.DataFrame):
+    """
+    产出规范化记录：{"JAN":..., "price":..., "time-scraped": ...}
+    适配两种输入：
+      A) 直列：JAN, price, time-scraped
+      B) JSON 列：json（对象/数组/带 data 的对象），同行的 time-scraped 为默认时间
+         - 兼容字段别名：jancode / goodsPrice / time_scraped / timestamp / keywords(兜底提取 JAN)
+    """
+    cols = {c.lower(): c for c in df.columns}
+
+    # A) 直列
+    if all(k in cols for k in ["jan", "price", "time-scraped"]):
+        JAN_col, price_col, ts_col = cols["jan"], cols["price"], cols["time-scraped"]
+        for _, row in df.iterrows():
+            yield {"JAN": row.get(JAN_col), "price": row.get(price_col), "time-scraped": row.get(ts_col)}
+        return
+
+    # B) JSON 列
+    json_col = cols.get("json")
+    ts_col = cols.get("time-scraped") or cols.get("time_scraped")
+    if not json_col:
+        return
+
+    for _, row in df.iterrows():
+        default_ts = row.get(ts_col)
+        cell = row.get(json_col)
+        parsed = None
+
+        if isinstance(cell, (dict, list)):
+            parsed = cell
+        elif isinstance(cell, str) and cell.strip():
+            s = cell.strip().lstrip("\ufeff")
+            # CSV 风格的 "" → "（若存在）
+            if s.count('""') and not s.count('\\"'):
+                s = s.replace('""', '"')
+            try:
+                parsed = json.loads(s)
+            except Exception:
+                continue
+        else:
+            continue
+
+        # 统一拉平成若干对象
+        items: List[dict] = []
+        if isinstance(parsed, dict):
+            items = [x for x in parsed.get("data", [parsed]) if isinstance(x, dict)]
+        elif isinstance(parsed, list):
+            items = [x for x in parsed if isinstance(x, dict)]
+
+        for it in items:
+            jan = it.get("JAN") or it.get("jan") or it.get("jancode") or it.get("jAN")
+            if not jan:
+                jan = it.get("keywords")  # 兜底：从文字里抽出 JAN
+            price = it.get("price") or it.get("goodsPrice") or it.get("Price")
+            ts = it.get("time-scraped") or it.get("time_scraped") or it.get("timestamp") or default_ts
+            yield {"JAN": jan, "price": price, "time-scraped": ts}
+
+def clean_shop1(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    以 JAN 映射 part_number；price -> price_new；time-scraped -> recorded_at。
+    shop_name 固定为「買取商店」。
+    仅输出 _load_iphone17_info_df_for_shop2() 中存在的机型。
+    """
+    # 准备 JAN->PN 映射
+    info_df = _load_iphone17_info_df_for_shop2()
+    jan_map = _build_jan_to_pn_map_shop1(info_df)
+
+    rows: List[dict] = []
+
+    for rec in _iter_records(df):
+        jan = _extract_jan_digits_shop1(rec.get("JAN"))
+
+        if not jan:
+            continue
+        pn = jan_map.get(jan)
+
+        if not pn:
+            continue
+
+        price_val = rec.get("price")
+        # 既支持数值，也支持 "181,500" / "181500円"
+        price_new = to_int_yen(price_val)
+        if price_new is None:
+            continue
+
+        recorded_at = parse_dt_aware(rec.get("time-scraped"))
+
+        rows.append({
+            "part_number": str(pn),
+            "shop_name": "買取商店",
+            "price_new": int(price_new),
+            "recorded_at": recorded_at,
+        })
+
+    out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
+    if not out.empty:
+        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
+        out["part_number"] = out["part_number"].astype(str)
+        out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
+    # print("+++++++++++++++out",out)
+    return out
