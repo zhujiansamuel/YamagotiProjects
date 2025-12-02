@@ -202,11 +202,16 @@ async function loadAllCharts(){
       });
     });
 
-    // 5. 为每个 part_number 创建图表
+    // 5. 为每个 part_number 创建图表（按 part_number 排序）
     const chartsContainer = document.getElementById('charts');
     let chartCount = 0;
 
-    dataByPN.forEach((pnData, pn) => {
+    // 转换为数组并按 part_number 排序
+    const sortedPNs = Array.from(dataByPN.entries()).sort((a, b) => {
+      return a[0].localeCompare(b[0]);  // 按 part_number 字母顺序排序
+    });
+
+    sortedPNs.forEach(([pn, pnData]) => {
       const chartDiv = document.createElement('div');
       chartDiv.className = 'chart-container';
 
