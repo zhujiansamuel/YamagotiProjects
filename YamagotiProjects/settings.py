@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'AppleStockChecker.apps.ApplestockcheckerConfig',
+    'inbound_goods.apps.InboundGoodsConfig',
     "corsheaders",
     "rest_framework",
     "drf_spectacular",
