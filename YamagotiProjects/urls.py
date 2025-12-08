@@ -32,7 +32,7 @@ urlpatterns = [
     path("AppleStockChecker/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="docs"),
     path("AppleStockChecker/redoc/", SpectacularRedocView.as_view(url_name="schema"), name="redoc"),
     path("AppleStockChecker/", include("AppleStockChecker.urls")),
-path("accounts/", include("django.contrib.auth.urls")),
-path("healthz/", health),
-
+    path("inbound-goods/", include("inbound_goods.urls")),
+    path("accounts/", include("django.contrib.auth.urls")),
+    path("healthz/", health),
 ]
