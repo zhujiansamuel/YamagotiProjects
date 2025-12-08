@@ -142,7 +142,6 @@ def _parse_capacity_gb(text: str) -> Optional[int]:
         return int(m.group(1))
     return None
 
-SHOP_NAME_OVERRIDE: Optional[str] = "ゲストモバイル"  # 例如 "ゲストモバイル"
 
 SHOP_NAME_OVERRIDE: Optional[str] = "買取オク"  # 例如： "奥…（正式店名）"
 

@@ -1,33 +1,24 @@
 from __future__ import annotations
-from typing import Protocol, Dict, Callable, Optional,List
-from ...external_ingest.helpers import to_int_yen, parse_dt_aware
+
 import os
+import re
+import time
+import textwrap
 from functools import lru_cache
 from pathlib import Path
-import re
-import pandas as pd
-from typing import Optional, Tuple
-from urllib.parse import urlparse
-from typing import Dict, Optional, List, Iterable, Union
-import os, re, json, pathlib
-from datetime import datetime
-import pytz
-import time
+from typing import Dict, Optional, List, Tuple
 
+import pandas as pd
+
+from ...external_ingest.helpers import to_int_yen, parse_dt_aware
+
+
+# ----------------------------
+# 原有：机型/容量 normalization
+# ----------------------------
 _NUM_MODEL_PAT = re.compile(r"(iPhone)\s*(\d{2})(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
 _AIR_PAT = re.compile(r"(iPhone)\s*(Air)(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
 
-_COLOR_DELTA_RE = re.compile(
-    r"""^\s*
-        (?P<label>全色|[\S　 ]*?[^\s　])     # 颜色名或“全色”
-        \s*
-        (?P<sign>[+\-−－])?                  # 可选符号
-        \s*
-        (?P<amount>\d[\d,]*)\s*円?           # 金额
-        \s*$
-    """,
-    re.VERBOSE,
-)
 
 def _find_base_price(df: pd.DataFrame, idx: int) -> Optional[int]:
     """
@@ -44,8 +35,10 @@ def _find_base_price(df: pd.DataFrame, idx: int) -> Optional[int]:
                 return int(price)
     return None
 
+
 def _norm(s: str) -> str:
     return (s or "").strip()
+
 
 def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
     """
@@ -61,7 +54,9 @@ def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
         else:
             raise AttributeError
     except Exception:
-        path = os.getenv("IPHONE17_INFO_CSV") or str(Path(__file__).resolve().parents[2] / "data" / "iphone17_info.csv")
+        path = os.getenv("IPHONE17_INFO_CSV") or str(
+            Path(__file__).resolve().parents[2] / "data" / "iphone17_info.csv"
+        )
 
     pth = Path(path)
     if not pth.exists():
@@ -81,7 +76,6 @@ def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
     df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
     df = df.dropna(subset=["model_name", "capacity_gb", "part_number", "color"])
 
-    # ★ 检测并标准化 jan 列（尽最大可能适配命名）
     jan_candidates = []
     for c in df.columns:
         cl = str(c).strip().lower()
@@ -89,7 +83,7 @@ def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
             jan_candidates.append(c)
         elif "jan" in cl or "jan" in str(c):  # 兼容 'JANコード' 等
             jan_candidates.append(c)
-    jan_candidates = list(dict.fromkeys(jan_candidates))  # 去重保序
+    jan_candidates = list(dict.fromkeys(jan_candidates))
 
     cols = ["part_number", "model_name", "capacity_gb", "color"]
     if jan_candidates:
@@ -99,20 +93,13 @@ def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
 
     return df[cols]
 
+
 def _normalize_model_generic(text: str) -> str:
-    """
-    统一型号主体：
-      - iPhone17/16 + 后缀（Pro/Pro Max/Plus/mini）
-      - iPhone Air（含“17 air”→ Air）
-      - 允许紧凑写法：17pro / 17promax / 16Pro / 16Plus ...
-    输出：'iPhone 17 Pro Max' / 'iPhone 17 Pro' / 'iPhone Air' / ...
-    """
     if not text:
         return ""
     t = str(text).replace("\u3000", " ")
     t = re.sub(r"\s+", " ", t)
 
-    # 日文别名到英文
     t = (t.replace("プロマックス", "Pro Max")
            .replace("プロ", "Pro")
            .replace("プラス", "Plus")
@@ -120,42 +107,35 @@ def _normalize_model_generic(text: str) -> str:
            .replace("エアー", "Air")
            .replace("エア", "Air"))
 
-    # ❗ 在“数字后立即跟英文”的位置补一个空格：17pro -> 17 pro
     t = re.sub(r"(\d{2})(?=[A-Za-z])", r"\1 ", t)
 
-    # 标准化大小写/形态：pro-max / ProMax / promáx → Pro Max；pro → Pro；plus → Plus；mini → mini
     t = re.sub(r"(?i)\bpro\s*max\b", "Pro Max", t)
     t = re.sub(r"(?i)\bpro\b", "Pro", t)
     t = re.sub(r"(?i)\bplus\b", "Plus", t)
     t = re.sub(r"(?i)\bmini\b", "mini", t)
 
-    # 若没有 iPhone 前缀但出现纯数字代号，补上
     if "iPhone" not in t and re.search(r"\b1[0-9]\b", t):
         t = re.sub(r"\b(1[0-9])\b", r"iPhone \1", t, count=1)
 
-    # 特例：'17 air' → iPhone Air（防止被当成 iPhone 17）
     t = re.sub(r"(?i)\biPhone\s+17\s+Air\b", "iPhone Air", t)
 
-    # 去容量/SIM/括号噪声
     t = re.sub(r"(\d+(?:\.\d+)?\s*TB|\d{2,4}\s*GB)", "", t, flags=re.I)
     t = re.sub(r"SIMフリ[ーｰ–-]?|シムフリ[ーｰ–-]?|sim\s*free", "", t, flags=re.I)
     t = re.sub(r"[（）\(\)\[\]【】].*?[（）\(\)\[\]【】]", "", t)
     t = re.sub(r"\s+", " ", t).strip()
 
-    # 1) 数字代号机型
     m = _NUM_MODEL_PAT.search(t)
     if m:
         base = f"{m.group(1)} {m.group(2)}"
         suf  = (m.group(3) or "").strip()
         return f"{base} {suf}".strip()
 
-    # 2) Air
     m2 = _AIR_PAT.search(t)
     if m2:
-        # 当前返回主体 'iPhone Air'；若以后真有 Air Plus 等可在此扩展
         return "iPhone Air"
 
     return ""
+
 
 def _parse_capacity_gb(text: str) -> Optional[int]:
     if not text:
@@ -169,27 +149,24 @@ def _parse_capacity_gb(text: str) -> Optional[int]:
         return int(m.group(1))
     return None
 
+
+# ----------------------------
+# LLM（LangExtract + Ollama）解析：颜色±金额
+# ----------------------------
+LABEL_SPLIT_RE = re.compile(r"[／/、，,・\s]+")
+
 _FZ_TO_HZ_TRANS = str.maketrans({
-    '０':'0','１':'1','２':'2','３':'3','４':'4','５':'5','６':'6','７':'7','８':'8','９':'9',
-    '，':',','．':'.','：':':','（':'(','）':')','　':' ','－':'-','＋':'+','¥':'','￥':''
+    '０': '0', '１': '1', '２': '2', '３': '3', '４': '4',
+    '５': '5', '６': '6', '７': '7', '８': '8', '９': '9',
+    '，': ',', '．': '.', '：': ':', '（': '(', '）': ')', '　': ' ',
+    '－': '-', '＋': '+', '¥': '', '￥': ''
 })
 
-LABEL_SPLIT_RE = re.compile(r"[／/、，,・\s]+")   # 用于把 "シルバー/ディープブルー" 拆成两项
-
-_FZ_TO_HZ_TRANS = str.maketrans({
-    '０':'0','１':'1','２':'2','３':'3','４':'4','５':'5','６':'6','７':'7','８':'8','９':'9',
-    '，':',','．':'.','：':':','（':'(','）':')','　':' ','－':'-','＋':'+','¥':'','￥':''
-})
 
 def _normalize_amount_text(s: str) -> Optional[int]:
-    """
-    把全角数字/标点转半角，去掉非数字字符后尝试转换为 int。
-    返回 None 表示无法解析。
-    """
     if s is None:
         return None
     t = str(s).translate(_FZ_TO_HZ_TRANS)
-    # 仅保留数字和逗号
     m = re.search(r"([0-9][0-9,]*)", t)
     if not m:
         return None
@@ -199,38 +176,301 @@ def _normalize_amount_text(s: str) -> Optional[int]:
     except Exception:
         return None
 
-def _parse_color_delta_shop4(line: str) -> Optional[List[Tuple[str, int]]]:
+
+def _coerce_int_maybe(v) -> Optional[int]:
+    if v is None:
+        return None
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float):
+        return int(v)
+    s = str(v).strip()
+    if not s:
+        return None
+    sign = 1
+    if s[0] in ("-", "−", "－"):
+        sign = -1
+    amt = _normalize_amount_text(s)
+    if amt is None:
+        return None
+    return sign * int(amt)
+
+
+def _split_labels(label: str) -> List[str]:
+    return [p.strip() for p in LABEL_SPLIT_RE.split(label or "") if p and p.strip()]
+
+
+# 可配置：默认用你给定的 Ollama
+SHOP4_USE_LLM = os.getenv("SHOP4_USE_LLM", "1") not in {"0", "false", "False"}
+SHOP4_OLLAMA_URL = os.getenv("SHOP4_OLLAMA_URL", "http://localhost:11434")
+SHOP4_OLLAMA_MODEL_ID = os.getenv("SHOP4_OLLAMA_MODEL_ID", "gemma3:1b")
+
+try:
+    import langextract as lx
+except Exception:
+    lx = None
+
+
+_SHOP4_LE_PROMPT = textwrap.dedent("""\
+You are extracting structured information from a Japanese iPhone pricing table.
+
+Input text contains one or more lines. A relevant line expresses:
+- a color label (e.g., シルバー, ディープブルー) OR 全色 (means "all colors"),
+- optionally followed by a signed yen adjustment amount.
+
+Rules:
+- Extract one item per color label.
+- extraction_text MUST be the exact color label substring from the input (do not translate).
+- attributes MUST include delta_yen as an integer (negative for discounts).
+- Sign can be + or - and may include unicode minus characters: '−' or '－'.
+- Amount may include commas and/or full-width digits.
+- If a line indicates 全色 but has no amount, set delta_yen = 0.
+- If a line does not express a color adjustment, output no extractions.
+""").strip()
+
+_SHOP4_LE_EXAMPLES = []
+if lx is not None:
+    _SHOP4_LE_EXAMPLES = [
+        lx.data.ExampleData(
+            text="シルバー-1,000円",
+            extractions=[
+                lx.data.Extraction(
+                    extraction_class="color_delta",
+                    extraction_text="シルバー",
+                    attributes={"delta_yen": -1000},
+                )
+            ],
+        ),
+        lx.data.ExampleData(
+            text="シルバー/ディープブルー-3,000円",
+            extractions=[
+                lx.data.Extraction(
+                    extraction_class="color_delta",
+                    extraction_text="シルバー",
+                    attributes={"delta_yen": -3000},
+                ),
+                lx.data.Extraction(
+                    extraction_class="color_delta",
+                    extraction_text="ディープブルー",
+                    attributes={"delta_yen": -3000},
+                ),
+            ],
+        ),
+        lx.data.ExampleData(
+            text="全色-2,000円",
+            extractions=[
+                lx.data.Extraction(
+                    extraction_class="color_delta",
+                    extraction_text="全色",
+                    attributes={"delta_yen": -2000},
+                ),
+            ],
+        ),
+        lx.data.ExampleData(
+            text="全色",
+            extractions=[
+                lx.data.Extraction(
+                    extraction_class="color_delta",
+                    extraction_text="全色",
+                    attributes={"delta_yen": 0},
+                ),
+            ],
+        ),
+        lx.data.ExampleData(
+            text="ブルー ＋０円",
+            extractions=[
+                lx.data.Extraction(
+                    extraction_class="color_delta",
+                    extraction_text="ブルー",
+                    attributes={"delta_yen": 0},
+                ),
+            ],
+        ),
+        lx.data.ExampleData(
+            text="全色－２，０００円",
+            extractions=[
+                lx.data.Extraction(
+                    extraction_class="color_delta",
+                    extraction_text="全色",
+                    attributes={"delta_yen": -2000},
+                ),
+            ],
+        ),
+    ]
+
+
+def _lx_extract_color_deltas(text: str):
     """
-    解析“颜色 ± 金额” 或 “全色 ± 金额”。返回 list[(label, delta)]（可能为多项）。
-    若无法解析，返回 None。
-    Example inputs:
-      "シルバー-1,000円" -> [("シルバー", -1000)]
-      "シルバー/ディープブルー-3,000円" -> [("シルバー", -3000), ("ディープブルー", -3000)]
-      "全色-2,000円" -> [("全色", -2000)]
-      "全色" -> [("全色", 0)]
+    对 text 做一次 LangExtract 抽取，返回 result.extractions（若不可用则空列表）。
     """
+    if not (SHOP4_USE_LLM and lx is not None and isinstance(text, str) and text.strip()):
+        return []
+
+    kwargs = dict(
+        text_or_documents=text,
+        prompt_description=_SHOP4_LE_PROMPT,
+        examples=_SHOP4_LE_EXAMPLES,
+        model_id=SHOP4_OLLAMA_MODEL_ID,
+        model_url=SHOP4_OLLAMA_URL,
+        fence_output=False,
+        use_schema_constraints=False,
+        extraction_passes=1,
+        max_workers=1,
+        max_char_buffer=1500,
+        temperature=0.0,
+        language_model_params={
+            # 可选：让 Ollama 端更“稳”
+            "timeout": 60,
+            "keep_alive": 10 * 60,
+        },
+    )
+
+    # 兼容不同版本：有的版本建议显式指定 OllamaLanguageModel
+    try:
+        if hasattr(lx, "inference") and hasattr(lx.inference, "OllamaLanguageModel"):
+            kwargs["language_model_type"] = lx.inference.OllamaLanguageModel
+    except Exception:
+        pass
+
+    try:
+        result = lx.extract(**kwargs)
+    except Exception:
+        return []
+
+    exts = getattr(result, "extractions", None)
+    return list(exts) if exts else []
+
+
+def _get_start_pos(extraction) -> int:
+    ci = getattr(extraction, "char_interval", None)
+    if ci is None:
+        return 0
+    for attr in ("start_pos", "start", "begin"):
+        if hasattr(ci, attr):
+            try:
+                return int(getattr(ci, attr))
+            except Exception:
+                pass
+    if isinstance(ci, dict):
+        for k in ("start_pos", "start", "begin"):
+            if k in ci:
+                try:
+                    return int(ci[k])
+                except Exception:
+                    pass
+    return 0
+
+
+def _collect_adjustments_shop4_llm(df: pd.DataFrame, start_idx: int) -> Dict[str, int]:
+    """
+    用 LangExtract 一次性解析“机种段落”(block)里的所有颜色±金额。
+    返回：{ color_norm | "ALL" : delta_int }
+    """
+    lines: List[str] = []
+    n = len(df)
+
+    # 收集 block 文本：从 start_idx 到下一个 data11 非空前一行
+    for j in range(start_idx, n):
+        if j > start_idx:
+            nxt_model = ""
+            val = df["data11"].iat[j] if "data11" in df.columns else ""
+            nxt_model = str(val) if val is not None else ""
+            if nxt_model.strip():
+                break
+        raw = df["data"].iat[j] if "data" in df.columns else ""
+        lines.append("" if raw is None else str(raw))
+
+    if not lines:
+        return {}
+
+    block_text = "\n".join(lines)
+
+    # 计算每一行在 block_text 的范围，用于识别“同一行(机种行)的全色”
+    line0_start = 0
+    line0_end = len(lines[0]) if lines else 0
+
+    exts = _lx_extract_color_deltas(block_text)
+    if not exts:
+        return {}
+
+    # 按出现顺序处理，保持覆盖逻辑一致
+    exts = sorted(exts, key=_get_start_pos)
+
+    result: Dict[str, int] = {}
+    global_all_delta: Optional[int] = None
+
+    for ex in exts:
+        cls = str(getattr(ex, "extraction_class", "") or "").strip()
+        if cls and cls.lower() not in {"color_delta", "colordelta", "color"}:
+            # 防止模型乱输出其他类
+            continue
+
+        label = str(getattr(ex, "extraction_text", "") or "").strip()
+        if not label:
+            continue
+
+        attrs = getattr(ex, "attributes", None)
+        attrs = attrs if isinstance(attrs, dict) else {}
+        delta = _coerce_int_maybe(attrs.get("delta_yen"))
+        if delta is None:
+            # 兜底：如果是“全色”且无金额，按 0
+            if "全色" in label and not re.search(r"[0-9０-９]", block_text):
+                delta = 0
+            else:
+                continue
+
+        start_pos = _get_start_pos(ex)
+
+        # same-line（机种行同一行 data）里的 全色：作为最高优先级的 ALL
+        if "全色" in label and line0_start <= start_pos < max(line0_end, line0_start):
+            global_all_delta = int(delta)
+
+        # label 可能是复合项，拆分后分别写入
+        for lbl in _split_labels(label):
+            if "全色" in lbl:
+                result["ALL"] = int(delta)
+            else:
+                result[_norm(lbl)] = int(delta)
+
+    # 同行全色优先覆盖
+    if global_all_delta is not None:
+        result["ALL"] = int(global_all_delta)
+
+    return result
+
+
+# ---- 旧 regex 解析兜底（可选）----
+_COLOR_DELTA_RE = re.compile(
+    r"""^\s*
+        (?P<label>全色|[\S　 ]*?[^\s　])
+        \s*
+        (?P<sign>[+\-−－])?
+        \s*
+        (?P<amount>\d[\d,]*)\s*円?
+        \s*$
+    """,
+    re.VERBOSE,
+)
+
+
+def _parse_color_delta_shop4_regex(line: str) -> Optional[List[Tuple[str, int]]]:
     if not line or not isinstance(line, str):
         return None
     s = line.strip()
-    # 快速兜底：仅含“全色”而无数字，视为 0
     if s == "全色" or s == "全 色":
         return [("全色", 0)]
 
     m = _COLOR_DELTA_RE.match(s)
     if not m:
-        # 有些格式会把 label 和金额分开，比如 "シルバー/ディープブルー -3,000円"
-        # 我们再尝试一个更宽松的匹配：先从行中找出金额，再把前面的部分视为 label group
         am = re.search(r"([+\-−－])?\s*([０-９0-9][０-９0-9,，]*)\s*円?", s)
         if not am:
-            # 若行仅含“全色”关键字仍处理
             if "全色" in s:
                 return [("全色", 0)]
             return None
         sign = am.group(1) or "+"
         amt_txt = am.group(2)
-        amt = _normalize_amount_text(amt_txt) if _normalize_amount_text(amt_txt) is not None else None
+        amt = _normalize_amount_text(amt_txt)
         if amt is None:
-            # 最后尝试 to_int_yen 如果存在
             try:
                 amt = to_int_yen(amt_txt)
             except Exception:
@@ -238,18 +478,18 @@ def _parse_color_delta_shop4(line: str) -> Optional[List[Tuple[str, int]]]:
         if amt is None:
             return None
         if sign in ("-", "−", "－"):
-            amt = -amt
+            amt = -int(amt)
+        else:
+            amt = int(amt)
 
         label_part = s[:am.start()].strip()
         if not label_part:
-            # 没有 label，视为无法解析
             return None
         labels = [p for p in LABEL_SPLIT_RE.split(label_part) if p]
         return [(lbl.strip(), int(amt)) for lbl in labels]
 
     label_raw = m.group("label").strip()
     sign = m.group("sign") or "+"
-    # 优先使用 to_int_yen，如果返回 None 使用 fallback
     amt_val = None
     try:
         amt_val = to_int_yen(m.group("amount"))
@@ -257,32 +497,33 @@ def _parse_color_delta_shop4(line: str) -> Optional[List[Tuple[str, int]]]:
         amt_val = None
     if amt_val is None:
         amt_val = _normalize_amount_text(m.group("amount"))
-
     if amt_val is None:
         return None
 
+    amt_val = int(amt_val)
     if sign in ("-", "−", "－"):
-        amt_val = -int(amt_val)
-    else:
-        amt_val = int(amt_val)
+        amt_val = -amt_val
 
-    # label_raw 可能为 "シルバー/ディープブルー" 等复合项，拆分
     labels = [p for p in LABEL_SPLIT_RE.split(label_raw) if p]
     if not labels:
         return None
     return [(lbl.strip(), int(amt_val)) for lbl in labels]
 
+
 def _collect_adjustments_shop4(df: pd.DataFrame, start_idx: int) -> Dict[str, int]:
     """
-    从机种行【同一行】开始收集“颜色±金额”（含“全色”）。
-    一直向下，直到遇到下一个 data11 非空（下一机种）或到文件末尾。
-    返回：{ color_norm | "ALL" : delta_int }
-    同一颜色若多次出现，以后出现的（靠近机种行的）为准（覆盖前者）。
+    统一入口：优先走 LLM；LLM 不可用/失败则走 regex 兜底。
     """
+    if SHOP4_USE_LLM and lx is not None:
+        try:
+            return _collect_adjustments_shop4_llm(df, start_idx)
+        except Exception:
+            pass
+
+    # regex 兜底：保持你原来的行为（逐行扫描）
     result: Dict[str, int] = {}
     n = len(df)
     for j in range(start_idx, n):
-        # 下一个机种（且必须 j > start_idx 才算“下一个”）
         nxt_model = ""
         if "data11" in df.columns:
             val = df["data11"].iat[j]
@@ -294,50 +535,30 @@ def _collect_adjustments_shop4(df: pd.DataFrame, start_idx: int) -> Dict[str, in
         if "data" in df.columns:
             val = df["data"].iat[j]
             line = str(val) if val is not None else ""
-        parsed = _parse_color_delta_shop4(line)
+
+        parsed = _parse_color_delta_shop4_regex(line)
         if not parsed:
             continue
 
-        # parsed 是 list[(label, delta)]
         for label, delta in parsed:
-            if not isinstance(delta, int):
-                try:
-                    delta = int(delta)
-                except Exception:
-                    continue
             if "全色" in label:
-                result["ALL"] = delta
+                result["ALL"] = int(delta)
             else:
-                # 以归一化后的 color key 存储（便于后续匹配）
-                result[_norm(label)] = delta
-
+                result[_norm(label)] = int(delta)
     return result
 
-def clean_shop4(df: pd.DataFrame) -> pd.DataFrame:
-    print("shop4:モバイルミックス---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
-    """
-    输入 (shop4.csv):
-      - web-scraper-order, web-scraper-start-url, data, data11, time-scraped
-    规则：
-      - data11：机种名 + 容量（第二行起常见）
-      - 该机种的“基准价” = 上一行的 data（金额，如 212,000円）
-      - 机种行之后的若干行 data 可能出现“颜色 ± 金额”，对单色或全色调整
-      - 若机种行同一行的 data 含“全色”（可带 ±金额），则所有颜色同价（基准价±统一调整）
-      - 仅输出出现在 _load_iphone17_info_df_for_shop2() 的机种
-      - shop_name 固定为「モバイルミックス」
-      - recorded_at = parse_dt_aware(time-scraped)
 
-    输出：
-      - columns: part_number, shop_name, price_new, recorded_at
-    """
-    # 必要列
+# ----------------------------
+# shop4 主清洗器
+# ----------------------------
+def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> pd.DataFrame:
+    print("shop4:モバイルミックス---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+
     for c in ["data", "data11", "time-scraped"]:
         if c not in df.columns:
             raise ValueError(f"shop4 清洗器缺少必要列：{c}")
 
-    # 归一化信息表并建立 (model_norm, cap) → {color_norm: pn}
     info_df = _load_iphone17_info_df_for_shop2().copy()
-    # 预期含：part_number, model_name, capacity_gb, color
     info_df["model_name_norm"] = info_df["model_name"].map(_normalize_model_generic)
     info_df["capacity_gb"] = pd.to_numeric(info_df["capacity_gb"], errors="coerce").astype("Int64")
     info_df["color_norm"] = info_df["color"].map(lambda x: _norm(str(x)))
@@ -354,63 +575,112 @@ def clean_shop4(df: pd.DataFrame) -> pd.DataFrame:
         pn_map.setdefault(key, {})
         pn_map[key][col] = pn
 
-    rows: List[dict] = []
+    _DEBUG_HINT_PAT = re.compile(
+        r"(全色|シルバー|ブルー|ディープブルー|ブラック|ホワイト|グリーン|ピンク|レッド|イエロー|パープル|"
+        r"チタ|チタン|ナチュラル|ミッドナイト|スターライト|"
+        r"[+\-−－]\s*\d|[\d,]+\s*円)",
+        re.I,
+    )
 
+    def _next_model_idx(start: int) -> int:
+        n = len(df)
+        for k in range(start + 1, n):
+            s = str(df["data11"].iat[k]) if df["data11"].iat[k] is not None else ""
+            if s.strip():
+                return k
+        return n
+
+    printed_models = 0
+    rows: List[dict] = []
     n = len(df)
 
     for i in range(n):
-
         model_text = str(df["data11"].iat[i]) if df["data11"].iat[i] is not None else ""
         model_text = model_text.strip()
         if not model_text:
             continue
 
-        # 从 data11 提取 model + capacity
+        block_end = _next_model_idx(i) - 1
         model_norm = _normalize_model_generic(model_text)
         cap_gb = _parse_capacity_gb(model_text)
+        rec_at = parse_dt_aware(df["time-scraped"].iat[i])
+
+        def _maybe_print_header(reason: Optional[str] = None):
+            nonlocal printed_models
+            if not debug or printed_models >= int(debug_limit):
+                return
+            printed_models += 1
+
+            print("\n[shop4 debug] model_row_idx=", i, " block_end_idx=", block_end)
+            print("  data11(raw):", repr(model_text))
+            print("  model_norm:", repr(model_norm), " capacity_gb:", repr(cap_gb))
+            print("  recorded_at:", repr(rec_at))
+            if reason:
+                print("  SKIP_REASON:", reason)
+
+            print("  base_price_backtrack:")
+            for j in range(i - 1, max(-1, i - 4), -1):
+                if j < 0:
+                    break
+                raw = str(df["data"].iat[j]) if df["data"].iat[j] is not None else ""
+                parsed = to_int_yen(raw) if raw else None
+                print(f"    idx={j} data(raw)={raw!r} -> parsed={parsed!r}")
+
+            print("  block_lines(color_delta_candidates):")
+            for j in range(i, block_end + 1):
+                raw = str(df["data"].iat[j]) if df["data"].iat[j] is not None else ""
+                if not raw.strip():
+                    continue
+                if not _DEBUG_HINT_PAT.search(raw):
+                    continue
+                print(f"    idx={j} data(raw)={raw!r}")
+
         if not model_norm or pd.isna(cap_gb):
+            if debug and printed_models < int(debug_limit):
+                _maybe_print_header("model/cap 解析失败（data11 无法归一化或容量缺失）")
             continue
         cap_gb = int(cap_gb)
 
         key = (model_norm, cap_gb)
         color_to_pn = pn_map.get(key)
-
         if not color_to_pn:
-            # 信息表没有该机种容量组合 → 跳过
+            if debug and printed_models < int(debug_limit):
+                has_hint = any(
+                    _DEBUG_HINT_PAT.search(str(df["data"].iat[j]) if df["data"].iat[j] is not None else "")
+                    for j in range(i, block_end + 1)
+                )
+                if has_hint:
+                    _maybe_print_header(f"info 表没有该 (model,cap) key={key!r}")
             continue
 
-        # 基准价：上一行 data
         base_price = _find_base_price(df, i)
         if base_price is None:
-            # 没有可用基准价，跳过该机种
+            if debug and printed_models < int(debug_limit):
+                has_hint = any(
+                    _DEBUG_HINT_PAT.search(str(df["data"].iat[j]) if df["data"].iat[j] is not None else "")
+                    for j in range(i, block_end + 1)
+                )
+                if has_hint:
+                    _maybe_print_header("找不到可用基准价（上一行及回溯行均无法解析）")
             continue
 
-        # 同行 data 若写“全色 ± n円”，优先应用统一调整
-        # 同行 data 若写“全色 ± n円”，优先应用统一调整
-        same_line = str(df["data"].iat[i]) if df["data"].iat[i] is not None else ""
-        same_line_parsed = _parse_color_delta_shop4(same_line)  # 可能 None 或 list[(label,delta)]
-        global_delta = None
-        if same_line_parsed:
-            # 如果其中有 '全色'，以其 delta 为 global_delta（若多次出现，取最后一项）
-            for lbl, d in same_line_parsed:
-                if "全色" in lbl:
-                    global_delta = d
-                    # 不 break：如果后面还有 '全色'，后者覆盖前者
-
-        # 其后续行的“颜色 ± n円”调整
+        # ★ 调整：这里直接收集整个 block 的 ALL/颜色 delta（LLM 优先）
         adjustments = _collect_adjustments_shop4(df, i)
 
-        # 若同行已表明“全色”，且 adjustments 也包含 ALL，则以最近的声明为准：
-        # 优先使用同行的 global_delta（更接近机种行）
-        if global_delta is not None:
-            adjustments["ALL"] = global_delta
+        if debug and printed_models < int(debug_limit):
+            has_hint = bool(adjustments) or any(
+                _DEBUG_HINT_PAT.search(str(df["data"].iat[j]) if df["data"].iat[j] is not None else "")
+                for j in range(i, block_end + 1)
+            )
+            if has_hint:
+                _maybe_print_header(None)
+                print("  base_price(final):", base_price)
+                print("  adjustments(collected):", adjustments)
+                print("  llm_enabled:", bool(SHOP4_USE_LLM and lx is not None),
+                      " model_id:", SHOP4_OLLAMA_MODEL_ID, " url:", SHOP4_OLLAMA_URL)
 
-        # recorded_at 取机种行 time-scraped
-        rec_at = parse_dt_aware(df["time-scraped"].iat[i])
-
-        # 价格生成：如果有 "ALL"，所有颜色都用 (base + ALL)
         if "ALL" in adjustments:
-            final_price = base_price + adjustments["ALL"]
+            final_price = int(base_price + adjustments["ALL"])
             for col_norm, pn in color_to_pn.items():
                 rows.append({
                     "part_number": pn,
@@ -419,14 +689,13 @@ def clean_shop4(df: pd.DataFrame) -> pd.DataFrame:
                     "recorded_at": rec_at,
                 })
         else:
-            # 单色调整：出现在 adjustments 的颜色使用 base+delta；其余颜色用 base
             for col_norm, pn in color_to_pn.items():
-
-                delta = adjustments.get(col_norm, 0)
+                delta = int(adjustments.get(col_norm, 0))
+                final_price = int(base_price + delta)
                 rows.append({
                     "part_number": pn,
                     "shop_name": "モバイルミックス",
-                    "price_new": int(base_price + delta),
+                    "price_new": int(final_price),
                     "recorded_at": rec_at,
                 })
 
@@ -435,19 +704,8 @@ def clean_shop4(df: pd.DataFrame) -> pd.DataFrame:
         out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
         out["part_number"] = out["part_number"].astype(str)
         out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
+
+    if debug:
+        print(f"\n[shop4 debug] out_rows={len(out)} head=\n{out.head(10).to_string(index=False)}")
+
     return out
-
-_COLOR_DELTA_RE = re.compile(
-    r"""(?P<label>[^：:\-\+\s/、，,・\(\)]+?)    # label：不应包含分隔符或括号
-        \s*(?:[:：\s])\s*                      # 分隔符（：或:或冒号或空格）— 宽松匹配
-        (?P<sign>[+\-−－])?\s*                 # 可选符号
-        (?P<amount>[\d,]+|[０-９，]+)          # 金额（半角或全角，含千位分隔符）
-        (?:\s*円|\s*¥|\s*￥)?                  # 可选货币词
-    """,
-    re.UNICODE | re.VERBOSE,
-)
-
-_FZ_TO_HZ_TRANS = str.maketrans({
-    '０':'0','１':'1','２':'2','３':'3','４':'4','５':'5','６':'6','７':'7','８':'8','９':'9',
-    '，':',','．':'.','：':':','（':'(','）':')','　':' ','－':'-','＋':'+','¥':'','￥':''
-})

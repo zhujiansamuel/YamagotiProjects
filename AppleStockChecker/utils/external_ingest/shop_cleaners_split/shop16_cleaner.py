@@ -1,21 +1,30 @@
 from __future__ import annotations
-from typing import Protocol, Dict, Callable, Optional,List
-from ...external_ingest.helpers import to_int_yen, parse_dt_aware
+
 import os
+import re
+import time
+import textwrap
 from functools import lru_cache
 from pathlib import Path
-import re
-import pandas as pd
-from typing import Optional, Tuple
-from urllib.parse import urlparse
-from typing import Dict, Optional, List, Iterable, Union
-import os, re, json, pathlib
-from datetime import datetime
-import pytz
-import time
+from typing import Dict, List, Optional, Tuple
 
+import pandas as pd
+import textwrap
+from functools import lru_cache
+from ...external_ingest.helpers import to_int_yen, parse_dt_aware
+
+
+# ========== 你的 Ollama 配置 ==========
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_MODEL_ID = os.getenv("OLLAMA_MODEL_ID", "gemma3:1b")
+
+
+# ========== 你原来就有的通用解析（沿用你 shop16 逻辑） ==========
 _NUM_MODEL_PAT = re.compile(r"(iPhone)\s*(\d{2})(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
 _AIR_PAT = re.compile(r"(iPhone)\s*(Air)(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
+
+def _norm(s: str) -> str:
+    return (s or "").strip()
 
 COLOR_DELTA_RE = re.compile(
     r"""(?P<label>[^：:\-\s]+)\s*
@@ -26,12 +35,33 @@ COLOR_DELTA_RE = re.compile(
     re.UNICODE | re.VERBOSE,
 )
 
-def _norm(s: str) -> str:
-    return (s or "").strip()
+COLOR_ABS_RE = re.compile(
+    r"""(?P<label>[^\d：:\-\s/、／￥円]+)\s*￥\s*(?P<amount>\d[\d,]*)""",
+    re.UNICODE
+)
+
+FIRST_YEN_RE = re.compile(r"(?:￥|\¥)?\s*(\d[\d,]*)\s*円?")
+
+def _build_color_map_shop16(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict[str, Tuple[str, str]]]:
+    """(model_norm, cap_gb) -> { color_norm: (part_number, color_raw) }"""
+    df = info_df.copy()
+    df["model_name_norm"] = df["model_name"].map(_normalize_model_generic)
+    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
+    df["color_norm"] = df["color"].map(lambda x: _norm(str(x)))
+    cmap: Dict[Tuple[str, int], Dict[str, Tuple[str, str]]] = {}
+    for _, r in df.iterrows():
+        m = r["model_name_norm"]
+        cap = r["capacity_gb"]
+        if not m or pd.isna(cap):
+            continue
+        key = (m, int(cap))
+        cmap.setdefault(key, {})
+        cmap[key][_norm(str(r["color"]))] = (str(r["part_number"]), str(r["color"]))
+    return cmap
 
 def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
     """
-    读取 iphone17_info，并尽量保留 jan 列以供 shop1 做 JAN→PN 映射。
+    读取 iphone17_info，并尽量保留 jan 列以供其它 shop 做 JAN→PN 映射。
     输出列至少包含：part_number, model_name, capacity_gb, color，
     若检测到任何 jan 列，则额外返回标准化列 'jan'。
     """
@@ -63,15 +93,15 @@ def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
     df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
     df = df.dropna(subset=["model_name", "capacity_gb", "part_number", "color"])
 
-    # ★ 检测并标准化 jan 列（尽最大可能适配命名）
+    # 标准化 jan 列
     jan_candidates = []
     for c in df.columns:
         cl = str(c).strip().lower()
         if cl in {"jan", "jancode", "jan_code", "jan13", "jan14"}:
             jan_candidates.append(c)
-        elif "jan" in cl or "jan" in str(c):  # 兼容 'JANコード' 等
+        elif "jan" in cl or "jan" in str(c):
             jan_candidates.append(c)
-    jan_candidates = list(dict.fromkeys(jan_candidates))  # 去重保序
+    jan_candidates = list(dict.fromkeys(jan_candidates))
 
     cols = ["part_number", "model_name", "capacity_gb", "color"]
     if jan_candidates:
@@ -82,19 +112,11 @@ def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
     return df[cols]
 
 def _normalize_model_generic(text: str) -> str:
-    """
-    统一型号主体：
-      - iPhone17/16 + 后缀（Pro/Pro Max/Plus/mini）
-      - iPhone Air（含“17 air”→ Air）
-      - 允许紧凑写法：17pro / 17promax / 16Pro / 16Plus ...
-    输出：'iPhone 17 Pro Max' / 'iPhone 17 Pro' / 'iPhone Air' / ...
-    """
     if not text:
         return ""
     t = str(text).replace("\u3000", " ")
     t = re.sub(r"\s+", " ", t)
 
-    # 日文别名到英文
     t = (t.replace("プロマックス", "Pro Max")
            .replace("プロ", "Pro")
            .replace("プラス", "Plus")
@@ -102,39 +124,29 @@ def _normalize_model_generic(text: str) -> str:
            .replace("エアー", "Air")
            .replace("エア", "Air"))
 
-    # ❗ 在“数字后立即跟英文”的位置补一个空格：17pro -> 17 pro
     t = re.sub(r"(\d{2})(?=[A-Za-z])", r"\1 ", t)
-
-    # 标准化大小写/形态：pro-max / ProMax / promáx → Pro Max；pro → Pro；plus → Plus；mini → mini
     t = re.sub(r"(?i)\bpro\s*max\b", "Pro Max", t)
     t = re.sub(r"(?i)\bpro\b", "Pro", t)
     t = re.sub(r"(?i)\bplus\b", "Plus", t)
     t = re.sub(r"(?i)\bmini\b", "mini", t)
 
-    # 若没有 iPhone 前缀但出现纯数字代号，补上
     if "iPhone" not in t and re.search(r"\b1[0-9]\b", t):
         t = re.sub(r"\b(1[0-9])\b", r"iPhone \1", t, count=1)
 
-    # 特例：'17 air' → iPhone Air（防止被当成 iPhone 17）
     t = re.sub(r"(?i)\biPhone\s+17\s+Air\b", "iPhone Air", t)
-
-    # 去容量/SIM/括号噪声
     t = re.sub(r"(\d+(?:\.\d+)?\s*TB|\d{2,4}\s*GB)", "", t, flags=re.I)
     t = re.sub(r"SIMフリ[ーｰ–-]?|シムフリ[ーｰ–-]?|sim\s*free", "", t, flags=re.I)
     t = re.sub(r"[（）\(\)\[\]【】].*?[（）\(\)\[\]【】]", "", t)
     t = re.sub(r"\s+", " ", t).strip()
 
-    # 1) 数字代号机型
     m = _NUM_MODEL_PAT.search(t)
     if m:
         base = f"{m.group(1)} {m.group(2)}"
         suf  = (m.group(3) or "").strip()
         return f"{base} {suf}".strip()
 
-    # 2) Air
     m2 = _AIR_PAT.search(t)
     if m2:
-        # 当前返回主体 'iPhone Air'；若以后真有 Air Plus 等可在此扩展
         return "iPhone Air"
 
     return ""
@@ -151,23 +163,22 @@ def _parse_capacity_gb(text: str) -> Optional[int]:
         return int(m.group(1))
     return None
 
-SPLIT_TOKENS_RE = re.compile(r"[／/、，,]|(?:\s+\+\s+)|(?:\s*;\s*)")
-
-FIRST_YEN_RE = re.compile(r"(?:￥|\¥)?\s*(\d[\d,]*)\s*円?")
-
-COLOR_DELTA_RE = re.compile(
-    r"""(?P<label>[^\d：:\-\s/、／￥円]+)\s*      # 颜色标签
-        (?P<sep>[：:\-])?\s*                    # 分隔符，可空
-        (?P<sign>[+\-−－])?\s*                  # 正负号，可空
-        (?P<amount>\d[\d,]*)\s*(?:円|￥)?       # 金额
-    """, re.UNICODE | re.VERBOSE
-)
-
-COLOR_ABS_RE = re.compile(
-    r"""(?P<label>[^\d：:\-\s/、／￥円]+)\s*￥\s*(?P<amount>\d[\d,]*)""",
-    re.UNICODE
-)
 SPLIT_TOKENS_RE = re.compile(r"[／/、，,]|(?:\s*;\s*)")
+
+# ========== 颜色家族匹配（沿用你 shop16 的宽松逻辑；可按 shop15 特性扩展） ==========
+FAMILY_SYNONYMS = {
+    "blue": ["ブルー", "青", "マリン"], "ブルー": ["ブルー", "青", "マリン"], "青": ["ブルー", "青", "マリン"], "マリン": ["ブルー", "青", "マリン"],
+    "black": ["ブラック", "黒"], "ブラック": ["ブラック", "黒"], "黒": ["ブラック", "黒"],
+    "white": ["ホワイト", "白"], "ホワイト": ["ホワイト", "白"], "白": ["ホワイト", "白"],
+    "green": ["グリーン", "緑"], "グリーン": ["グリーン", "緑"], "緑": ["グリーン", "緑"],
+    "red": ["レッド", "赤"], "レッド": ["レッド", "赤"], "赤": ["レッド", "赤"],
+    "yellow": ["イエロー", "黄"], "イエロー": ["イエロー", "黄"], "黄": ["イエロー", "黄"],
+    "orange": ["オレンジ", "橙"], "オレンジ": ["オレンジ", "橙"], "橙": ["オレンジ", "橙"],
+    "silver": ["シルバー", "銀"], "シルバー": ["シルバー", "銀"], "銀": ["シルバー", "銀"],
+    "gold": ["ゴールド", "金"], "ゴールド": ["ゴールド", "金"], "金": ["ゴールド", "金"],
+    "gray": ["グレー", "グレイ", "灰"], "グレー": ["グレー", "グレイ", "灰"], "グレイ": ["グレー", "グレイ", "灰"], "灰": ["グレー", "グレイ", "灰"],
+    "natural": ["ナチュラル"], "ナチュラル": ["ナチュラル"],
+}
 
 FAMILY_SYNONYMS_shop16 = {
     # blue
@@ -217,31 +228,35 @@ FAMILY_SYNONYMS_shop16 = {
     "ナチュラル": ["ナチュラル"],
 }
 
-def _label_matches_color_shop16(label_raw: str, color_raw: str, color_norm: str) -> bool:
-    """宽松匹配：精确(归一) | 原文子串 | 颜色家族关键词命中"""
+
+def _label_matches_color(label_raw: str, color_raw: str, color_norm: str) -> bool:
     label_norm = _norm(label_raw)
     if label_norm == color_norm:
         return True
     if label_raw and str(label_raw) in str(color_raw):
         return True
+
     keys = {label_raw.strip(), label_raw.strip().lower(), label_norm}
     candidates = set()
     for k in keys:
-        if k in FAMILY_SYNONYMS_shop16:
-            candidates.update(FAMILY_SYNONYMS_shop16[k])
+        if k in FAMILY_SYNONYMS:
+            candidates.update(FAMILY_SYNONYMS[k])
+
     if not candidates:
-        for _, toks in FAMILY_SYNONYMS_shop16.items():
+        for _, toks in FAMILY_SYNONYMS.items():
             if any((t == label_raw) or (t == label_norm) or (t in str(label_raw)) for t in toks):
                 candidates.update(toks)
                 break
+
     return any(tok in str(color_raw) for tok in candidates)
 
-def _build_color_map_shop16(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict[str, Tuple[str, str]]]:
+def _build_color_map(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict[str, Tuple[str, str]]]:
     """(model_norm, cap_gb) -> { color_norm: (part_number, color_raw) }"""
     df = info_df.copy()
     df["model_name_norm"] = df["model_name"].map(_normalize_model_generic)
     df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
     df["color_norm"] = df["color"].map(lambda x: _norm(str(x)))
+
     cmap: Dict[Tuple[str, int], Dict[str, Tuple[str, str]]] = {}
     for _, r in df.iterrows():
         m = r["model_name_norm"]
@@ -253,13 +268,6 @@ def _build_color_map_shop16(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict
         cmap[key][_norm(str(r["color"]))] = (str(r["part_number"]), str(r["color"]))
     return cmap
 
-def _extract_base_price_shop16(text: str) -> Optional[int]:
-    if not text:
-        return None
-    m = FIRST_YEN_RE.search(str(text))
-    if not m:
-        return to_int_yen(text)  # 兜底
-    return to_int_yen(m.group(1))
 
 def _extract_color_deltas_shop16(text: str) -> List[Tuple[str, int]]:
     """从价格串中抽取多段“颜色±金额”，支持 '青/オレンジ -5000' 这类多标签共用金额。"""
@@ -318,6 +326,358 @@ def _extract_color_deltas_shop16(text: str) -> List[Tuple[str, int]]:
 
     return out
 
+_GROUP_SHARED_DELTA_RE = re.compile(
+    r"""
+    (?P<labels>[^0-9￥円]+?)          # 多颜色标签段（含 /）
+    \s*(?P<sign>[+\-−－])\s*         # 显式正负号
+    (?P<amount>\d[\d,]*)\s*(?:円)?   # 金额（可无 円）
+    """,
+    re.UNICODE | re.VERBOSE
+)
+
+def _extract_shared_delta_map_shop16(price_text_norm: str) -> Dict[str, int]:
+    """
+    从原文中抽取： 'オレンジ/青 -1500' 这种共享差价 -> {オレンジ:-1500, 青:-1500}
+    这是“纠错用”的确定性证据，不替代你让 LLM 抽取的主流程。
+    """
+    s = price_text_norm or ""
+    out: Dict[str, int] = {}
+    # 去掉基础价前缀，减少误匹配（基础价一般在最前）
+    m0 = FIRST_YEN_RE.search(s)
+    tail = s[m0.end():] if m0 else s
+
+    for m in _GROUP_SHARED_DELTA_RE.finditer(tail):
+        labels_raw = m.group("labels") or ""
+        sign = m.group("sign") or ""
+        amt = to_int_yen(m.group("amount"))
+        if amt is None:
+            continue
+        delta = -int(amt) if sign in ("-", "−", "－") else int(amt)
+
+        # 拆分 labels（/、，等）
+        for lb in re.split(r"[／/、，,]", labels_raw):
+            lb = _normalize_label_shop16(lb)
+            if lb:
+                out[lb] = delta
+    return out
+
+
+
+def _normalize_price_text_shop16(s: object) -> str:
+    s = "" if s is None else str(s)
+    s = s.replace("\u3000", " ").replace("\xa0", " ").replace("\t", " ")
+    # 把换行变成分隔（保留“下一行是颜色差价”的结构）
+    s = re.sub(r"[\r\n]+", " / ", s)
+    # 压缩空白
+    s = re.sub(r"\s+", " ", s).strip()
+    # 多个分隔合并
+    s = re.sub(r"(?:\s*/\s*){2,}", " / ", s).strip()
+    return s
+
+
+_BASE_ONLY_RE = re.compile(r"^\s*(?:￥|\¥)?\s*\d[\d,]*\s*(?:円)?\s*$")
+
+def _is_base_only_price_text(price_text_norm: str) -> bool:
+    return bool(_BASE_ONLY_RE.match(price_text_norm or ""))
+
+# ========== LangExtract + Ollama：替代正则拆价 ==========
+def _to_signed_int_yen(x: object) -> Optional[int]:
+    if x is None:
+        return None
+    s = str(x).strip()
+    if not s:
+        return None
+
+    # 优先：找带符号的数（通常是差价）
+    signed = list(re.finditer(r"([+\-−－])\s*(\d[\d,]*)", s))
+    if signed:
+        m = signed[-1]
+        sign = m.group(1)
+        amt = to_int_yen(m.group(2))
+        if amt is None:
+            return None
+        return -int(amt) if sign in ("-", "−", "－") else int(amt)
+
+    # 其次：取最后一个数字（避免把 base_price 当 delta）
+    nums = list(re.finditer(r"(\d[\d,]*)", s))
+    if not nums:
+        return None
+    amt = to_int_yen(nums[-1].group(1))
+    return int(amt) if amt is not None else None
+
+_TRAILING_AMOUNT_IN_LABEL_RE = re.compile(
+    r"(?:[：:])?\s*(?:￥)?\s*[+\-−－]?\s*\d[\d,]*\s*(?:円)?\s*$",
+    re.UNICODE,
+)
+def _normalize_label_shop16(lbl: str) -> str:
+    s = re.sub(r"[\s\u3000\xa0]+", "", lbl or "")
+    s = re.sub(r"(カラー|色)$", "", s)
+    # 去掉黏在 label 末尾的金额/符号：-1000 / ￥86100 / :-1,000円 等
+    s = _TRAILING_AMOUNT_IN_LABEL_RE.sub("", s)
+    return s.strip()
+
+def _split_labels_shop16(lbl: str) -> List[str]:
+    # 兼容 “青/オレンジ”“黒、白”“blue/black” 等
+    raw = _normalize_label_shop16(lbl)
+    parts = re.split(r"[／/、，,]", raw)
+    return [p for p in (_normalize_label_shop16(x) for x in parts) if p]
+
+def _extract_base_price_shop16(text: str) -> Optional[int]:
+    if not text:
+        return None
+    m = FIRST_YEN_RE.search(str(text))
+    if not m:
+        return to_int_yen(text)  # 兜底
+    return to_int_yen(m.group(1))
+
+
+SHOP16_PRICE_PROMPT = textwrap.dedent("""\
+You extract pricing information from Japanese iPhone buyback price strings (買取価格).
+Extract ONLY what is explicitly stated in the text; do not guess.
+
+Classes to extract:
+1) base_price:
+   - the unlabeled base price in yen (e.g. "86,100円", "￥86100").
+2) color_delta:
+   - per-color adjustment relative to base_price in yen (e.g. "黒:-1000円", "青 +5000円").
+   - If multiple colors share a delta (e.g. "青/オレンジ -5000円"), output one color_delta per color label.
+3) color_abs:
+   - per-color absolute price in yen (e.g. "黒￥86100", "青￥87100").
+
+Rules:
+- extraction_text must be an exact span from the input text (no paraphrase).
+- Do not invent colors or amounts.
+- Attributes schema:
+  * base_price: {"amount_yen": "<int>"}
+  * color_delta: {"color_label": "<label>", "delta_yen": "<signed int>"}
+  * color_abs: {"color_label": "<label>", "amount_yen": "<int>"}
+""")
+
+def _label_matches_color_shop16(label_raw: str, color_raw: str, color_norm: str) -> bool:
+    """宽松匹配：精确(归一) | 原文子串 | 颜色家族关键词命中"""
+    label_norm = _norm(label_raw)
+    if label_norm == color_norm:
+        return True
+    if label_raw and str(label_raw) in str(color_raw):
+        return True
+    keys = {label_raw.strip(), label_raw.strip().lower(), label_norm}
+    candidates = set()
+    for k in keys:
+        if k in FAMILY_SYNONYMS_shop16:
+            candidates.update(FAMILY_SYNONYMS_shop16[k])
+    if not candidates:
+        for _, toks in FAMILY_SYNONYMS_shop16.items():
+            if any((t == label_raw) or (t == label_norm) or (t in str(label_raw)) for t in toks):
+                candidates.update(toks)
+                break
+    return any(tok in str(color_raw) for tok in candidates)
+
+def _shop16_price_examples():
+    import langextract as lx
+
+    return [
+        lx.data.ExampleData(
+            text="86,100円 黒:-1,000円 青:+500円",
+            extractions=[
+                lx.data.Extraction(
+                    extraction_class="base_price",
+                    extraction_text="86,100円",
+                    attributes={"amount_yen": "86100"},
+                ),
+                lx.data.Extraction(
+                    extraction_class="color_delta",
+                    extraction_text="黒",
+                    attributes={"color_label": "黒", "delta_yen": "-1000"},
+                ),
+                lx.data.Extraction(
+                    extraction_class="color_delta",
+                    extraction_text="青",
+                    attributes={"color_label": "青", "delta_yen": "+500"},
+                ),
+            ],
+        ),
+        lx.data.ExampleData(
+            text="86100円 / 青/オレンジ -5000円",
+            extractions=[
+                lx.data.Extraction(
+                    extraction_class="base_price",
+                    extraction_text="86100円",
+                    attributes={"amount_yen": "86100"},
+                ),
+                lx.data.Extraction(
+                    extraction_class="color_delta",
+                    extraction_text="青",
+                    attributes={"color_label": "青", "delta_yen": "-5000"},
+                ),
+                lx.data.Extraction(
+                    extraction_class="color_delta",
+                    extraction_text="オレンジ",
+                    attributes={"color_label": "オレンジ", "delta_yen": "-5000"},
+                ),
+            ],
+        ),
+        lx.data.ExampleData(
+            text="黒￥86100/青￥87100",
+            extractions=[
+                lx.data.Extraction(
+                    extraction_class="color_abs",
+                    extraction_text="黒",
+                    attributes={"color_label": "黒", "amount_yen": "86100"},
+                ),
+                lx.data.Extraction(
+                    extraction_class="color_abs",
+                    extraction_text="青",
+                    attributes={"color_label": "青", "amount_yen": "87100"},
+                ),
+            ],
+        ),
+        lx.data.ExampleData(
+            text="￥90000 ホワイト +0円／ブラック -3000円",
+            extractions=[
+                lx.data.Extraction(
+                    extraction_class="base_price",
+                    extraction_text="￥90000",
+                    attributes={"amount_yen": "90000"},
+                ),
+                lx.data.Extraction(
+                    extraction_class="color_delta",
+                    extraction_text="ホワイト",
+                    attributes={"color_label": "ホワイト", "delta_yen": "0"},
+                ),
+                lx.data.Extraction(
+                    extraction_class="color_delta",
+                    extraction_text="ブラック",
+                    attributes={"color_label": "ブラック", "delta_yen": "-3000"},
+                ),
+            ],
+        ),
+        lx.data.ExampleData(
+            text="92,000円 ブルー：+2,000円 グリーン:-1000円",
+            extractions=[
+                lx.data.Extraction(
+                    extraction_class="base_price",
+                    extraction_text="92,000円",
+                    attributes={"amount_yen": "92000"},
+                ),
+                lx.data.Extraction(
+                    extraction_class="color_delta",
+                    extraction_text="ブルー",
+                    attributes={"color_label": "ブルー", "delta_yen": "+2000"},
+                ),
+                lx.data.Extraction(
+                    extraction_class="color_delta",
+                    extraction_text="グリーン",
+                    attributes={"color_label": "グリーン", "delta_yen": "-1000"},
+                ),
+            ],
+        ),
+        lx.data.ExampleData(
+            text="￥197000\n\nオレンジ-1000",
+            extractions=[
+                lx.data.Extraction(
+                    extraction_class="base_price",
+                    extraction_text="￥197000",
+                    attributes={"amount_yen": "197000"},
+                ),
+                lx.data.Extraction(
+                    extraction_class="color_delta",
+                    extraction_text="オレンジ-1000",
+                    attributes={"color_label": "オレンジ", "delta_yen": "-1000"},
+                ),
+            ],
+        ),
+    ]
+@lru_cache(maxsize=4096)
+def _lx_extract_price_parts_shop16(
+    price_text: str,
+) -> Tuple[Optional[int], List[Tuple[str, int]], List[Tuple[str, int]], List[dict]]:
+    """
+    返回：
+      base_price: Optional[int]
+      deltas: [(label, delta_yen)]
+      abs_prices: [(label, abs_yen)]
+      debug_extractions: [{"class","text","attrs","span"}]
+    """
+    s = (price_text or "").strip()
+    if not s:
+        return None, [], [], []
+
+    try:
+        import langextract as lx
+    except ImportError as e:
+        raise ImportError("缺少依赖：pip install langextract") from e
+
+    examples = _shop16_price_examples()
+
+    kwargs = dict(
+        text_or_documents=s,
+        prompt_description=SHOP16_PRICE_PROMPT,
+        examples=examples,
+        model_id=OLLAMA_MODEL_ID,
+        model_url=OLLAMA_URL,
+        fence_output=False,
+        use_schema_constraints=False,
+        extraction_passes=1,
+        max_char_buffer=300,
+    )
+    # 与官方 release 示例兼容（有些版本需要显式指定）
+    try:
+        kwargs["language_model_type"] = lx.inference.OllamaLanguageModel
+    except Exception:
+        pass
+
+    result = lx.extract(**kwargs)
+
+    # 某些情况下可能返回 list；统一成 list 处理
+    docs = result if isinstance(result, list) else [result]
+
+    base_price: Optional[int] = None
+    deltas: List[Tuple[str, int]] = []
+    abs_prices: List[Tuple[str, int]] = []
+    debug_extractions: List[dict] = []
+
+    for doc in docs:
+        exs = list(getattr(doc, "extractions", None) or [])
+        for ex in exs:
+            cls = getattr(ex, "extraction_class", "") or ""
+            txt = getattr(ex, "extraction_text", "") or ""
+            attrs = getattr(ex, "attributes", {}) or {}
+
+            ci = getattr(ex, "char_interval", None)
+            span = None
+            if ci is not None:
+                span = {"start": getattr(ci, "start_pos", None), "end": getattr(ci, "end_pos", None)}
+            debug_extractions.append({"class": cls, "text": txt, "attrs": dict(attrs), "span": span})
+
+            if cls == "base_price" and base_price is None:
+                v = attrs.get("amount_yen")
+                amt = to_int_yen(v) if v is not None else to_int_yen(txt)
+                if amt is not None:
+                    base_price = int(amt)
+
+            elif cls == "color_delta":
+                raw_label = str(attrs.get("color_label") or txt or "").strip()
+                dv = attrs.get("delta_yen")
+                delta = _to_signed_int_yen(dv if dv is not None else "")
+                # 若模型没给 delta_yen，则尝试从原文里兜底
+                if delta is None:
+                    delta = _to_signed_int_yen(txt)
+
+                if delta is not None:
+                    for lb in _split_labels_shop16(raw_label):
+                        deltas.append((lb, int(delta)))
+
+            elif cls == "color_abs":
+                raw_label = str(attrs.get("color_label") or txt or "").strip()
+                av = attrs.get("amount_yen")
+                amt = to_int_yen(av) if av is not None else to_int_yen(txt)
+
+                if amt is not None:
+                    for lb in _split_labels_shop16(raw_label):
+                        abs_prices.append((lb, int(amt)))
+
+    return base_price, deltas, abs_prices, debug_extractions
+
 def _extract_color_abs_prices_shop16(text: str) -> List[Tuple[str, int]]:
     """从价格串中抽取“颜色￥绝对价”，如：'黒￥86100/青￥87100'"""
     out: List[Tuple[str, int]] = []
@@ -330,23 +690,14 @@ def _extract_color_abs_prices_shop16(text: str) -> List[Tuple[str, int]]:
             out.append((label, int(amt)))
     return out
 
-MODEL_COL = "iPhone 17 Pro Max"     # 该列承载“机型标题/机型+容量/SIMFREE 開封”等
-DESC_COL  = "説明1"                  # ‘SIMFREE 未開封/開封’ 常在此列（未開封才需要）
+MODEL_COL = "iPhone 17 Pro Max"
+DESC_COL  = "説明1"
 PRICE_COL = "買取価格"
 
-def clean_shop16(df: pd.DataFrame) -> pd.DataFrame:
+
+def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
     print("shop16:携帯空間---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
-    """
-    输入 (shop16.csv):
-      - MODEL_COL: 既可能是分组标题，也可能是 'iPhone 17 Pro/Max 256GB' 等
-      - 説明1: 'SIMFREE 未開封' / 'SIMFREE 開封'（仅取“未開封”）
-      - 買取価格: 基础价格；同格或后随文本里可能带“颜色±金额”或“颜色￥绝对价”
-      - time-scraped: 抓取时间
-    输出:
-      - part_number, shop_name(=携帯空間), price_new, recorded_at
-    仅输出 _load_iphone17_info_df_for_shop2() 存在的机型/容量/颜色。
-    """
-    # 必要列
+
     for c in [MODEL_COL, DESC_COL, PRICE_COL, "time-scraped"]:
         if c not in df.columns:
             raise ValueError(f"shop16 清洗器缺少必要列：{c}")
@@ -356,71 +707,195 @@ def clean_shop16(df: pd.DataFrame) -> pd.DataFrame:
 
     rows: List[dict] = []
 
-    # 状态机：最近一次出现的“机型+容量”文本（用于容错，但本页未用到；仅按行内解析）
-    for _, row in df.iterrows():
+    def _looks_like_has_color_info(price_text: str) -> bool:
+        if not price_text:
+            return False
+        # 有分隔符/符号/￥等，很可能携带颜色差价/绝对价
+        tokens = ("／", "/", "￥", "：", ":", "+", "-", "−", "－")
+        return any(t in price_text for t in tokens)
+
+    for idx, row in df.iterrows():
         model_cell = str(row.get(MODEL_COL) or "").strip()
         desc_cell  = str(row.get(DESC_COL)  or "").strip()
         price_cell = row.get(PRICE_COL)
         rec_at     = parse_dt_aware(row.get("time-scraped"))
 
-        # 只处理“未開封”行（开封或空都跳过）
-        # 备注：有些“開封”行把价格放在 説明1，但我们整体忽略开封价
         is_unopened = ("未開封" in desc_cell) or ("未開封" in model_cell)
         if not is_unopened:
             continue
 
-        # 从 MODEL_COL 抽取机型和容量（可能含换行/空白）
         model_text = model_cell.replace("\u3000", " ").replace("\xa0", " ").replace("\n", " ").strip()
         model_norm = _normalize_model_generic(model_text)
         cap_gb = _parse_capacity_gb(model_text)
-        if not model_norm or pd.isna(cap_gb):
-            # 若该行 MODEL_COL 只是“iPhone 17 Pro Max / 説明 / 買取価格”等标题，cap 解析会失败
+        if not model_norm or cap_gb is None or pd.isna(cap_gb):
             continue
         cap_gb = int(cap_gb)
 
         key = (model_norm, cap_gb)
         color_map = cmap_all.get(key)
         if not color_map:
-            # 信息表没有该（机型, 容量），跳过
             continue
 
-        # 基础价（在買取価格列；若异常则跳过）
-        base_price = _extract_base_price_shop16(str(price_cell) if price_cell is not None else "")
+        price_raw = "" if price_cell is None else str(price_cell)
+        price_text = _normalize_price_text_shop16(price_raw)
+
+        # 1) 先走 LangExtract + Ollama 抽取
+        base_llm = None
+        deltas: List[Tuple[str, int]] = []
+        absps: List[Tuple[str, int]] = []
+        dbg_extractions: List[dict] = []
+        llm_ok = False
+
+        try:
+            base_llm, deltas, absps, dbg_extractions = _lx_extract_price_parts_shop16(price_text)
+            llm_ok = True
+        except Exception as e:
+            # LangExtract/Ollama 失败时，不让整批崩掉；回退到旧逻辑（保持可用性）
+            llm_ok = False
+            if debug:
+                print("\n[shop16][llm] LangExtract/Ollama 解析失败，回退旧逻辑。row=", idx, "err=", repr(e))
+
+        # LangExtract + Ollama 抽取
+
+        base_price = base_llm
         if base_price is None:
+            base_price = _extract_base_price_shop16(price_text)
+        base_price = int(base_price) if base_price is not None else None
+
+        # -----------------------------
+        # Guardrail A: 只有基础价 -> 丢弃所有 color_delta/color_abs（防幻觉）
+        # -----------------------------
+        if _is_base_only_price_text(price_text):
+            deltas = []
+            absps = []
+
+        # -----------------------------
+        # Guardrail B: 共享差价纠错（修正 “青” 被抽成 +1500）
+        # -----------------------------
+        shared_delta_map = _extract_shared_delta_map_shop16(price_text)
+        if shared_delta_map and deltas:
+            corrected: List[Tuple[str, int]] = []
+            for label_raw, delta in deltas:
+                lb = _normalize_label_shop16(label_raw)
+                if not lb:
+                    continue
+                if lb in shared_delta_map:
+                    corrected.append((lb, int(shared_delta_map[lb])))
+                else:
+                    corrected.append((lb, int(delta)))
+            deltas = corrected
+
+        # -----------------------------
+        # Guardrail C: 逐条证据过滤 —— label/金额必须在原文出现（进一步防幻觉）
+        # -----------------------------
+        text_no_commas = price_text.replace(",", "")
+        filtered_deltas: List[Tuple[str, int]] = []
+        for label_raw, delta in deltas:
+            lb = _normalize_label_shop16(label_raw)
+            if not lb:
+                continue
+            # label 必须出现
+            if lb not in price_text:
+                continue
+            # 金额数字必须出现（忽略符号，只校验绝对值数字）
+            if str(abs(int(delta))) not in text_no_commas:
+                continue
+            filtered_deltas.append((lb, int(delta)))
+        deltas = filtered_deltas
+
+        filtered_absps: List[Tuple[str, int]] = []
+        for label_raw, amt in absps:
+            lb = _normalize_label_shop16(label_raw)
+            if not lb:
+                continue
+            if lb not in price_text:
+                continue
+            if str(int(amt)) not in text_no_commas:
+                continue
+            filtered_absps.append((lb, int(amt)))
+        absps = filtered_absps
+
+        # # 2) base_price：优先 LLM，其次旧 base 提取
+        # base_price = base_llm
+        # if base_price is None:
+        #     base_price = _extract_base_price_shop16(price_text)  # 仅做数值兜底（旧逻辑）
+        # if base_price is not None:
+        #     base_price = int(base_price)
+
+        # 3) 若 LLM 没抽到任何颜色信息且它失败了，可选回退旧的颜色解析（避免漏数据）
+        if (not llm_ok) and (not deltas) and (not absps):
+            # 这里仍用你原来的正则函数做容错回退
+            deltas = _extract_color_deltas_shop16(price_text)
+            absps  = _extract_color_abs_prices_shop16(price_text)
+
+        # 4) 没 base 且没 abs：没法落库
+        if base_price is None and not absps:
             continue
-        base_price = int(base_price)
 
-        # 解析同格里的“颜色±金额”与“颜色￥绝对价”
-        deltas = _extract_color_deltas_shop16(str(price_cell))
-        absps  = _extract_color_abs_prices_shop16(str(price_cell))
-
-        # 若出现“颜色￥绝对价”，优先使用绝对价；否则使用 base ± delta
-        # 把标签映射到具体 color_norm
+        # 5) 标签映射到具体 color_norm
         color_delta_map: Dict[str, int] = {}
         color_abs_map: Dict[str, int] = {}
 
         if deltas:
             for col_norm, (_pn, col_raw) in color_map.items():
                 for label_raw, delta in deltas:
-                    if _label_matches_color_shop16(label_raw, col_raw, col_norm):
-                        color_delta_map[col_norm] = delta  # 多命中时以后者为准
+                    label_raw2 = _normalize_label_shop16(label_raw)
+                    if _label_matches_color_shop16(label_raw2, col_raw, col_norm):
+                        color_delta_map[col_norm] = int(delta)
 
         if absps:
             for col_norm, (_pn, col_raw) in color_map.items():
                 for label_raw, abs_price in absps:
-                    if _label_matches_color_shop16(label_raw, col_raw, col_norm):
-                        color_abs_map[col_norm] = abs_price  # 绝对价优先
+                    label_raw2 = _normalize_label_shop16(label_raw)
+                    if _label_matches_color_shop16(label_raw2, col_raw, col_norm):
+                        color_abs_map[col_norm] = int(abs_price)
 
-        # 生成输出
+        # 6) debug：只在“确实疑似有颜色信息”时打印
+        if debug and (_looks_like_has_color_info(price_text) or deltas or absps):
+            print("\n" + "-" * 120)
+            print(f"[shop16 debug] row_index={idx} llm_ok={llm_ok}")
+            print(f"  model_text: {model_text!r}")
+            print(f"  model_norm/cap: {model_norm!r} / {cap_gb}")
+            print(f"  price_raw: {price_text!r}")
+            print(f"  extracted(base_llm/base_final): {base_llm!r} / {base_price!r}")
+            print(f"  extracted(deltas): {deltas!r}")
+            print(f"  extracted(absps):  {absps!r}")
+            if dbg_extractions:
+                print("  llm_extractions:")
+                for it in dbg_extractions:
+                    print("   -", it)
+
+            print("  color candidates (iphone17_info):")
+            for col_norm, (pn, col_raw) in color_map.items():
+                print(f"    - color_norm={col_norm!r}, color_raw={col_raw!r}, pn={pn!r}")
+
+            print(f"  matched color_delta_map: {color_delta_map}")
+            print(f"  matched color_abs_map  : {color_abs_map}")
+
+            print("  final prices by color:")
+            for col_norm, (pn, col_raw) in color_map.items():
+                if col_norm in color_abs_map:
+                    final_price = color_abs_map[col_norm]
+                    src = "abs"
+                else:
+                    if base_price is None:
+                        continue
+                    delta = color_delta_map.get(col_norm, 0)
+                    final_price = int(base_price) + int(delta)
+                    src = "base+delta" if col_norm in color_delta_map else "base"
+                print(f"    - {col_norm!r} ({col_raw}) pn={pn}: {final_price} [{src}]")
+
+        # 7) 生成输出：绝对价优先，否则 base ± delta
         for col_norm, (pn, _col_raw) in color_map.items():
             if col_norm in color_abs_map:
                 price_new = color_abs_map[col_norm]
             else:
-                delta = color_delta_map.get(col_norm, 0)
-                price_new = base_price + delta
+                if base_price is None:
+                    continue
+                price_new = int(base_price) + int(color_delta_map.get(col_norm, 0))
 
             rows.append({
-                "part_number": pn,
+                "part_number": str(pn),
                 "shop_name": "携帯空間",
                 "price_new": int(price_new),
                 "recorded_at": rec_at,

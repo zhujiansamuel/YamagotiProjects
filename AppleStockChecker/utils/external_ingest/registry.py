@@ -2,73 +2,88 @@
 from __future__ import annotations
 from typing import Callable, Dict
 import pandas as pd
-from .base_cleaners import CLEANERS, Cleaner
+# from .base_cleaners import CLEANERS, Cleaner
+from .base_cleaners import Cleaner
+#
+from .shop_cleaners_split.shop1_cleaner import clean_shop1
+from .shop_cleaners_split.shop2_cleaner import clean_shop2
+from .shop_cleaners_split.shop3_cleaner import clean_shop3
+from .shop_cleaners_split.shop4_cleaner import clean_shop4
+from .shop_cleaners_split.shop5_1_cleaner import clean_shop5_1
+from .shop_cleaners_split.shop5_2_cleaner import clean_shop5_2
+from .shop_cleaners_split.shop5_3_cleaner import clean_shop5_3
+from .shop_cleaners_split.shop5_4_cleaner import clean_shop5_4
+from .shop_cleaners_split.shop6_1_cleaner import clean_shop6_1
+from .shop_cleaners_split.shop6_2_cleaner import clean_shop6_2
+from .shop_cleaners_split.shop6_3_cleaner import clean_shop6_3
+from .shop_cleaners_split.shop6_4_cleaner import clean_shop6_4
+from .shop_cleaners_split.shop7_cleaner import clean_shop7
+from .shop_cleaners_split.shop8_cleaner import clean_shop8
+from .shop_cleaners_split.shop9_cleaner import clean_shop9
+from .shop_cleaners_split.shop10_cleaner import clean_shop10
+from .shop_cleaners_split.shop11_cleaner import clean_shop11
+from .shop_cleaners_split.shop12_cleaner import clean_shop12
+from .shop_cleaners_split.shop13_cleaner import clean_shop13
+from .shop_cleaners_split.shop14_cleaner import clean_shop14
+from .shop_cleaners_split.shop15_cleaner import clean_shop15
+from .shop_cleaners_split.shop16_cleaner import clean_shop16
+from .shop_cleaners_split.shop17_cleaner import clean_shop17
+from .shop_cleaners_split.shop18_cleaner import clean_shop18
+from .shop_cleaners_split.shop20_cleaner import clean_shop20
 
-# from .shop_cleaners_split.shop1_cleaner import clean_shop1
-# from .shop_cleaners_split.shop2_cleaner import clean_shop2
-# from .shop_cleaners_split.shop3_cleaner import clean_shop3
-# from .shop_cleaners_split.shop4_cleaner import clean_shop4
-# from .shop_cleaners_split.shop5_1_cleaner import clean_shop5_1
-# from .shop_cleaners_split.shop5_2_cleaner import clean_shop5_2
-# from .shop_cleaners_split.shop5_3_cleaner import clean_shop5_3
-# from .shop_cleaners_split.shop5_4_cleaner import clean_shop5_4
-# from .shop_cleaners_split.shop6_1_cleaner import clean_shop6_1
-# from .shop_cleaners_split.shop6_2_cleaner import clean_shop6_2
-# from .shop_cleaners_split.shop6_3_cleaner import clean_shop6_3
-# from .shop_cleaners_split.shop6_4_cleaner import clean_shop6_4
-# from .shop_cleaners_split.shop7_cleaner import clean_shop7
-# from .shop_cleaners_split.shop8_cleaner import clean_shop8
-# from .shop_cleaners_split.shop9_cleaner import clean_shop9
-# from .shop_cleaners_split.shop10_cleaner import clean_shop10
-# from .shop_cleaners_split.shop11_cleaner import clean_shop11
-# from .shop_cleaners_split.shop12_cleaner import clean_shop12
-# from .shop_cleaners_split.shop13_cleaner import clean_shop13
-# from .shop_cleaners_split.shop14_cleaner import clean_shop14
-# from .shop_cleaners_split.shop15_cleaner import clean_shop15
-# from .shop_cleaners_split.shop16_cleaner import clean_shop16
-# from .shop_cleaners_split.shop17_cleaner import clean_shop17
-# from .shop_cleaners_split.shop18_cleaner import clean_shop18
-# from .shop_cleaners_split.shop20_cleaner import clean_shop20
-#
-# CLEANERS = {
-#     "shop1":  clean_shop1,
-#     "shop2":  clean_shop2,
-#     "shop3":  clean_shop3,
-#     "shop4":  clean_shop4,
-#     "shop5_1":  clean_shop5_1,
-#     "shop5_2":  clean_shop5_2,
-#     "shop5_3":  clean_shop5_3,
-#     "shop5_4":  clean_shop5_4,
-#     "shop6_1":  clean_shop6_1,
-#     "shop6_2":  clean_shop6_2,
-#     "shop6_3":  clean_shop6_3,
-#     "shop6_4":  clean_shop6_4,
-#     "shop7":  clean_shop7,
-#     "shop8":  clean_shop8,
-#     "shop9":  clean_shop9,
-#     "shop10":  clean_shop10,
-#     "shop11":  clean_shop11,
-#     "shop12":  clean_shop12,
-#     "shop13":  clean_shop13,
-#     "shop14":  clean_shop14,
-#     "shop15":  clean_shop15,
-#     "shop16":  clean_shop16,
-#     "shop17":  clean_shop17,
-#     "shop18":  clean_shop18,
-#     "shop20":  clean_shop20,
-#
-# }
+CLEANERS = {
+    "shop1":  clean_shop1,
+    "shop2":  clean_shop2,
+    "shop3":  clean_shop3,
+    "shop4":  clean_shop4,
+    "shop5_1":  clean_shop5_1,
+    "shop5_2":  clean_shop5_2,
+    "shop5_3":  clean_shop5_3,
+    "shop5_4":  clean_shop5_4,
+    "shop6_1":  clean_shop6_1,
+    "shop6_2":  clean_shop6_2,
+    "shop6_3":  clean_shop6_3,
+    "shop6_4":  clean_shop6_4,
+    "shop7":  clean_shop7,
+    "shop8":  clean_shop8,
+    "shop9":  clean_shop9,
+    "shop10":  clean_shop10,
+    "shop11":  clean_shop11,
+    "shop12":  clean_shop12,
+    "shop13":  clean_shop13,
+    "shop14":  clean_shop14,
+    "shop15":  clean_shop15,
+    "shop16":  clean_shop16,
+    "shop17":  clean_shop17,
+    "shop18":  clean_shop18,
+    "shop20":  clean_shop20,
+
+}
+
+
+# def get_cleaner(name: str) -> Cleaner:
+#     if name not in CLEANERS:
+#         raise KeyError(f"未注册的清洗器: {name}")
+#     return CLEANERS[name]
+
+# def run_cleaner(name: str, df: pd.DataFrame) -> pd.DataFrame:
+#     cleaner = get_cleaner(name)
+#     return cleaner(df)
+
+
+
+def has_cleaner(name: str) -> bool:
+    return name in CLEANERS
 
 def get_cleaner(name: str) -> Cleaner:
+    """真正取出 cleaner 的函数，后续如果需要用得到"""
     if name not in CLEANERS:
         raise KeyError(f"未注册的清洗器: {name}")
     return CLEANERS[name]
 
-def run_cleaner(name: str, df: pd.DataFrame) -> pd.DataFrame:
-    cleaner = get_cleaner(name)
-    return cleaner(df)
 
-# def run_cleaner(shop_key: str, df):
-#     return CLEANERS[shop_key](df)
-#
+
+def run_cleaner(shop_key: str, df):
+    return CLEANERS[shop_key](df)
+
 

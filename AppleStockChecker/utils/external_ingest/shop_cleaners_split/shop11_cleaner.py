@@ -13,6 +13,9 @@ import os, re, json, pathlib
 from datetime import datetime
 import pytz
 import time
+from dateutil import parser as dateparser
+import textwrap
+from functools import lru_cache
 
 _NUM_MODEL_PAT = re.compile(r"(iPhone)\s*(\d{2})(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
 _AIR_PAT = re.compile(r"(iPhone)\s*(Air)(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
@@ -372,60 +375,498 @@ def _build_color_map_shop11(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict
         cmap[key][_norm(str(r["color"]))] = (str(r["part_number"]), str(r["color"]))
     return cmap
 
-def clean_shop11(df: pd.DataFrame) -> pd.DataFrame:
+try:
+    import langextract as lx
+except Exception:  # 允许在未安装时仍可跑 fallback
+    lx = None
+
+SHOP11_OLLAMA_URL = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+SHOP11_OLLAMA_MODEL_ID = os.getenv("SHOP11_OLLAMA_MODEL_ID", "gemma3:1b")
+
+
+def _coerce_int(v) -> Optional[int]:
+    if v is None:
+        return None
+    try:
+        if isinstance(v, bool):
+            return None
+        if isinstance(v, (int,)):
+            return int(v)
+        s = str(v).strip()
+        if not s:
+            return None
+        # 允许 "1,000" / "-1000" 之类
+        s = s.replace(",", "")
+        return int(float(s))
+    except Exception:
+        return None
+
+
+@lru_cache(maxsize=1)
+def _shop11_model_config():
+    """
+    LangExtract 新版推荐的 ModelConfig 方式；若你的 langextract 版本不支持，会在调用处兜底到旧参数。
+    """
+    if lx is None:
+        return None
+    provider_kwargs = {
+        "model_url": SHOP11_OLLAMA_URL,
+        "temperature": float(os.getenv("SHOP11_OLLAMA_TEMPERATURE", "0.0")),
+        "timeout": int(os.getenv("SHOP11_OLLAMA_TIMEOUT", "180")),
+        "max_tokens": int(os.getenv("SHOP11_OLLAMA_MAX_TOKENS", "512")),
+    }
+    # JSON mode（能显著降低本地模型“夹杂解释文字”导致的解析失败）
+    try:
+        provider_kwargs["format_type"] = lx.data.FormatType.JSON
+    except Exception:
+        pass
+    try:
+        return lx.factory.ModelConfig(model_id=SHOP11_OLLAMA_MODEL_ID, provider_kwargs=provider_kwargs)
+    except Exception:
+        return None
+
+
+def _lx_extract_ollama(text: str, prompt: str, examples: list):
+    """
+    返回 result 对象；失败返回 None
+    """
+    if lx is None:
+        return None
+
+    cfg = _shop11_model_config()
+    try:
+        if cfg is not None:
+            return lx.extract(
+                text_or_documents=text,
+                prompt_description=prompt,
+                examples=examples,
+                config=cfg,
+                fence_output=True,
+                use_schema_constraints=False,
+            )
+    except TypeError:
+        # 老版本 langextract 不支持 config=...
+        pass
+    except Exception:
+        # config 路径失败则也尝试旧参数路径
+        pass
+
+    # 旧参数路径（v1.0.4 一类写法）
+    try:
+        return lx.extract(
+            text_or_documents=text,
+            prompt_description=prompt,
+            examples=examples,
+            language_model_type=lx.inference.OllamaLanguageModel,
+            model_id=SHOP11_OLLAMA_MODEL_ID,
+            model_url=SHOP11_OLLAMA_URL,
+            fence_output=False,
+            use_schema_constraints=False,
+        )
+    except Exception:
+        return None
+
+
+@lru_cache(maxsize=8)
+def _shop11_lx_storage_materials(valid_models: Tuple[str, ...]):
+    """
+    storage_name 解析：device_model + storage_capacity
+    """
+    model_list = "\n".join(f"- {m}" for m in valid_models if m)
+
+    prompt = textwrap.dedent(f"""\
+        You are a strict parser.
+
+        Input format:
+          STORAGE: <text>
+
+        Extract up to 2 items:
+          1) device_model:
+             - extraction_text must be an exact substring from STORAGE (do not invent text).
+             - attributes must include: {{"model_norm": "<normalized model>"}}
+             - model_norm MUST exactly equal one of:
+{model_list}
+
+          2) storage_capacity:
+             - extraction_text must be an exact substring from STORAGE containing GB or TB (e.g., "256GB", "1TB").
+             - attributes must include: {{"capacity_gb": <int>}}
+             - Convert TB to GB using 1TB = 1024GB.
+
+        If you cannot determine a field, do not output that extraction.
+    """)
+
+    examples = [
+        lx.data.ExampleData(
+            text="STORAGE: iPhone17 Pro Max 256GB",
+            extractions=[
+                lx.data.Extraction(
+                    extraction_class="device_model",
+                    extraction_text="iPhone17 Pro Max",
+                    attributes={"model_norm": "iPhone 17 Pro Max"},
+                ),
+                lx.data.Extraction(
+                    extraction_class="storage_capacity",
+                    extraction_text="256GB",
+                    attributes={"capacity_gb": 256},
+                ),
+            ],
+        ),
+        lx.data.ExampleData(
+            text="STORAGE: 17pro 1TB",
+            extractions=[
+                lx.data.Extraction(
+                    extraction_class="device_model",
+                    extraction_text="17pro",
+                    attributes={"model_norm": "iPhone 17 Pro"},
+                ),
+                lx.data.Extraction(
+                    extraction_class="storage_capacity",
+                    extraction_text="1TB",
+                    attributes={"capacity_gb": 1024},
+                ),
+            ],
+        ),
+        lx.data.ExampleData(
+            text="STORAGE: iPhone17 プロ 512GB",
+            extractions=[
+                lx.data.Extraction(
+                    extraction_class="device_model",
+                    extraction_text="iPhone17 プロ",
+                    attributes={"model_norm": "iPhone 17 Pro"},
+                ),
+                lx.data.Extraction(
+                    extraction_class="storage_capacity",
+                    extraction_text="512GB",
+                    attributes={"capacity_gb": 512},
+                ),
+            ],
+        ),
+    ]
+    return prompt, examples
+
+
+@lru_cache(maxsize=1)
+def _shop11_lx_color_materials():
+    """
+    caution_empty 解析：color_delta（对 AVAILABLE_COLORS 里的颜色逐一给 delta）
+    """
+    prompt = textwrap.dedent("""\
+        You are a strict parser.
+
+        Input format:
+          CAUTION: <text>
+          AVAILABLE_COLORS: <c1 | c2 | c3 ...>
+
+        Task:
+          Extract color price deltas relative to the base unopened price.
+
+        Output extractions:
+          - extraction_class: "color_delta"
+          - extraction_text: MUST be EXACTLY one color string from AVAILABLE_COLORS (copy it exactly).
+          - attributes: {"delta_yen": <int>}
+
+        Parsing rules:
+          - "+2000円" => 2000, "-1,000円" => -1000 (JPY).
+          - If CAUTION says "全色" or "すべて" or "全カラー", apply the same delta to ALL AVAILABLE_COLORS.
+          - If a color has no delta info, do not output it.
+          - If multiple deltas exist for same color, the last one wins.
+          - Ignore notes in parentheses like "(未開封)".
+    """)
+
+    examples = [
+        lx.data.ExampleData(
+            text="CAUTION: ブルー、ブラック：-2,000円(未開封)\nAVAILABLE_COLORS: ブルー | ブラック | シルバー",
+            extractions=[
+                lx.data.Extraction(
+                    extraction_class="color_delta",
+                    extraction_text="ブルー",
+                    attributes={"delta_yen": -2000},
+                ),
+                lx.data.Extraction(
+                    extraction_class="color_delta",
+                    extraction_text="ブラック",
+                    attributes={"delta_yen": -2000},
+                ),
+            ],
+        ),
+        lx.data.ExampleData(
+            text="CAUTION: 全色:+1,000円\nAVAILABLE_COLORS: ブルー | ブラック",
+            extractions=[
+                lx.data.Extraction(
+                    extraction_class="color_delta",
+                    extraction_text="ブルー",
+                    attributes={"delta_yen": 1000},
+                ),
+                lx.data.Extraction(
+                    extraction_class="color_delta",
+                    extraction_text="ブラック",
+                    attributes={"delta_yen": 1000},
+                ),
+            ],
+        ),
+        lx.data.ExampleData(
+            text="CAUTION: シルバー・ブルー：-１０００円\nAVAILABLE_COLORS: ブルー | ブラック | シルバー",
+            extractions=[
+                lx.data.Extraction(
+                    extraction_class="color_delta",
+                    extraction_text="シルバー",
+                    attributes={"delta_yen": -1000},
+                ),
+                lx.data.Extraction(
+                    extraction_class="color_delta",
+                    extraction_text="ブルー",
+                    attributes={"delta_yen": -1000},
+                ),
+            ],
+        ),
+    ]
+    return prompt, examples
+
+
+@lru_cache(maxsize=4096)
+def _lx_parse_storage_shop11(storage: str, valid_models: Tuple[str, ...]) -> Tuple[str, Optional[int], Tuple[Tuple[str, str, Tuple[Tuple[str, str], ...]], ...]]:
+    """
+    返回 (model_norm, cap_gb, trace)
+    trace: (class, extraction_text, sorted(attributes.items()) )
+    """
+    if not storage or lx is None:
+        return "", None, tuple()
+
+    prompt, examples = _shop11_lx_storage_materials(valid_models)
+    txt = f"STORAGE: {storage}"
+
+    res = _lx_extract_ollama(txt, prompt, examples)
+    extrs = getattr(res, "extractions", None) or []
+
+    model_norm = ""
+    cap_gb: Optional[int] = None
+    trace = []
+
+    for e in extrs:
+        cls = str(getattr(e, "extraction_class", "") or "")
+        et = str(getattr(e, "extraction_text", "") or "")
+        attrs = getattr(e, "attributes", None) or {}
+        attrs_items = tuple(sorted((str(k), str(v)) for k, v in attrs.items()))
+        trace.append((cls, et, attrs_items))
+
+        if cls == "device_model":
+            mn = (attrs.get("model_norm") or "").strip()
+            if mn:
+                # 再走一次你现有的规范化，确保和 info_df 的 key 完全一致
+                model_norm = _normalize_model_generic(mn) or mn
+        elif cls == "storage_capacity":
+            cap_gb = _coerce_int(attrs.get("capacity_gb"))
+
+    return model_norm, cap_gb, tuple(trace)
+
+
+@lru_cache(maxsize=4096)
+def _lx_parse_color_deltas_shop11(
+    caution: str,
+    available_colors: Tuple[str, ...],
+) -> Tuple[Tuple[Tuple[str, int], ...], Tuple[Tuple[str, str, Tuple[Tuple[str, str], ...]], ...]]:
+    """
+    返回 (deltas_items, trace)
+    deltas_items: tuple of (color, delta_yen)  —— 最后出现覆盖前面
+    """
+    if lx is None:
+        return tuple(), tuple()
+
+    prompt, examples = _shop11_lx_color_materials()
+    avail_line = " | ".join([c for c in available_colors if c])
+    txt = f"CAUTION: {caution or ''}\nAVAILABLE_COLORS: {avail_line}"
+
+    res = _lx_extract_ollama(txt, prompt, examples)
+    extrs = getattr(res, "extractions", None) or []
+
+    tmp: Dict[str, int] = {}
+    trace = []
+
+    for e in extrs:
+        cls = str(getattr(e, "extraction_class", "") or "")
+        et = str(getattr(e, "extraction_text", "") or "").strip()
+        attrs = getattr(e, "attributes", None) or {}
+        attrs_items = tuple(sorted((str(k), str(v)) for k, v in attrs.items()))
+        trace.append((cls, et, attrs_items))
+
+        if cls != "color_delta":
+            continue
+
+        delta = _coerce_int(attrs.get("delta_yen"))
+        if delta is None or not et:
+            continue
+
+        # 目标：et 必须是 available_colors 之一；若不完全一致，fallback 做一层匹配
+        if et in available_colors:
+            tmp[et] = int(delta)
+            continue
+
+        # fallback：用你原有的 label 匹配逻辑把 et 贴到合法颜色上
+        for c in available_colors:
+            if _label_matches_color_shop11(et, c, _norm(c)):
+                tmp[c] = int(delta)
+
+    return tuple(tmp.items()), tuple(trace)
+
+
+
+
+def clean_shop11(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> pd.DataFrame:
     print("shop11:モバステ---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
-    """
-    shop11 清洗器：
-      - storage_name -> model+capacity (使用 _normalize_model_generic / _parse_capacity_gb)
-      - price_unopened 为基准价（解析为整数）
-      - caution_empty 中的颜色差额（如 "シルバー・ブルー：-1,000円(未開封)"）会应用到该颜色对应的 part_number
-      - 输出：part_number, shop_name("モバステ"), price_new, recorded_at
-    """
+
     need_cols = ["storage_name", "price_unopened", "caution_empty", "time-scraped"]
     for c in need_cols:
         if c not in df.columns:
             raise ValueError(f"shop11 清洗器缺少必要列：{c}")
 
+    df2 = df.copy().reset_index(drop=True)
+
     info_df = _load_iphone17_info_df_for_shop2()
     cmap_all = _build_color_map_shop11(info_df)
 
-    rows = []
-    for _, row in df.iterrows():
-        storage = str(row.get("storage_name") or "").strip()
+    # 用 info_df 推导“允许的规范化机型”，用来约束 LLM 输出，减少 key 对不上
+    valid_models = tuple(
+        sorted({m for m in info_df["model_name"].map(_normalize_model_generic).tolist() if m})
+    )
+
+    # DEBUG：只做轻量 hint 选择打印行（不在 debug 阶段对整列跑 LLM）
+    debug_pos_set: set[int] = set()
+    if debug:
+        s_caution = df2["caution_empty"].fillna("").astype(str)
+        _HINT_PAT = re.compile(
+            r"(全色|シルバー|ブルー|ブラック|ホワイト|青|銀|黒|白|"
+            r"[+\-−－]\s*[0-9０-９]|円|¥|￥|：|:)",
+            re.I,
+        )
+        mask = s_caution.str.contains(_HINT_PAT, na=False)
+
+        hit_cnt = 0
+        for i in range(len(df2)):
+            if bool(mask.iat[i]):
+                debug_pos_set.add(i)
+                hit_cnt += 1
+                if hit_cnt >= int(debug_limit):
+                    break
+
+        if not debug_pos_set:
+            debug_pos_set = set(range(min(int(debug_limit), len(df2))))
+
+        print(f"[shop11 debug] total_rows={len(df2)}, print_rows={len(debug_pos_set)}, ollama={SHOP11_OLLAMA_URL}, model={SHOP11_OLLAMA_MODEL_ID}")
+
+    def _dbg_on(pos: int) -> bool:
+        return bool(debug) and (pos in debug_pos_set)
+
+    rows: List[dict] = []
+
+    for i, row in df2.iterrows():
+        storage_raw = row.get("storage_name")
+        price_raw = row.get("price_unopened")
+        caution_raw = row.get("caution_empty")
+        time_raw = row.get("time-scraped")
+
+        storage = str(storage_raw or "").strip()
         if not storage:
+            if _dbg_on(i):
+                print("\n[shop11 debug] row_pos=", i, "SKIP_REASON: storage_name 为空")
             continue
-        model_norm = _normalize_model_generic(storage)
-        cap_gb = _parse_capacity_gb(storage)
-        if not model_norm or pd.isna(cap_gb):
+
+        # 1) 先走 LLM 解析（失败则 fallback 到你现有 regex）
+        model_norm, cap_gb, storage_trace = _lx_parse_storage_shop11(storage, valid_models)
+
+        if not model_norm or cap_gb is None:
+            # fallback：regex
+            model_norm_fb = _normalize_model_generic(storage)
+            cap_fb = _parse_capacity_gb(storage)
+            if model_norm_fb and cap_fb is not None:
+                model_norm, cap_gb = model_norm_fb, int(cap_fb)
+
+        if not model_norm or cap_gb is None:
+            if _dbg_on(i):
+                print("\n[shop11 debug] row_pos=", i)
+                print("  storage_name(raw):", repr(storage_raw))
+                print("  LLM_trace:", storage_trace)
+                print("  SKIP_REASON: model/cap 解析失败")
             continue
+
         cap_gb = int(cap_gb)
         key = (model_norm, cap_gb)
         color_map = cmap_all.get(key)
+
+        # 若 key 对不上，再做一次“保险规范化”尝试（减少 LLM 输出微小差异导致 miss）
         if not color_map:
-            # 若找不到该型号/容量的映射则跳过
+            model_norm2 = _normalize_model_generic(model_norm) or model_norm
+            key2 = (model_norm2, cap_gb)
+            color_map = cmap_all.get(key2)
+            if color_map:
+                key = key2
+                model_norm = model_norm2
+
+        if not color_map:
+            if _dbg_on(i):
+                print("\n[shop11 debug] row_pos=", i)
+                print("  storage_name(raw):", repr(storage_raw))
+                print("  model_norm/cap:", repr(model_norm), cap_gb, " key:", repr(key))
+                print("  LLM_trace:", storage_trace)
+                print("  SKIP_REASON: info 表中找不到该型号/容量映射")
             continue
 
-        base_price = to_int_yen_shop11(row.get("price_unopened"))
+        base_price = to_int_yen_shop11(price_raw)
         if base_price is None:
+            if _dbg_on(i):
+                print("\n[shop11 debug] row_pos=", i)
+                print("  price_unopened(raw):", repr(price_raw))
+                print("  SKIP_REASON: base_price 解析失败")
             continue
-        rec_at_raw = row.get("time-scraped")
-        # 不做时区修正，直接保留原值或解析为 datetime（如果需要）
+
+        # recorded_at（保持你原有逻辑）
+        rec_at_raw = time_raw
         try:
             recorded_at = dateparser.parse(str(rec_at_raw)) if pd.notna(rec_at_raw) else None
         except Exception:
             recorded_at = rec_at_raw
 
-        deltas = _extract_color_deltas_shop11(row.get("caution_empty") or "")
-        color_deltas: Dict[str, int] = {}
-        for col_norm, (pn, col_raw) in color_map.items():
-            for label_raw, delta in deltas:
-                if _label_matches_color_shop11(label_raw, col_raw, col_norm):
-                    color_deltas[col_norm] = int(delta)   # 后匹配覆盖前匹配
+        # 2) 颜色差额：LLM 优先；若为空且文本明显像差额规则，则 fallback 到 regex
+        avail_colors = tuple(color_map.keys())
+        caution_txt = _normalize_number_text(str(caution_raw or ""))  # 数字半角化，降低小模型误判
 
-        # 生成输出：每个颜色的 part_number 都产一行
+        deltas_items, deltas_trace = _lx_parse_color_deltas_shop11(caution_txt, avail_colors)
+        color_deltas = dict(deltas_items)
+
+        if not color_deltas and caution_txt.strip():
+            # fallback：你现有的正则差额抽取（只在 LLM 没结果时用）
+            deltas_fb = _extract_color_deltas_shop11(caution_txt)
+            if deltas_fb:
+                for col_norm, (pn, col_raw) in color_map.items():
+                    for label_raw, delta in deltas_fb:
+                        if _label_matches_color_shop11(label_raw, col_raw, col_norm):
+                            color_deltas[col_norm] = int(delta)
+
+        if _dbg_on(i):
+            print("\n[shop11 debug] row_pos=", i)
+            print("  storage_name(raw):", repr(storage_raw))
+            print("  price_unopened(raw):", repr(price_raw))
+            print("  caution_empty(raw):", repr(caution_raw))
+            print("  time-scraped(raw):", repr(time_raw))
+            print("  model_norm:", repr(model_norm), " cap_gb:", cap_gb, " key:", repr(key))
+            print("  base_price:", base_price)
+            print("  LLM_storage_trace:", storage_trace)
+            print("  LLM_color_trace:", deltas_trace)
+            print("  color_deltas:", color_deltas)
+
+        # 3) 输出：每个颜色一行
         for col_norm, (pn, col_raw) in color_map.items():
-            delta = color_deltas.get(col_norm, 0)
+            delta = int(color_deltas.get(col_norm, 0))
             price_new = int(base_price + delta)
+
+            if _dbg_on(i):
+                print("  -> OUT_ITEM:", {
+                    "part_number": pn,
+                    "color_raw": col_raw,
+                    "base": int(base_price),
+                    "delta": int(delta),
+                    "final": int(price_new),
+                })
+
             rows.append({
                 "part_number": pn,
                 "shop_name": "モバステ",
@@ -438,4 +879,8 @@ def clean_shop11(df: pd.DataFrame) -> pd.DataFrame:
         out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
         out["part_number"] = out["part_number"].astype(str)
         out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
+
+    if debug:
+        print(f"\n[shop11 debug] out_rows={len(out)} head=\n{out.head(10).to_string(index=False)}")
+
     return out

@@ -187,54 +187,46 @@ def _norm_model_for_shop7(text: str) -> str:
 
     return _normalize_model_generic(t)
 
-def clean_shop7(df: pd.DataFrame) -> pd.DataFrame:
-    print("DEBUG: shop7:買取ホムラ ----------> 进入清洗器 时间:", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> pd.DataFrame:
+    print("shop7:買取ホムラ---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+
     _SHORT_MODEL_REPLACEMENTS = [
-    (re.compile(r'(?i)\b17\s*pro\s*max\b'), "iPhone 17 Pro Max"),
-    (re.compile(r'(?i)\b17promax\b'), "iPhone 17 Pro Max"),
-    (re.compile(r'(?i)\b17\s*pro\b'), "iPhone 17 Pro"),
-    (re.compile(r'(?i)\b17pro\b'), "iPhone 17 Pro"),
-    (re.compile(r'(?i)\b17\s*air\b'), "iPhone 17 Air"),
-    (re.compile(r'(?i)\b17air\b'), "iPhone 17 Air"),
-    (re.compile(r'(?i)\bi\s*phone\s*17\b'), "iPhone 17"),
-    (re.compile(r'(?i)\b17\b'), "iPhone 17"),  # 小心：放最后做兜底
-]
+        (re.compile(r'(?i)\b17\s*pro\s*max\b'), "iPhone 17 Pro Max"),
+        (re.compile(r'(?i)\b17promax\b'), "iPhone 17 Pro Max"),
+        (re.compile(r'(?i)\b17\s*pro\b'), "iPhone 17 Pro"),
+        (re.compile(r'(?i)\b17pro\b'), "iPhone 17 Pro"),
+        (re.compile(r'(?i)\b17\s*air\b'), "iPhone 17 Air"),
+        (re.compile(r'(?i)\b17air\b'), "iPhone 17 Air"),
+        (re.compile(r'(?i)\bi\s*phone\s*17\b'), "iPhone 17"),
+        (re.compile(r'(?i)\b17\b'), "iPhone 17"),  # 小心：放最后做兜底
+    ]
+
     def _norm_model_for_shop7(s: Optional[str]) -> str:
         """
-        针对 shop7 的 model 字段做宽松归一化：
-          - 跳过纯数字的行（返回空字符串）
-          - 将 '17pro', '17promax', '17 pro max' 等短写扩展为 'iPhone 17 Pro Max'
-          - 最后调用 _normalize_model_generic 生成最终的归一字符串（与 info 表匹配）
-        返回 '' 表示无法识别（将被跳过）
+        shop7 的 model 字段宽松归一化：
+          - 跳过纯数字行
+          - 将 17pro/17promax 等短写扩展
+          - 最后调用 _normalize_model_generic
         """
         if s is None:
             return ""
         txt = str(s).strip()
         if not txt:
             return ""
-
-        # 跳过行号/序号（仅数字或少量标点）
         if re.fullmatch(r'[\d\-\.\s]+', txt):
-            # 代表这是序号/编号行，例如 "1", "2" 等
             return ""
 
-        # 统一全角空格 & 多余空白
         txt = re.sub(r'[\u3000\s]+', ' ', txt).strip()
 
-        # 先把常用短写替换成标准形式
         expanded = txt
         for patt, repl in _SHORT_MODEL_REPLACEMENTS:
             expanded = patt.sub(repl, expanded)
 
-        # 可能存在像 "17pro 256GB" 或 "17promax 256GB" 这样的，
-        # 上面的替换会把它变成 "iPhone 17 Pro 256GB" 之类，交给 normalize 处理。
         try:
             norm = _normalize_model_generic(expanded)
         except Exception:
-            # 若 _normalize_model_generic 出错，退化为简单返回 expanded（再由上级判定是否匹配）
             norm = expanded
 
-        # 如果 normalize 后为空或仅数字，认为无法识别
         if not norm or re.fullmatch(r'[\d\-\.\s]+', str(norm).strip()):
             return ""
         return norm
@@ -242,29 +234,29 @@ def clean_shop7(df: pd.DataFrame) -> pd.DataFrame:
     info_df = _load_iphone17_info_df_for_shop2()  # part_number, model_name_norm, capacity_gb, color
 
     # 必要列检查
-    need_cols = ["data", "data2", "time-scraped"]
+    need_cols = ["data", "data2", "data3", "time-scraped"]
     for c in need_cols:
         if c not in df.columns:
             raise ValueError(f"shop7 清洗器缺少必要列：{c}")
 
-    # 先把 time-scraped 为空的行排除，避免时间解析报错
+    # time-scraped 为空的行排除
     df = df.copy().reset_index(drop=True)
     mask_time_ok = df["time-scraped"].astype(str).str.strip().ne("") & df["time-scraped"].notna()
     df = df[mask_time_ok].reset_index(drop=True)
     if df.empty:
-        print("DEBUG: 输入 df 为空或所有行 time-scraped 缺失，返回空 DataFrame")
-        return pd.DataFrame(columns=["part_number","shop_name","price_new","recorded_at"])
+        if debug:
+            print("[shop7 debug] 输入 df 为空或所有行 time-scraped 缺失，返回空 DataFrame")
+        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
 
-    # data -> 机型&容量
+    # data2 -> 机型&容量
     model_norm_series = df["data2"].map(_norm_model_for_shop7)
-    cap_gb_series     = df["data2"].map(_parse_capacity_gb)
+    cap_gb_series = df["data2"].map(_parse_capacity_gb)
 
-    # 价格/时间（注意 data2 里是价格，我们仅在行有 price 时才处理该行）
-    price_series  = df["data3"].map(_price_from_shop7)
-    recorded_at   = df["time-scraped"].map(parse_dt_aware)
+    # data3 -> 价格
+    price_series = df["data3"].map(_price_from_shop7)
+    recorded_at = df["time-scraped"].map(parse_dt_aware)
 
-
-    # ------------- 构建 (model_norm, cap) -> { color_norm: part_number } -------------
+    # (model_norm, cap) -> { color_norm: part_number }
     info2 = info_df.copy()
     if "color" not in info2.columns:
         raise ValueError("info_df 缺少 'color' 列，无法进行颜色映射")
@@ -284,17 +276,61 @@ def clean_shop7(df: pd.DataFrame) -> pd.DataFrame:
         pn_map.setdefault(key, {})
         pn_map[key][col] = pn
 
-    print(f"DEBUG: 建立了 pn_map，包含 {len(pn_map)} 个 (model,cap) 条目")
+    # ---- DEBUG：挑选“疑似颜色/减价说明行”，只对这些行及其上一行输出 ----
+    debug_pos_set: set[int] = set()
+    if debug:
+        _COLOR_DISCOUNT_PAT = re.compile(
+            r"(ブラック|ホワイト|ブルー|グリーン|ピンク|レッド|イエロー|パープル|オレンジ|"
+            r"シルバー|ゴールド|グラファイト|ミッドナイト|スターライト|ナチュラル|"
+            r"チタニウム|チタン|ディープブルー|"
+            r"Black|White|Blue|Green|Pink|Red|Yellow|Purple|Orange|Silver|Gold|Titanium|"
+            r"値下げ|値引|割引|円引|OFF|オフ|[+\-−－]\s*[0-9０-９])",
+            re.I,
+        )
 
-    # ----------------- 颜色减价解析函数（shop7 专用） -----------------
+        s_data2 = df["data2"].fillna("").astype(str)
+        is_price_none = price_series.map(lambda x: x is None)
+        mask = is_price_none & s_data2.str.contains(_COLOR_DISCOUNT_PAT, na=False)
+
+        picked_groups = 0
+        for j in range(len(df)):
+            if not bool(mask.iat[j]):
+                continue
+            if j - 1 >= 0:
+                debug_pos_set.add(j - 1)
+            debug_pos_set.add(j)
+            picked_groups += 1
+            if picked_groups >= int(debug_limit):
+                break
+
+        if not debug_pos_set:
+            picked = 0
+            for i in range(len(df)):
+                if price_series.iat[i] is None:
+                    continue
+                debug_pos_set.add(i)
+                picked += 1
+                if picked >= int(debug_limit):
+                    break
+
+        print(f"[shop7 debug] total_rows={len(df)}, debug_rows={len(debug_pos_set)}")
+
+    def _dbg_on(pos: int) -> bool:
+        return bool(debug) and (pos in debug_pos_set)
+
+    def _dprint(pos: int, *args, **kwargs):
+        if _dbg_on(pos):
+            print(*args, **kwargs)
+
+    # ----------------- 颜色减价解析（shop7） -----------------
     DELTA_RE = re.compile(
         r"(?P<labels>[^\d¥￥円\+\-−－]+?)\s*(?P<sign>[+\-−－])\s*(?P<amount>[0-9０-９,，]+)",
-        re.UNICODE
+        re.UNICODE,
     )
 
     FW_TO_ASC = str.maketrans({
-        "０":"0","１":"1","２":"2","３":"3","４":"4","５":"5","６":"6","７":"7","８":"8","９":"9",
-        "，":",","．":".","－":"-","＋":"+","　":" "
+        "０": "0", "１": "1", "２": "2", "３": "3", "４": "4", "５": "5", "６": "6", "７": "7", "８": "8", "９": "9",
+        "，": ",", "．": ".", "－": "-", "＋": "+", "　": " ",
     })
 
     def _to_int_amount(s: str) -> Optional[int]:
@@ -309,13 +345,12 @@ def clean_shop7(df: pd.DataFrame) -> pd.DataFrame:
         except Exception:
             return None
 
-    def _parse_color_deltas_shop7(text: str) -> Dict[str, int]:
+    def _parse_color_deltas_shop7(text: str, ctx_pos: Optional[int] = None) -> Dict[str, int]:
         res: Dict[str, int] = {}
         if not text or not str(text).strip():
             return res
         s = str(text).strip()
-        parts = []
-        # 尝试先用 DELTA_RE 匹配整段里的所有有金额的片段；若没则按分隔符拆
+
         found = False
         for m in DELTA_RE.finditer(s):
             found = True
@@ -326,17 +361,13 @@ def clean_shop7(df: pd.DataFrame) -> pd.DataFrame:
             if amt is None:
                 continue
             delta = -int(amt) if sign in ("-", "−", "－") else int(amt)
-            # labels_part 可能包含多个颜色，用常见分隔符拆
             for tok in re.split(r"[／/、，,・\s]+", labels_part):
                 tok = tok.strip()
-                if not tok:
-                    continue
-                key = _norm(tok)
-                res[key] = delta
+                if tok:
+                    res[_norm(tok)] = delta
+
         if not found:
-            # 退化处理：没有显式金额匹配的情况下，尝试找类似 "シルバー/ディープブルー-3000" 形式
-            # 以最后出现的 +/- 数字为金额，前面子串作为标签
-            # 例如 "シルバー/ディープブルー-3000"
+            # 退化：如 "シルバー/ディープブルー-3000"
             m2 = re.search(r"(?P<labels>.+?)[\s]*([+\-−－])\s*(?P<amount>[0-9０-９,，]+)", s)
             if m2:
                 labels_part = m2.group("labels") or ""
@@ -349,85 +380,123 @@ def clean_shop7(df: pd.DataFrame) -> pd.DataFrame:
                         tok = tok.strip()
                         if tok:
                             res[_norm(tok)] = delta
-        # Debug print for parsed deltas
-        if res:
-            print(f"DEBUG: 解析到 color deltas from '{text}': {res}")
-        else:
-            print(f"DEBUG: 未解析到 color deltas from '{text}'")
+
+        if ctx_pos is not None and _dbg_on(ctx_pos):
+            print(f"[shop7 debug] color_delta_text(pos={ctx_pos}): {text!r}")
+            print(f"[shop7 debug] parsed_deltas: {res}")
+
         return res
 
-    # ----------------- 主循环：遍历含价格的行 -----------------
+    # ----------------- 主循环 -----------------
     rows: List[dict] = []
     n = len(df)
+
     for i in range(n):
         base_price = price_series.iat[i]
         if base_price is None:
-            # 不是机种行（或者是下行的颜色行），跳过
             continue
 
-        model_text_raw = df["data"].iat[i] if df["data"].iat[i] is not None else ""
+        if _dbg_on(i):
+            print("\n[shop7 debug] base_row pos=", i)
+            print("  data(raw):", repr(df["data"].iat[i]))
+            print("  data2(raw):", repr(df["data2"].iat[i]))
+            print("  data3(raw):", repr(df["data3"].iat[i]))
+            print("  base_price:", base_price)
+
         m = model_norm_series.iat[i]
         c = cap_gb_series.iat[i]
         t = recorded_at.iat[i]
-        print(f"DEBUG: 处理行 i={i}, model_raw='{model_text_raw}', model_norm='{m}', cap='{c}', base_price={base_price}")
+
+        if _dbg_on(i):
+            print("  model_norm:", repr(m))
+            print("  capacity_gb:", repr(c))
+            print("  recorded_at:", repr(t))
 
         if not m or pd.isna(c):
-            print(f"DEBUG: 跳过 i={i} 因为 model/cap 缺失")
-            continue
-        c = int(c)
-        key = (m, c)
-        color_to_pn = pn_map.get(key)
-        print(f"DEBUG: 对应的 color->pn 映射: {color_to_pn}")
-        if not color_to_pn:
-            print(f"DEBUG: info 表中未找到该机型容量 key={key}，跳过 i={i}")
+            _dprint(i, "  SKIP_REASON: model/cap 缺失")
             continue
 
-        # 检查下一行是否为颜色减价行：下一行 data 非空 且 data2 为空
+        c_int = int(c)
+        key = (m, c_int)
+        color_to_pn = pn_map.get(key)
+
+        if _dbg_on(i):
+            print("  match_key:", repr(key))
+            print("  color_to_pn keys:", list(color_to_pn.keys())[:20] if color_to_pn else None)
+
+        if not color_to_pn:
+            _dprint(i, f"  SKIP_REASON: info 表中未找到该机型容量 key={key}")
+            continue
+
+        # 下一行是否为颜色减价行：data2 非空且 data3 不可解析为价格
         deltas: Dict[str, int] = {}
         j = i + 1
         if j < n:
-            nxt_data = df["data2"].iat[j] if df["data2"].iat[j] is not None else ""
-            nxt_data2 = df["data3"].iat[j] if "data3" in df.columns and df["data2"].iat[j] is not None else ""
-            if str(nxt_data).strip() and (str(nxt_data2).strip() == "" or pd.isna(nxt_data2)):
-                print(f"DEBUG: 发现潜在颜色行 at i+1={j}: '{nxt_data}'")
-                deltas = _parse_color_deltas_shop7(nxt_data)
-            else:
-                print(f"DEBUG: 下一行 i+1={j} 不是颜色行 (data='{nxt_data}' data2='{nxt_data2}')")
+            nxt_data2 = df["data2"].iat[j] if df["data2"].iat[j] is not None else ""
+            nxt_price_cell = df["data3"].iat[j] if df["data3"].iat[j] is not None else ""
+            nxt_price_val = _price_from_shop7(nxt_price_cell) if str(nxt_price_cell).strip() else None
+            is_color_line = bool(str(nxt_data2).strip()) and (nxt_price_val is None)
 
-        # 生成每个颜色的 price_new
+            if _dbg_on(j) or _dbg_on(i):
+                print("[shop7 debug] next_row pos=", j)
+                print("  data2(raw):", repr(nxt_data2))
+                print("  data3(raw):", repr(nxt_price_cell))
+                print("  parsed_next_price:", nxt_price_val)
+                print("  is_color_line:", is_color_line)
+
+            if is_color_line:
+                deltas = _parse_color_deltas_shop7(nxt_data2, ctx_pos=j)
+            else:
+                _dprint(i, "  note: 下一行不是颜色减价行，按 base_price 输出")
+
+        # 输出：对每个颜色做 base + delta
         for col_norm, pn in color_to_pn.items():
             delta = 0
+            used_lbl = None
+
             if deltas:
                 if col_norm in deltas:
                     delta = deltas[col_norm]
-                    print(f"DEBUG: 直接匹配 col_norm='{col_norm}' 得到 delta={delta} for pn={pn}")
+                    used_lbl = col_norm
+                    _dprint(i, f"  delta_direct_match: col_norm={col_norm!r} delta={delta} pn={pn}")
                 else:
-                    # 进一步尝试在 info2 中查原始 color 文本匹配 deltas 的 key
                     matches = info2[
-                        (info2["model_name_norm"] == m) &
-                        (info2["capacity_gb"].astype("Int64") == c) &
-                        (info2["part_number"].astype(str) == str(pn))
+                        (info2["model_name_norm"] == m)
+                        & (info2["capacity_gb"].astype("Int64") == c_int)
+                        & (info2["part_number"].astype(str) == str(pn))
                     ]
                     raw_color = matches["color"].iat[0] if not matches.empty else ""
-                    matched = False
+                    raw_color_norm = _norm(raw_color)
+
                     for lbl_norm, dval in deltas.items():
-                        # 尝试在 raw_color 的归一化字符串中查找 lbl_norm
-                        if lbl_norm and lbl_norm in _norm(raw_color):
+                        if not lbl_norm:
+                            continue
+                        if lbl_norm in raw_color_norm:
                             delta = dval
-                            matched = True
-                            print(f"DEBUG: 通过 raw_color='{raw_color}' 的归一化匹配 lbl='{lbl_norm}' -> delta={delta} for pn={pn}")
+                            used_lbl = lbl_norm
+                            _dprint(i, f"  delta_norm_substring_match: raw_color={raw_color!r} lbl={lbl_norm!r} delta={delta} pn={pn}")
                             break
-                        # 也尝试原文子串匹配
-                        if lbl_norm and lbl_norm in raw_color:
+                        if lbl_norm in str(raw_color):
                             delta = dval
-                            matched = True
-                            print(f"DEBUG: 通过 raw_color 原文匹配 lbl='{lbl_norm}' -> delta={delta} for pn={pn}")
+                            used_lbl = lbl_norm
+                            _dprint(i, f"  delta_raw_substring_match: raw_color={raw_color!r} lbl={lbl_norm!r} delta={delta} pn={pn}")
                             break
-                    if not matched and deltas:
-                        print(f"DEBUG: 未匹配到颜色调整 for pn={pn} (raw_color='{raw_color}'), 使用 delta=0")
+
+                    if _dbg_on(i) and deltas and used_lbl is None:
+                        print(f"  delta_NO_MATCH: pn={pn} raw_color={raw_color!r} deltas_keys={list(deltas.keys())}")
 
             price_final = int(base_price + delta)
-            print(f"DEBUG: 输出 -> pn={pn}, base={base_price}, delta={delta}, final={price_final}")
+
+            if _dbg_on(i):
+                print("  -> OUT:", {
+                    "part_number": str(pn),
+                    "color_norm": col_norm,
+                    "base": int(base_price),
+                    "delta": int(delta),
+                    "used_lbl": used_lbl,
+                    "final": int(price_final),
+                })
+
             rows.append({
                 "part_number": str(pn),
                 "shop_name": "買取ホムラ",
@@ -435,10 +504,13 @@ def clean_shop7(df: pd.DataFrame) -> pd.DataFrame:
                 "recorded_at": t,
             })
 
-    out = pd.DataFrame(rows, columns=["part_number","shop_name","price_new","recorded_at"])
+    out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
     if not out.empty:
-        out = out.dropna(subset=["part_number","price_new"]).reset_index(drop=True)
+        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
         out["part_number"] = out["part_number"].astype(str)
         out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
-    print("DEBUG: 完成 clean_shop7, 产出行数:", len(out))
+
+    if debug:
+        print(f"\n[shop7 debug] out_rows={len(out)} head=\n{out.head(10).to_string(index=False)}")
+
     return out
