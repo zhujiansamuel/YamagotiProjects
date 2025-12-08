@@ -4,9 +4,18 @@
 
 set -e
 
+# 获取脚本所在目录和项目根目录
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
+
+# 切换到项目根目录
+cd "$PROJECT_DIR"
+
 echo "======================================"
 echo "数据库权限诊断和修复工具"
 echo "======================================"
+echo ""
+echo "项目目录: $PROJECT_DIR"
 echo ""
 
 # 读取数据库配置
@@ -30,6 +39,20 @@ if ! command -v psql &> /dev/null; then
     exit 1
 fi
 
+# 检测 Python 命令
+if command -v python3 &> /dev/null; then
+    PYTHON_CMD="python3"
+elif command -v python &> /dev/null; then
+    PYTHON_CMD="python"
+else
+    echo "❌ 错误: 未找到 Python 命令"
+    echo "请安装 Python 3"
+    exit 1
+fi
+
+echo "使用 Python: $PYTHON_CMD ($($PYTHON_CMD --version))"
+echo ""
+
 # 选择操作
 echo "请选择操作："
 echo "  1) 诊断权限问题（推荐先运行）"
@@ -45,7 +68,7 @@ case $choice in
         echo "======================================"
         echo "运行权限诊断..."
         echo "======================================"
-        python scripts/diagnose_db_permissions.py
+        $PYTHON_CMD scripts/diagnose_db_permissions.py
         ;;
     2)
         echo ""
