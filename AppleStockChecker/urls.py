@@ -60,6 +60,7 @@ from .api_automl import (
     AutoMLJobStatusView,
     IphoneListView,
     BatchCreateAutoMLJobsView,
+    SlidingWindowAnalysisView,
     AutoMLJobResultView,
     CompletedJobsListView,
 )
@@ -248,6 +249,7 @@ urlpatterns = [
                   # 机型管理 API
                   path('automl/iphones/', IphoneListView.as_view(), name='automl-iphone-list'),
                   path('automl/jobs/batch-create/', BatchCreateAutoMLJobsView.as_view(), name='automl-batch-create'),
+                  path('automl/jobs/sliding-window/', SlidingWindowAnalysisView.as_view(), name='automl-sliding-window'),
                   # 结果查询 API
                   path('automl/jobs/result/<int:job_id>/', AutoMLJobResultView.as_view(), name='automl-job-result'),
                   path('automl/jobs/completed/', CompletedJobsListView.as_view(), name='automl-completed-jobs'),

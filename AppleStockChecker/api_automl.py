@@ -412,6 +412,173 @@ class BatchCreateAutoMLJobsView(APIView):
             }, status=http_status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+@method_decorator(csrf_exempt, name='dispatch')
+class SlidingWindowAnalysisView(APIView):
+    """
+    创建滑动时间窗口分析任务
+
+    参数：
+    - iphone_id: 机型 ID（必填）
+    - total_days: 总分析时长（天），默认 30 天
+    - window_size_days: 窗口大小（天），默认 3 天
+    - step_size_hours: 步长（小时），默认 6 小时
+
+    示例：分析最近 30 天，窗口大小 3 天，步长 6 小时
+    会创建约 (30-3)*24/6 = 108 个分析任务
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        try:
+            # 获取参数
+            iphone_id = request.data.get('iphone_id')
+            if not iphone_id:
+                return Response({
+                    "status": "error",
+                    "error": "iphone_id is required"
+                }, status=http_status.HTTP_400_BAD_REQUEST)
+
+            total_days = request.data.get('total_days', 30)
+            window_size_days = request.data.get('window_size_days', 3)
+            step_size_hours = request.data.get('step_size_hours', 6)
+            bucket_freq = request.data.get('bucket_freq', '10min')
+
+            # 验证参数
+            if window_size_days > total_days:
+                return Response({
+                    "status": "error",
+                    "error": "window_size_days cannot be greater than total_days"
+                }, status=http_status.HTTP_400_BAD_REQUEST)
+
+            # 获取机型
+            try:
+                iphone = Iphone.objects.get(pk=iphone_id)
+            except Iphone.DoesNotExist:
+                return Response({
+                    "status": "error",
+                    "error": f"iPhone with id {iphone_id} not found"
+                }, status=http_status.HTTP_404_NOT_FOUND)
+
+            # 计算时间窗口
+            now = timezone.now()
+            analysis_end = now
+            analysis_start = now - timezone.timedelta(days=total_days)
+
+            window_size_delta = timezone.timedelta(days=window_size_days)
+            step_size_delta = timezone.timedelta(hours=step_size_hours)
+
+            # 生成滑动窗口
+            windows = []
+            current_start = analysis_start
+
+            while current_start + window_size_delta <= analysis_end:
+                current_end = current_start + window_size_delta
+                windows.append({
+                    "start": current_start,
+                    "end": current_end
+                })
+                current_start += step_size_delta
+
+            logger.info(
+                f"Generating {len(windows)} sliding windows for {iphone.part_number}: "
+                f"total={total_days}d, window={window_size_days}d, step={step_size_hours}h"
+            )
+
+            # 创建任务
+            created_jobs = []
+            existing_jobs = []
+            skipped_jobs = []
+
+            for window in windows:
+                # 检查是否已存在相同窗口的任务
+                existing = AutomlCausalJob.objects.filter(
+                    iphone=iphone,
+                    window_start=window["start"],
+                    window_end=window["end"],
+                    bucket_freq=bucket_freq
+                ).first()
+
+                if existing:
+                    # 如果任务已完成，跳过
+                    if existing.impact_status == AutomlCausalJob.StageStatus.SUCCESS:
+                        skipped_jobs.append({
+                            "job_id": existing.id,
+                            "window_start": window["start"].isoformat(),
+                            "window_end": window["end"].isoformat(),
+                            "reason": "already_completed"
+                        })
+                        continue
+
+                    # 如果任务失败或待处理，重新触发
+                    existing_jobs.append({
+                        "job_id": existing.id,
+                        "window_start": window["start"].isoformat(),
+                        "window_end": window["end"].isoformat(),
+                        "status": existing.preprocessing_status
+                    })
+
+                    # 重新触发预处理
+                    if existing.preprocessing_status in [
+                        AutomlCausalJob.StageStatus.PENDING,
+                        AutomlCausalJob.StageStatus.FAILED,
+                    ]:
+                        run_preprocessing_for_job.apply_async(
+                            args=[existing.id],
+                            queue="automl_preprocessing"
+                        )
+                else:
+                    # 创建新任务
+                    job = AutomlCausalJob.objects.create(
+                        iphone=iphone,
+                        window_start=window["start"],
+                        window_end=window["end"],
+                        bucket_freq=bucket_freq,
+                        priority=100
+                    )
+
+                    created_jobs.append({
+                        "job_id": job.id,
+                        "window_start": window["start"].isoformat(),
+                        "window_end": window["end"].isoformat(),
+                    })
+
+                    # 触发预处理任务
+                    run_preprocessing_for_job.apply_async(
+                        args=[job.id],
+                        queue="automl_preprocessing"
+                    )
+                    logger.info(f"Created sliding window job {job.id} for {iphone.part_number}")
+
+            return Response({
+                "status": "success",
+                "iphone": {
+                    "id": iphone.id,
+                    "part_number": iphone.part_number,
+                    "model_name": iphone.model_name
+                },
+                "parameters": {
+                    "total_days": total_days,
+                    "window_size_days": window_size_days,
+                    "step_size_hours": step_size_hours,
+                    "bucket_freq": bucket_freq
+                },
+                "total_windows": len(windows),
+                "created_count": len(created_jobs),
+                "existing_count": len(existing_jobs),
+                "skipped_count": len(skipped_jobs),
+                "created_jobs": created_jobs,
+                "existing_jobs": existing_jobs,
+                "skipped_jobs": skipped_jobs
+            }, status=http_status.HTTP_201_CREATED)
+
+        except Exception as e:
+            logger.error(f"Error creating sliding window analysis: {str(e)}", exc_info=True)
+            return Response({
+                "status": "error",
+                "error": str(e)
+            }, status=http_status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 # ============================================================================
 # 结果查询 API
 # ============================================================================
