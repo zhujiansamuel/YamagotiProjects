@@ -1,10 +1,11 @@
+# -*- coding: utf-8 -*-
 from django.contrib import admin
 from django.contrib.contenttypes.admin import GenericTabularInline
 from .models import InboundInventory, InventoryStatusHistory
 
 
 class InventoryStatusHistoryInline(admin.TabularInline):
-    """���T>:"""
+    """状态历史内联显示"""
     model = InventoryStatusHistory
     extra = 0
     can_delete = False
@@ -19,13 +20,13 @@ class InventoryStatusHistoryInline(admin.TabularInline):
     ordering = ['-changed_at']
 
     def has_add_permission(self, request, obj=None):
-        """�bK�����U"""
+        """禁止手动添加历史记录"""
         return False
 
 
 @admin.register(InboundInventory)
 class InboundInventoryAdmin(admin.ModelAdmin):
-    """e�F��"""
+    """入库商品管理"""
 
     list_display = (
         'unique_code',
@@ -55,21 +56,21 @@ class InboundInventoryAdmin(admin.ModelAdmin):
     )
 
     fieldsets = (
-        ('�,�o', {
+        ('基本信息', {
             'fields': (
                 'unique_code',
                 ('product_content_type', 'product_object_id'),
                 'status',
             )
         }),
-        ('���o', {
+        ('详细信息', {
             'fields': (
                 'special_description',
                 'reserved_arrival_time',
                 'abnormal_remark',
             )
         }),
-        ('���o', {
+        ('时间信息', {
             'fields': (
                 'created_at',
                 'updated_at',
@@ -83,23 +84,23 @@ class InboundInventoryAdmin(admin.ModelAdmin):
     date_hierarchy = 'created_at'
 
     def get_product_display(self, obj):
-        """>:sT�F�"""
+        """显示关联的商品"""
         if obj.product:
             return str(obj.product)
         return "-"
-    get_product_display.short_description = "sTF�"
+    get_product_display.short_description = "关联商品"
 
     def get_readonly_fields(self, request, obj=None):
-        """��ЛW���"""
+        """编辑时某些字段只读"""
         readonly = list(super().get_readonly_fields(request, obj))
-        if obj:  # ��	�a�
+        if obj:  # 编辑现有对象时
             readonly.extend(['unique_code'])
         return readonly
 
 
 @admin.register(InventoryStatusHistory)
 class InventoryStatusHistoryAdmin(admin.ModelAdmin):
-    """������	"""
+    """状态变更历史管理（只读）"""
 
     list_display = (
         'get_unique_code',
@@ -134,15 +135,15 @@ class InventoryStatusHistoryAdmin(admin.ModelAdmin):
     date_hierarchy = 'changed_at'
 
     def get_unique_code(self, obj):
-        """>:F�"""
+        """显示商品编码"""
         return obj.inventory.unique_code
-    get_unique_code.short_description = "F�"
+    get_unique_code.short_description = "商品编码"
     get_unique_code.admin_order_field = 'inventory__unique_code'
 
     def has_add_permission(self, request):
-        """�bK�����U"""
+        """禁止手动添加历史记录"""
         return False
 
     def has_delete_permission(self, request, obj=None):
-        """�b d��U"""
+        """禁止删除历史记录"""
         return False

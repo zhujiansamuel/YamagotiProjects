@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # Generated migration for inbound_goods app
 
 from django.db import migrations, models
