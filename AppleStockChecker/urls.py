@@ -64,6 +64,13 @@ from .api_automl import (
     AutoMLJobResultView,
     CompletedJobsListView,
 )
+from .api_goods_sync import (
+    GoodsSyncFetchView,
+    GoodsMappingsView,
+    GoodsMappingStatisticsView,
+    UpdateExternalPriceView,
+    BatchUpdateExternalPricesView,
+)
 
 router = DefaultRouter()
 router.register(r"iphones", IphoneViewSet, basename="iphone")
@@ -253,6 +260,13 @@ urlpatterns = [
                   # 结果查询 API
                   path('automl/jobs/result/<int:job_id>/', AutoMLJobResultView.as_view(), name='automl-job-result'),
                   path('automl/jobs/completed/', CompletedJobsListView.as_view(), name='automl-completed-jobs'),
+
+                  # 外部商品价格同步 API
+                  path('goods-sync/fetch/', GoodsSyncFetchView.as_view(), name='goods-sync-fetch'),
+                  path('goods-sync/mappings/', GoodsMappingsView.as_view(), name='goods-sync-mappings'),
+                  path('goods-sync/statistics/', GoodsMappingStatisticsView.as_view(), name='goods-sync-statistics'),
+                  path('goods-sync/update-price/', UpdateExternalPriceView.as_view(), name='goods-sync-update-price'),
+                  path('goods-sync/batch-update-prices/', BatchUpdateExternalPricesView.as_view(), name='goods-sync-batch-update'),
 
                   path("options/scopes/", ScopeOptionsView.as_view(), name="options-scopes"),
                   path("options/shops/", options_shops, name="options-shops"),
