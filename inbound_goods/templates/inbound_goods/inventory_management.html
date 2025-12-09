@@ -417,6 +417,13 @@
             // 加载商品列表
             loadProducts();
 
+            // 初始化条件字段显示状态（根据默认选中的状态）
+            const initialStatus = document.getElementById('status').value;
+            toggleConditionalFields(initialStatus, 'add');
+
+            const initialBulkStatus = document.getElementById('bulkNewStatus').value;
+            toggleConditionalFields(initialBulkStatus, 'bulk');
+
             // 监听状态变化（添加库存表单）
             document.getElementById('status').addEventListener('change', function() {
                 toggleConditionalFields(this.value, 'add');
