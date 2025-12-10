@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'AppleStockChecker.apps.ApplestockcheckerConfig',
+    'inbound_goods.apps.InboundGoodsConfig',
     "corsheaders",
     "rest_framework",
     "drf_spectacular",
@@ -481,6 +482,10 @@ SIMPLEUI_CONFIG = {
                            {'name': 'iPhone公式在庫表',
                             'icon': 'fa-solid fa-warehouse',
                             'url': '/AppleStockChecker/price-matrix/',
+                            },
+                           {'name': '在庫',
+                            'icon': 'fa-solid fa-warehouse',
+                            'url': '/inbound-goods/',
                             },
 
                            {'name': '中古店価格メタデータ',
