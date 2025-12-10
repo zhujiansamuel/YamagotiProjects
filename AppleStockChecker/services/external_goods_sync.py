@@ -62,7 +62,17 @@ class ExternalGoodsClient:
             if isinstance(data, dict):
                 # 尝试常见的响应结构
                 if 'data' in data:
-                    goods_list = data['data']
+                    data_field = data['data']
+                    # 检查 data 字段是否还是字典（嵌套的 data 结构）
+                    if isinstance(data_field, dict) and 'data' in data_field:
+                        goods_list = data_field['data']
+                        logger.info(f"Found nested data structure")
+                    elif isinstance(data_field, list):
+                        goods_list = data_field
+                    else:
+                        # data 字段不是预期的格式
+                        logger.warning(f"Unexpected data field type: {type(data_field)}")
+                        goods_list = [data_field] if isinstance(data_field, dict) else []
                 elif 'list' in data:
                     goods_list = data['list']
                 elif 'items' in data:
@@ -70,8 +80,7 @@ class ExternalGoodsClient:
                 elif 'goods' in data:
                     goods_list = data['goods']
                 else:
-                    # 如果没有找到标准的列表字段，检查是否整个dict就是一个商品
-                    # 或者尝试找到第一个值为列表的字段
+                    # 如果没有找到标准的列表字段，尝试找到第一个值为列表的字段
                     for key, value in data.items():
                         if isinstance(value, list) and len(value) > 0:
                             goods_list = value
