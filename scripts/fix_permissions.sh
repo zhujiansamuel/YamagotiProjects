@@ -21,7 +21,7 @@ echo ""
 # 读取数据库配置
 DB_NAME="${POSTGRES_DATABASE:-applestockchecker_dev}"
 DB_USER="${POSTGRES_USER:-samuelzhu}"
-DB_PASSWORD="${POSTGRES_PASSWORD:-Xdb73008762}"
+DB_PASSWORD="${POSTGRES_PASSWORD:-postgres}"
 DB_HOST="${POSTGRES_HOST:-127.0.0.1}"
 DB_PORT="${POSTGRES_PORT:-5433}"
 
@@ -81,6 +81,7 @@ case $choice in
             echo "请输入 PostgreSQL 超级用户（通常是 postgres）："
             read -p "超级用户名 [postgres]: " SUPERUSER
             SUPERUSER=${SUPERUSER:-postgres}
+            echo "Password:" $DB_PASSWORD
 
             PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$SUPERUSER" -d "$DB_NAME" -f scripts/fix_db_permissions.sql
 

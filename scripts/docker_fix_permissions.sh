@@ -10,7 +10,7 @@ echo "======================================"
 echo ""
 
 # 容器名称
-CONTAINER_NAME="${DB_CONTAINER_NAME:-yapp_postgres}"
+CONTAINER_NAME="${DB_CONTAINER_NAME:-local-pg}"
 
 # 数据库配置
 DB_NAME="${POSTGRES_DATABASE:-applestockchecker_dev}"

@@ -483,6 +483,10 @@ SIMPLEUI_CONFIG = {
                             'icon': 'fa-solid fa-warehouse',
                             'url': '/AppleStockChecker/price-matrix/',
                             },
+                           {'name': '在庫',
+                            'icon': 'fa-solid fa-warehouse',
+                            'url': '/inbound-goods/',
+                            },
 
                            {'name': '中古店価格メタデータ',
                             'icon': 'fa-solid fa-database',
