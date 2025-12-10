@@ -96,12 +96,23 @@ class AutoPriceSQLiteManager:
                     matched_items INTEGER DEFAULT 0,
                     unmatched_items INTEGER DEFAULT 0,
                     error_items INTEGER DEFAULT 0,
+                    skipped_items INTEGER DEFAULT 0,
                     started_at TIMESTAMP,
                     completed_at TIMESTAMP,
                     status TEXT DEFAULT 'running',
                     error_message TEXT
                 )
             """)
+
+            # 迁移：为现有表添加 skipped_items 列（如果不存在）
+            cursor.execute("PRAGMA table_info(sync_history)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if 'skipped_items' not in columns:
+                cursor.execute("""
+                    ALTER TABLE sync_history
+                    ADD COLUMN skipped_items INTEGER DEFAULT 0
+                """)
+                logger.info("Added skipped_items column to sync_history table")
 
             conn.commit()
             logger.info(f"Database initialized at {self.db_path}")
