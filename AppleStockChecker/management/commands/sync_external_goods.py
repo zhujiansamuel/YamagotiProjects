@@ -52,6 +52,12 @@ class Command(BaseCommand):
             help='显示所有未匹配的商品',
         )
 
+        parser.add_argument(
+            '--category-filter',
+            type=str,
+            help='商品类别过滤 (如 "iPhone")，只同步指定类别的商品',
+        )
+
     def handle(self, *args, **options):
         """执行命令"""
         try:
@@ -60,6 +66,7 @@ class Command(BaseCommand):
                 api_url=options.get('api_url'),
                 api_token=options.get('api_token'),
                 db_path=options.get('db_path'),
+                category_filter=options.get('category_filter'),
             )
 
             # 仅显示统计信息

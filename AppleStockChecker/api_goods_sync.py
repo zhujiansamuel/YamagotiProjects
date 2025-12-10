@@ -32,6 +32,13 @@ class GoodsSyncFetchView(APIView):
                 description='外部API URL (可选,默认使用配置)',
                 required=False
             ),
+            OpenApiParameter(
+                name='category_filter',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='商品类别过滤 (如 "iPhone")，只同步指定类别的商品',
+                required=False
+            ),
         ],
         responses={
             200: OpenApiResponse(
@@ -63,11 +70,13 @@ class GoodsSyncFetchView(APIView):
             # 获取可选参数
             api_url = request.query_params.get('api_url')
             api_token = request.query_params.get('api_token')
+            category_filter = request.query_params.get('category_filter')
 
             # 创建同步服务
             sync_service = ExternalGoodsSyncService(
                 api_url=api_url,
-                api_token=api_token
+                api_token=api_token,
+                category_filter=category_filter
             )
 
             # 执行同步

@@ -316,7 +316,8 @@ class ExternalGoodsSyncService:
         self,
         api_url: Optional[str] = None,
         api_token: Optional[str] = None,
-        db_path: str = "auto_price.sqlite3"
+        db_path: str = "auto_price.sqlite3",
+        category_filter: Optional[str] = None
     ):
         """
         初始化同步服务
@@ -325,6 +326,7 @@ class ExternalGoodsSyncService:
             api_url: 外部API URL (默认从settings获取)
             api_token: 外部API token (默认从settings获取)
             db_path: SQLite数据库路径
+            category_filter: 商品类别过滤 (如 'iPhone')，只同步指定类别的商品
         """
         self.api_url = api_url or getattr(
             settings,
@@ -335,6 +337,11 @@ class ExternalGoodsSyncService:
             settings,
             'EXTERNAL_GOODS_API_TOKEN',
             ''
+        )
+        self.category_filter = category_filter or getattr(
+            settings,
+            'EXTERNAL_GOODS_CATEGORY_FILTER',
+            None
         )
 
         self.client = ExternalGoodsClient(self.api_url, self.api_token)
@@ -360,6 +367,7 @@ class ExternalGoodsSyncService:
                 'matched_items': 0,
                 'unmatched_items': 0,
                 'error_items': 0,
+                'skipped_items': 0,
             }
 
             # 处理每个商品
@@ -370,6 +378,13 @@ class ExternalGoodsSyncService:
                         logger.error(f"Item at index {idx} is not a dict: {type(good)}, value: {good}")
                         stats['error_items'] += 1
                         continue
+
+                    # 类别过滤
+                    if self.category_filter:
+                        category_name = good.get('category_name', '')
+                        if category_name != self.category_filter:
+                            stats['skipped_items'] += 1
+                            continue
 
                     self._process_single_good(good, stats)
                 except Exception as e:
