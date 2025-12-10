@@ -28,7 +28,7 @@ class ExternalGoodsClient:
         self.api_token = api_token
         self.session = requests.Session()
         self.session.headers.update({
-            'Authorization': f'Bearer {self.api_token}',
+            'token': f'{self.api_token}',
             'Content-Type': 'application/json',
         })
 
@@ -51,19 +51,63 @@ class ExternalGoodsClient:
 
             data = response.json()
 
+            # 添加调试日志
+            logger.info(f"API Response type: {type(data)}")
+            if isinstance(data, dict):
+                logger.info(f"API Response keys: {list(data.keys())}")
+
             # 根据实际API响应结构提取商品列表
-            if isinstance(data, dict) and 'data' in data:
-                goods_list = data['data']
+            goods_list = []
+
+            if isinstance(data, dict):
+                # 尝试常见的响应结构
+                if 'data' in data:
+                    goods_list = data['data']
+                elif 'list' in data:
+                    goods_list = data['list']
+                elif 'items' in data:
+                    goods_list = data['items']
+                elif 'goods' in data:
+                    goods_list = data['goods']
+                else:
+                    # 如果没有找到标准的列表字段，检查是否整个dict就是一个商品
+                    # 或者尝试找到第一个值为列表的字段
+                    for key, value in data.items():
+                        if isinstance(value, list) and len(value) > 0:
+                            goods_list = value
+                            logger.info(f"Found goods list in key: {key}")
+                            break
+
+                    # 如果还是没有找到，可能整个dict就是一个商品对象
+                    if not goods_list and 'goods_id' in data:
+                        goods_list = [data]
+
             elif isinstance(data, list):
                 goods_list = data
             else:
+                logger.warning(f"Unexpected API response format: {type(data)}")
                 goods_list = [data]
+
+            # 验证 goods_list 是否有效
+            if not isinstance(goods_list, list):
+                logger.error(f"goods_list is not a list: {type(goods_list)}")
+                raise ValueError(f"Invalid goods list format: {type(goods_list)}")
+
+            # 验证列表中的元素是否是字典
+            if goods_list:
+                first_item = goods_list[0]
+                if not isinstance(first_item, dict):
+                    logger.error(f"First item in goods_list is not a dict: {type(first_item)}, value: {first_item}")
+                    raise ValueError(f"Invalid goods item format: {type(first_item)}")
 
             logger.info(f"Fetched {len(goods_list)} goods from external API")
             return goods_list
 
         except requests.RequestException as e:
             logger.error(f"Failed to fetch goods list: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to parse goods list: {e}", exc_info=True)
             raise
 
     def update_goods_price(self, goods_id: int, spec_index: int, price: int) -> bool:
@@ -310,11 +354,18 @@ class ExternalGoodsSyncService:
             }
 
             # 处理每个商品
-            for good in goods_list:
+            for idx, good in enumerate(goods_list):
                 try:
+                    # 验证 good 是字典
+                    if not isinstance(good, dict):
+                        logger.error(f"Item at index {idx} is not a dict: {type(good)}, value: {good}")
+                        stats['error_items'] += 1
+                        continue
+
                     self._process_single_good(good, stats)
                 except Exception as e:
-                    logger.error(f"Error processing good {good.get('goods_id')}: {e}")
+                    goods_id = good.get('goods_id', 'unknown') if isinstance(good, dict) else f'index-{idx}'
+                    logger.error(f"Error processing good {goods_id}: {e}", exc_info=True)
                     stats['error_items'] += 1
 
             # 更新同步记录
