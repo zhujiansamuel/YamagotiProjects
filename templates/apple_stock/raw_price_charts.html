@@ -45,12 +45,50 @@
 
 <script>
 const API_BASE = "/AppleStockChecker";
+
+// 店铺颜色规则（固定颜色方案）
+const SHOP_COLOR_RULES = [
+    {match: /買取商店/, color: "#DD1133", shop_id: 14, order: 1},
+    {match: /海峡通信/, color: "#478CD8", shop_id: 1, order: 2},
+    {match: /買取一丁目/, color: "#B41524", shop_id: 8, order: 3},
+    {match: /モバイルミックス/, color: "#DD1133", shop_id: 13, order: 4},
+    {match: /森森買取/, color: "#278C46", shop_id: 7, order: 5},
+    {match: /買取ルデヤ/, color: "#2DA9E8", shop_id: 9, order: 6},
+    {match: /買取wiki/, color: "#E71534", shop_id: 10, order: 7},
+    {match: /買取ホムラ/, color: "#F27474", shop_id: 19, order: 8},
+    {match: /ドラゴンモバイル/, color: "#3952A6", shop_id: 16, order: 9},
+    {match: /モバステ/, color: "#E60012", shop_id: 18, order: 10},
+    {match: /アキモバ/, color: "#20AECC", shop_id: 12, order: 11},
+    {match: /トゥインクル/, color: "#0EC7D9", shop_id: 17, order: 12},
+    {match: /家電市場/, color: "#FFF100", shop_id: 3, order: 13},
+    {match: /買取楽園/, color: "#DA7C66", shop_id: 4, order: 14},
+    {match: /買取当番/, color: "#1C4473", shop_id: 2, order: 15},
+    {match: /携帯空間/, color: "#0049A8", shop_id: 5, order: 16},
+    {match: /ゲストモバイル/, color: "#34C6F6", shop_id: 11, order: 17},
+    {match: /買取オク/, color: "#033F68", shop_id: 6, order: 18},
+    {match: /毎日買取/, color: "#C30D23", shop_id: 15, order: 19},
+    {match: /Mobile Zone/, color: "#f50620", shop_id: 20, order: 20},
+];
+
+// 备用调色板（如果店铺不在规则中）
 const PALETTE = [
   "#2563eb","#16a34a","#f59e0b","#ef4444","#8b5cf6",
   "#06b6d4","#a855f7","#f97316","#22c55e","#3b82f6",
   "#e11d48","#14b8a6","#7c3aed","#0ea5e9","#84cc16",
   "#ec4899","#10b981","#f43f5e","#6366f1","#14b8a6"
 ];
+
+// 根据店铺名称获取颜色
+function getShopColor(shopName) {
+  const rule = SHOP_COLOR_RULES.find(r => r.match.test(shopName));
+  return rule ? rule.color : null;
+}
+
+// 根据店铺名称获取排序顺序
+function getShopOrder(shopName) {
+  const rule = SHOP_COLOR_RULES.find(r => r.match.test(shopName));
+  return rule ? rule.order : 999;
+}
 
 let charts = {};  // 存储所有图表实例
 
@@ -77,16 +115,27 @@ function drawChart(containerId, pn, iphoneLabel, datasets, showPoints){
   canvas.height = 300;
   containerId.appendChild(canvas);
 
-  const dsLines = datasets.map((ds,i)=>({
-    label: ds.label,
-    data:  ds.data.map(p=>({x:new Date(p.x), y:p.y})),
-    borderColor: PALETTE[i % PALETTE.length],
-    backgroundColor: PALETTE[i % PALETTE.length],
-    borderWidth: 2,
-    pointRadius: showPoints ? 3 : 0,
-    spanGaps: true,
-    tension: 0.2
-  }));
+  // 按店铺顺序排序 datasets
+  const sortedDatasets = datasets.sort((a, b) => {
+    return getShopOrder(a.label) - getShopOrder(b.label);
+  });
+
+  const dsLines = sortedDatasets.map((ds,i)=>{
+    // 优先使用固定颜色，如果没有则使用备用调色板
+    const shopColor = getShopColor(ds.label);
+    const color = shopColor || PALETTE[i % PALETTE.length];
+
+    return {
+      label: ds.label,
+      data:  ds.data.map(p=>({x:new Date(p.x), y:p.y})),
+      borderColor: color,
+      backgroundColor: color,
+      borderWidth: 2,
+      pointRadius: showPoints ? 3 : 0,
+      spanGaps: true,
+      tension: 0.2
+    };
+  });
 
   const chart = new Chart(canvas, {
     type: 'line',
