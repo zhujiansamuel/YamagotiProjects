@@ -1353,6 +1353,146 @@ def _agg_bollinger_bands(
             pass
 
 
+def _agg_market_log_premium(
+    *,
+    ts_iso: str,
+    anchor_bucket,
+    is_final_bar: bool,
+    writer,
+):
+    """
+    6) 市场 log 溢价（Market Log Premium）
+    公式: b_{k,t}^{wma_{tm}} = log(Q̄^{wma_{tm}}_{k,t} / P^{official}_k)
+
+    其中：
+    - Q̄^{wma_{tm}}_{k,t}: FeatureSnapshot 中 scope="shopcohort:full_store|iphone:{k}", name="wma", version="wma{tm}m" 的值
+    - P^{official}_k: iPhone ID=k 的官方发布价格（从 settings.IPHONE_OFFICIAL_PRICES 获取）
+    - 结果存储为：name="logb", version=对应的 wma 版本（如 "wma120m"）
+    """
+    import re
+    import math
+    from django.apps import apps
+    from django.conf import settings
+
+    FeatureSnapshot = apps.get_model("AppleStockChecker", "FeatureSnapshot")
+
+    logb_debug = {"bucket": ts_iso, "computed": 0, "skipped": [], "samples": []}
+
+    try:
+        # 获取官方价格配置
+        official_prices = getattr(settings, "IPHONE_OFFICIAL_PRICES", {})
+        if not official_prices:
+            logb_debug["skipped"].append("no_official_prices_in_settings")
+            try:
+                notify_progress_all(data={
+                    "type": "feature_logb_warning",
+                    "bucket": ts_iso,
+                    "message": "IPHONE_OFFICIAL_PRICES not configured in settings",
+                })
+            except Exception:
+                pass
+            return
+
+        # 查询当前 bucket 中所有 name="wma" 的 FeatureSnapshot 记录
+        # 只关注 scope 包含 "shopcohort:full_store" 的记录
+        wma_records = list(
+            FeatureSnapshot.objects
+            .filter(
+                bucket=anchor_bucket,
+                name="wma",
+                scope__startswith="shopcohort:full_store|iphone:"
+            )
+            .values("scope", "version", "value")
+        )
+
+        if not wma_records:
+            logb_debug["skipped"].append("no_wma_records_for_full_store")
+        else:
+            # 正则匹配 version 格式：wma[0-9]+m
+            wma_version_pattern = re.compile(r"^wma\d+m$")
+
+            for rec in wma_records:
+                scope = rec["scope"]
+                version = rec["version"]
+                wma_value = rec["value"]
+
+                # 检查 version 格式
+                if not wma_version_pattern.match(version):
+                    logb_debug["skipped"].append(f"{scope}@{version}:invalid_version_format")
+                    continue
+
+                # 从 scope 中提取 iPhone ID
+                # scope 格式: "shopcohort:full_store|iphone:{iphone_id}"
+                try:
+                    iphone_id = int(scope.split("|iphone:")[-1])
+                except (ValueError, IndexError):
+                    logb_debug["skipped"].append(f"{scope}@{version}:invalid_scope_format")
+                    continue
+
+                # 获取官方价格
+                official_price = official_prices.get(iphone_id)
+                if official_price is None:
+                    logb_debug["skipped"].append(f"{scope}@{version}:no_official_price_for_iphone_{iphone_id}")
+                    continue
+
+                if official_price <= 0:
+                    logb_debug["skipped"].append(f"{scope}@{version}:invalid_official_price_{official_price}")
+                    continue
+
+                # 检查 wma_value 有效性
+                if wma_value is None or wma_value <= 0:
+                    logb_debug["skipped"].append(f"{scope}@{version}:invalid_wma_value_{wma_value}")
+                    continue
+
+                # 计算 log 溢价：log(wma_value / official_price)
+                try:
+                    logb_value = math.log(wma_value / official_price)
+                except (ValueError, ZeroDivisionError) as e:
+                    logb_debug["skipped"].append(f"{scope}@{version}:math_error_{repr(e)}")
+                    continue
+
+                # 写入新的 FeatureSnapshot
+                logb_record = FeatureRecord(
+                    bucket=anchor_bucket,
+                    scope=scope,
+                    name="logb",
+                    version=version,  # 使用与 wma 相同的 version
+                    value=logb_value,
+                    is_final=is_final_bar,
+                )
+                writer.write_many([logb_record])
+
+                logb_debug["computed"] += 1
+                if len(logb_debug["samples"]) < 6:
+                    logb_debug["samples"].append({
+                        "scope": scope,
+                        "version": version,
+                        "iphone_id": iphone_id,
+                        "wma": round(wma_value, 2),
+                        "official": official_price,
+                        "logb": round(logb_value, 4),
+                    })
+
+        # 发送进度通知
+        try:
+            notify_progress_all(data={
+                "type": "feature_logb_update",
+                "bucket": ts_iso,
+                "summary": {k: v for k, v in logb_debug.items() if k != "samples"},
+                "samples": logb_debug["samples"],
+            })
+        except Exception:
+            pass
+
+    except Exception as e:
+        try:
+            notify_progress_all(data={
+                "type": "feature_logb_error",
+                "bucket": ts_iso,
+                "error": repr(e),
+            })
+        except Exception:
+            pass
 
 
 # === 可调参数（根据你们前后端链路容量调节） ===
@@ -1651,12 +1791,13 @@ def _run_aggregation(
     agg_minutes: int,
 ):
     """
-    聚合调度器：按顺序调用 5 个子步骤：
+    聚合调度器：按顺序调用 6 个子步骤：
     1) OverallBar
     2) CohortBar
     3) FeatureSnapshot 四类组合
     4) 时间序列
     5) Bollinger Bands
+    6) Market Log Premium（市场 log 溢价）
     """
     from django.utils import timezone
     from AppleStockChecker.models import OverallBar
@@ -1749,6 +1890,14 @@ def _run_aggregation(
         anchor_bucket=anchor_bucket,
         is_final_bar=is_final_bar,
         base_now=base_now,
+        writer=writer,
+    )
+
+    # 6) Market Log Premium
+    _agg_market_log_premium(
+        ts_iso=ts_iso,
+        anchor_bucket=anchor_bucket,
+        is_final_bar=is_final_bar,
         writer=writer,
     )
 

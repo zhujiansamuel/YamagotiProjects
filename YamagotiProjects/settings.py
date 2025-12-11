@@ -708,3 +708,50 @@ CHANNEL_LAYERS = {
 ASGI_APPLICATION = "config.asgi.application"
 DATA_UPLOAD_MAX_MEMORY_SIZE=10 * 1024 * 1024
 
+# iPhone 官方发布价格（用于市场 log 溢价计算）
+IPHONE_OFFICIAL_PRICES = {
+    1: 129800,  # iPhone 17-256-ブラック
+    2: 129800,  # iPhone 17-256-ホワイト
+    3: 129800,  # iPhone 17-256-ミストブルー
+    4: 129800,  # iPhone 17-256-ラベンダー
+    5: 129800,  # iPhone 17-256-セージ
+    6: 164800,  # iPhone 17-512-ブラック
+    7: 164800,  # iPhone 17-512-ホワイト
+    8: 164800,  # iPhone 17-512-ミストブルー
+    9: 164800,  # iPhone 17-512-ラベンダー
+    10: 164800,  # iPhone 17-512-セージ
+    11: 179800,  # iPhone 17 Pro-256-シルバー
+    12: 179800,  # iPhone 17 Pro-256-コズミックオレンジ
+    13: 179800,  # iPhone 17 Pro-256-ディープブルー
+    14: 214800,  # iPhone 17 Pro-512-シルバー
+    15: 214800,  # iPhone 17 Pro-512-コズミックオレンジ
+    16: 214800,  # iPhone 17 Pro-512-ディープブルー
+    17: 249800,  # iPhone 17 Pro-1024-シルバー
+    18: 249800,  # iPhone 17 Pro-1024-コズミックオレンジ
+    19: 249800,  # iPhone 17 Pro-1024-ディープブルー
+    20: 194800,  # iPhone 17 Pro Max-256-シルバー
+    21: 194800,  # iPhone 17 Pro Max-256-コズミックオレンジ
+    22: 194800,  # iPhone 17 Pro Max-256-ディープブルー
+    23: 229800,  # iPhone 17 Pro Max-512-シルバー
+    24: 229800,  # iPhone 17 Pro Max-512-コズミックオレンジ
+    25: 229800,  # iPhone 17 Pro Max-512-ディープブルー
+    26: 264800,  # iPhone 17 Pro Max-1024-シルバー
+    27: 264800,  # iPhone 17 Pro Max-1024-コズミックオレンジ
+    28: 264800,  # iPhone 17 Pro Max-1024-ディープブルー
+    29: 329800,  # iPhone 17 Pro Max-2048-シルバー
+    30: 329800,  # iPhone 17 Pro Max-2048-コズミックオレンジ
+    31: 329800,  # iPhone 17 Pro Max-2048-ディープブルー
+    32: 159800,  # iPhone Air-256-スペースブラック
+    33: 159800,  # iPhone Air-256-クラウドホワイト
+    34: 159800,  # iPhone Air-256-ライトゴールド
+    35: 159800,  # iPhone Air-256-スカイブルー
+    36: 194800,  # iPhone Air-512-スペースブラック
+    37: 194800,  # iPhone Air-512-クラウドホワイト
+    38: 194800,  # iPhone Air-512-ライトゴールド
+    39: 194800,  # iPhone Air-512-スカイブルー
+    40: 229800,  # iPhone Air-1024-スペースブラック
+    41: 229800,  # iPhone Air-1024-クラウドホワイト
+    42: 229800,  # iPhone Air-1024-ライトゴールド
+    43: 229800,  # iPhone Air-1024-スカイブルー
+}
+
