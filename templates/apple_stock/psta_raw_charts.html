@@ -225,7 +225,7 @@ function drawLogbChart(containerId, pn, iphoneLabel, logbDatasets, showPoints){
         },
         tooltip: {
           callbacks: {
-            label: it => `${it.dataset.label}: ${Number(it.parsed.y).toFixed(4)}`
+            label: it => `${it.dataset.label}: ${Number(it.parsed.y).toFixed(7)}`
           }
         }
       }
