@@ -1064,7 +1064,7 @@ def _agg_time_series_features(
             .values("slug", "family", "base_name", "params", "version")
         )
 
-        # —— 收集“当前锚点”的基值 x_t：scope -> x_t —— #
+        # —— 收集"当前锚点"的基值 x_t：scope -> x_t —— #
         # 4.a 四类组合（FeatureSnapshot.mean@anchor_bucket）
         for row in (
             FeatureSnapshot.objects
@@ -1074,25 +1074,30 @@ def _agg_time_series_features(
             if row["value"] is not None:
                 base_now[row["scope"]] = float(row["value"])
 
-        # 4.b OverallBar.mean -> overall:iphone:<id>（@ob_bucket）
-        if ob_has_iphone:
-            for row in (
-                OverallBar.objects
-                .filter(bucket=ob_bucket)
-                .values("iphone_id", "mean")
-            ):
-                if row["mean"] is not None:
-                    base_now[f"overall:iphone:{row['iphone_id']}"] = float(row["mean"])
+        # ===== 已禁用：从 OverallBar/CohortBar 收集基值 =====
+        # 原因：已停用 OverallBar/CohortBar 计算
+        # 如果需要 scope="overall:iphone:*" 或 "cohort:*" 的时间序列指标，
+        # 请先恢复 _run_aggregation 中的 OverallBar/CohortBar 计算
 
-        # 4.c CohortBar.mean -> cohort:<slug>（@ob_bucket）
-        for row in (
-            CohortBar.objects
-            .filter(bucket=ob_bucket)
-            .select_related("cohort")
-            .values("cohort__slug", "mean")
-        ):
-            if row["mean"] is not None and row["cohort__slug"]:
-                base_now[f"cohort:{row['cohort__slug']}"] = float(row["mean"])
+        # # 4.b OverallBar.mean -> overall:iphone:<id>（@ob_bucket）
+        # if ob_has_iphone:
+        #     for row in (
+        #         OverallBar.objects
+        #         .filter(bucket=ob_bucket)
+        #         .values("iphone_id", "mean")
+        #     ):
+        #         if row["mean"] is not None:
+        #             base_now[f"overall:iphone:{row['iphone_id']}"] = float(row["mean"])
+
+        # # 4.c CohortBar.mean -> cohort:<slug>（@ob_bucket）
+        # for row in (
+        #     CohortBar.objects
+        #     .filter(bucket=ob_bucket)
+        #     .select_related("cohort")
+        #     .values("cohort__slug", "mean")
+        # ):
+        #     if row["mean"] is not None and row["cohort__slug"]:
+        #         base_now[f"cohort:{row['cohort__slug']}"] = float(row["mean"])
 
         # —— 工具：回写派生值（只给 SMA 用，EMA/WMA 走 writer） —— #
         def upsert_feat(scope: str, name: str, version: str, value: float):
@@ -1697,27 +1702,31 @@ def _run_aggregation(
         for f in OverallBar._meta.get_fields()
     )
 
-    # 1) OverallBar
-    _agg_overallbar(
-        ts_iso=ts_iso,
-        ts_dt=ts_dt,
-        rows=rows,
-        use_window=use_window,
-        bucket_start=bucket_start,
-        bucket_end=bucket_end,
-        is_final_bar=is_final_bar,
-        agg_ctx=agg_ctx,
-        ob_has_iphone=ob_has_iphone,
-    )
+    # ===== 已禁用：OverallBar 和 CohortBar 计算 =====
+    # 原因：主要使用 FeatureSnapshot 四类组合，无需全店聚合统计
+    # 如需恢复，取消下面的注释
 
-    # 2) CohortBar
-    _agg_cohortbar(
-        ts_iso=ts_iso,
-        ob_bucket=ob_bucket,
-        is_final_bar=is_final_bar,
-        agg_ctx=agg_ctx,
-        ob_has_iphone=ob_has_iphone,
-    )
+    # # 1) OverallBar
+    # _agg_overallbar(
+    #     ts_iso=ts_iso,
+    #     ts_dt=ts_dt,
+    #     rows=rows,
+    #     use_window=use_window,
+    #     bucket_start=bucket_start,
+    #     bucket_end=bucket_end,
+    #     is_final_bar=is_final_bar,
+    #     agg_ctx=agg_ctx,
+    #     ob_has_iphone=ob_has_iphone,
+    # )
+
+    # # 2) CohortBar
+    # _agg_cohortbar(
+    #     ts_iso=ts_iso,
+    #     ob_bucket=ob_bucket,
+    #     is_final_bar=is_final_bar,
+    #     agg_ctx=agg_ctx,
+    #     ob_has_iphone=ob_has_iphone,
+    # )
 
     # 3) FeatureSnapshot 四类组合
     _agg_feature_combos(
