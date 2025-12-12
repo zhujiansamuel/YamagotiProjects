@@ -998,10 +998,14 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
     @permission_classes([IsAuthenticated])  # ✅ 需要 Bearer Token
     def import_tradein_xlsx(self, request):
         """
-        POST /AppleStockChecker/purchasing-price-records/import-tradein-xlsx/?dry_run=1&dedupe=1&upsert=0
+        POST /AppleStockChecker/purchasing-price-records/import-tradein-xlsx/?dry_run=1&dedupe=1&upsert=0&route_by_shop=1
         Header: Authorization: Bearer <access>
         Form: files=<shopX.xlsx>[, <shopY.xlsm>...]
         行为：每个文件各起一个 Celery 任务。
+
+        参数说明：
+        - route_by_shop=1: 启用按 shop 路由，每个 shop 的任务将路由到独立队列 (shop_<source_name>)
+        - route_by_shop=0 (默认): 所有任务路由到 webscraper 队列
         """
 
         def _as_bool(v, default=False):
@@ -1010,6 +1014,7 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
         dry_run = _as_bool(request.query_params.get("dry_run"), False)
         dedupe = _as_bool(request.query_params.get("dedupe"), True)
         upsert = _as_bool(request.query_params.get("upsert"), False)
+        route_by_shop = _as_bool(request.query_params.get("route_by_shop"), False)
 
         # 批次
         import uuid
@@ -1041,16 +1046,46 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
                 return Response({"detail": f"未知清洗器: {source_name}"}, status=status.HTTP_400_BAD_REQUEST)
 
             content = f.read()  # 交给任务自行解析（task_process_xlsx 已支持 csv）
-            t = task_process_xlsx.delay(
-                file_bytes=content,
-                filename=fname,
-                source_name=source_name,
-                dry_run=dry_run,
-                dedupe=dedupe,
-                upsert=upsert,
-                batch_id=str(batch_uuid),
-            )
-            tasks.append({"file": fname, "task_id": t.id, "source": source_name})
+
+            # 动态队列路由：如果启用 route_by_shop，则路由到 shop_<source_name> 队列
+            if route_by_shop:
+                queue_name = f"shop_{source_name}"
+                t = task_process_xlsx.apply_async(
+                    kwargs={
+                        "file_bytes": content,
+                        "filename": fname,
+                        "source_name": source_name,
+                        "dry_run": dry_run,
+                        "dedupe": dedupe,
+                        "upsert": upsert,
+                        "batch_id": str(batch_uuid),
+                    },
+                    queue=queue_name,
+                    routing_key=f"shop.{source_name}",
+                )
+                tasks.append({
+                    "file": fname,
+                    "task_id": t.id,
+                    "source": source_name,
+                    "queue": queue_name,
+                })
+            else:
+                # 默认路由到 webscraper 队列
+                t = task_process_xlsx.delay(
+                    file_bytes=content,
+                    filename=fname,
+                    source_name=source_name,
+                    dry_run=dry_run,
+                    dedupe=dedupe,
+                    upsert=upsert,
+                    batch_id=str(batch_uuid),
+                )
+                tasks.append({
+                    "file": fname,
+                    "task_id": t.id,
+                    "source": source_name,
+                    "queue": "webscraper",
+                })
 
         return Response(
             {
@@ -1058,6 +1093,7 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
                 "dry_run": dry_run,
                 "dedupe": dedupe,
                 "upsert": upsert,
+                "route_by_shop": route_by_shop,
                 "batch_id": str(batch_uuid),
                 "tasks": tasks,
             },
