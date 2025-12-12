@@ -1586,10 +1586,10 @@ def get_dynamic_price_range(
         price_min = reference_price * 0.9
         price_max = reference_price * 1.1
 
-    logger.info(
-        f"动态价格区间: iphone_id={iphone_id}, 样本数={len(prices)}, "
-        f"参考价格={reference_price:.0f}, 区间=[{price_min:.0f}, {price_max:.0f}]"
-    )
+    # logger.info(
+    #     f"动态价格区间: iphone_id={iphone_id}, 样本数={len(prices)}, "
+    #     f"参考价格={reference_price:.0f}, 区间=[{price_min:.0f}, {price_max:.0f}]"
+    # )
 
     return price_min, price_max
 

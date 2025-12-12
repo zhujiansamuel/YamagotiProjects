@@ -316,6 +316,7 @@ class FeatureSnapshot(models.Model):
         indexes = [models.Index(fields=['scope', 'name', 'bucket'])]
 
 
+
 class ModelArtifact(models.Model):
     #训练产物
     model_name = models.CharField(max_length=64, db_index=True)
