@@ -23,44 +23,41 @@
 
 ## 🚀 使用方法
 
-### 方法 1: 使用 Shell 包装器（推荐）
+### 方法 1: 本地直接运行（推荐）
 
 ```bash
 # 1. Dry-run（仅查看统计，不删除）
-./scripts/clear_feature_snapshots.sh
+python scripts/clear_feature_snapshots.py
 
 # 2. 实际删除（需要二次确认）
-./scripts/clear_feature_snapshots.sh --execute
+python scripts/clear_feature_snapshots.py --execute
 
 # 3. 静默删除（跳过确认，危险！）
-./scripts/clear_feature_snapshots.sh --execute --force
+python scripts/clear_feature_snapshots.py --execute --force
 
 # 4. 自定义批量大小
-./scripts/clear_feature_snapshots.sh --execute --batch-size 5000
+python scripts/clear_feature_snapshots.py --execute --batch-size 5000
 ```
 
-### 方法 2: 通过 Docker Compose
+### 方法 2: 使用 Shell 包装器（自动检测环境）
 
 ```bash
-# Dry-run
-docker compose exec web python scripts/clear_feature_snapshots.py
+# Shell 包装器会自动检测是本地环境还是 Docker 环境
+./scripts/clear_feature_snapshots.sh
+./scripts/clear_feature_snapshots.sh --execute
+./scripts/clear_feature_snapshots.sh --execute --force
+```
 
-# 实际删除
+### 方法 3: Docker 环境
+
+```bash
+# 通过 Docker Compose 运行
+docker compose exec web python scripts/clear_feature_snapshots.py
 docker compose exec web python scripts/clear_feature_snapshots.py --execute
 
-# 静默删除
-docker compose exec web python scripts/clear_feature_snapshots.py --execute --force
-```
-
-### 方法 3: 在容器内直接运行
-
-```bash
-# 进入容器
+# 或在容器内直接运行
 docker compose exec web bash
-
-# 运行脚本
 python scripts/clear_feature_snapshots.py
-python scripts/clear_feature_snapshots.py --execute
 ```
 
 ---
@@ -158,8 +155,11 @@ python scripts/clear_feature_snapshots.py --execute
 ### 1. 删除前务必备份
 
 ```bash
-# 执行数据库备份
+# 如果有备份脚本
 ./scripts/pg_dump.sh
+
+# 或使用 PostgreSQL 命令行工具
+pg_dump -h localhost -U your_user -d your_database -t AppleStockChecker_featuresnapshot > featuresnapshot_backup_$(date +%Y%m%d_%H%M%S).sql
 ```
 
 ### 2. 删除操作不可逆

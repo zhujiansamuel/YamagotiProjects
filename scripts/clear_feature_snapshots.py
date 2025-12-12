@@ -16,23 +16,24 @@
 
 用法：
   # 1. Dry-run（仅查看统计，不删除）
-  docker compose exec web python scripts/clear_feature_snapshots.py
+  python scripts/clear_feature_snapshots.py
+  # 或使用 shell 包装器：
+  ./scripts/clear_feature_snapshots.sh
 
   # 2. 实际删除（需要二次确认）
-  docker compose exec web python scripts/clear_feature_snapshots.py --execute
+  python scripts/clear_feature_snapshots.py --execute
 
   # 3. 静默删除（跳过确认，危险！）
-  docker compose exec web python scripts/clear_feature_snapshots.py --execute --force
+  python scripts/clear_feature_snapshots.py --execute --force
 
   # 4. 指定批量大小
-  docker compose exec web python scripts/clear_feature_snapshots.py --execute --batch-size 5000
+  python scripts/clear_feature_snapshots.py --execute --batch-size 5000
 
-  # 如果在容器内部（已进入 web 容器），可直接运行：
-  python scripts/clear_feature_snapshots.py
+  # Docker 环境下：
+  docker compose exec web python scripts/clear_feature_snapshots.py
 
 警告：
-  ⚠️  删除操作不可逆！建议先执行数据库备份：
-  ./scripts/pg_dump.sh
+  ⚠️  删除操作不可逆！建议先执行数据库备份
 """
 
 import os
