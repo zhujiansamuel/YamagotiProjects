@@ -13,7 +13,7 @@ from AppleStockChecker.ws_notify import (
 )
 from typing import Any, Dict, List, Optional
 from collections import Counter, defaultdict
-from celery import shared_task, chord
+from celery import shared_task, chord, chain
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import transaction, IntegrityError
 from decimal import Decimal, ROUND_HALF_UP
@@ -3057,7 +3057,40 @@ def psta_process_minute_bucket(
 # --------------------------------------------------------
 # -----------------------------------------------------
 # -----------------------------------------------
-# 回调：聚合所有分钟桶，广播最终“done + 图表增量”
+# 辅助任务：用于 chain 模式下累积结果
+# -----------------------------------------------
+
+
+@shared_task(name="AppleStockChecker.tasks.psta_collect_result")
+def psta_collect_result(prev_result, current_result=None):
+    """
+    用于 chain 模式下累积所有子任务的结果。
+
+    Args:
+        prev_result: 上一个任务传递的累积结果列表，或单个结果字典
+        current_result: 当前任务的结果（用于首次调用）
+
+    Returns:
+        累积的结果列表
+    """
+    # 初始化累积列表
+    if prev_result is None:
+        accumulated = []
+    elif isinstance(prev_result, list):
+        accumulated = prev_result
+    else:
+        # 第一个结果是单个字典
+        accumulated = [prev_result]
+
+    # 添加当前结果
+    if current_result is not None:
+        accumulated.append(current_result)
+
+    return accumulated
+
+
+# -----------------------------------------------
+# 回调：聚合所有分钟桶，广播最终"done + 图表增量"
 # -----------------------------------------------
 
 
@@ -3275,6 +3308,7 @@ def batch_generate_psta_same_ts(
         agg_minutes: int = 15,  # 聚合步长
         agg_mode: str = "boundary",  # 'boundary'|'rolling'|'off'
         force_agg: bool = False,  # 强制本轮聚合
+        sequential: bool = False,  # 是否顺序执行子任务
 ) -> Dict[str, Any]:
     task_job_id = job_id or self.request.id
     ts_iso = timestamp_iso or nearest_past_minute_iso()
@@ -3368,10 +3402,60 @@ def batch_generate_psta_same_ts(
             pass
         return empty
 
-    callback = psta_finalize_buckets.s(job_id=task_job_id, ts_iso=ts_iso, agg_ctx=ctx,
-                                       task_ver=TASK_VER_PSTA)  # 可把 ctx 传给回调（可选）
-    chord_result = chord(subtasks)(callback)
-    return {"timestamp": ts_iso, "total_buckets": len(subtasks), "job_id": task_job_id, "chord_id": chord_result.id}
+    # 根据 sequential 参数选择执行方式
+    if sequential:
+        # 顺序执行模式：逐个执行子任务并收集结果
+        results = []
+        for i, subtask in enumerate(subtasks):
+            try:
+                # 同步调用子任务（阻塞等待完成）
+                result = subtask.apply().get()
+                results.append(result)
+
+                # 可选：报告进度
+                try:
+                    notify_progress_all(
+                        data={
+                            "status": "running",
+                            "step": f"processing_bucket_{i+1}",
+                            "progress": int((i + 1) * 100 / len(subtasks)),
+                            "current": i + 1,
+                            "total": len(subtasks),
+                            "timestamp": ts_iso,
+                        }
+                    )
+                except Exception:
+                    pass
+            except Exception as e:
+                # 记录错误但继续执行
+                results.append({
+                    "ok": 0,
+                    "failed": 1,
+                    "error": str(e),
+                    "error_hist": {"sequential_execution_error": 1},
+                })
+
+        # 直接调用 finalize 处理结果
+        final_result = psta_finalize_buckets(
+            results=results,
+            job_id=task_job_id,
+            ts_iso=ts_iso,
+            agg_ctx=ctx,
+            task_ver=TASK_VER_PSTA,
+        )
+        return {
+            "timestamp": ts_iso,
+            "total_buckets": len(subtasks),
+            "job_id": task_job_id,
+            "sequential": True,
+            "result": final_result,
+        }
+    else:
+        # 并发执行模式（默认）：使用 chord
+        callback = psta_finalize_buckets.s(job_id=task_job_id, ts_iso=ts_iso, agg_ctx=ctx,
+                                           task_ver=TASK_VER_PSTA)  # 可把 ctx 传给回调（可选）
+        chord_result = chord(subtasks)(callback)
+        return {"timestamp": ts_iso, "total_buckets": len(subtasks), "job_id": task_job_id, "chord_id": chord_result.id}
 # -----------------------------------------------------
 # --------------------------------------------------------
 # -----------------------------------------------------------
