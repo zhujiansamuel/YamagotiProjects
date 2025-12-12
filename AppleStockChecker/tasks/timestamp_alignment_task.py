@@ -1432,10 +1432,10 @@ def get_dynamic_price_range(
 
     # 如果样本数不足，返回后备区间
     if len(prices) < min_samples:
-        logger.warning(
-            f"动态价格区间: iphone_id={iphone_id}, 样本数不足({len(prices)}/{min_samples}), "
-            f"使用后备区间 [{PRICE_FALLBACK_MIN}, {PRICE_FALLBACK_MAX}]"
-        )
+        # logger.warning(
+        #     f"动态价格区间: iphone_id={iphone_id}, 样本数不足({len(prices)}/{min_samples}), "
+        #     f"使用后备区间 [{PRICE_FALLBACK_MIN}, {PRICE_FALLBACK_MAX}]"
+        # )
         return PRICE_FALLBACK_MIN, PRICE_FALLBACK_MAX
 
     # 计算平均价格作为参考价格
@@ -1451,10 +1451,10 @@ def get_dynamic_price_range(
         price_min = reference_price * 0.9
         price_max = reference_price * 1.1
 
-    logger.info(
-        f"动态价格区间: iphone_id={iphone_id}, 样本数={len(prices)}, "
-        f"参考价格={reference_price:.0f}, 区间=[{price_min:.0f}, {price_max:.0f}]"
-    )
+    # logger.info(
+    #     f"动态价格区间: iphone_id={iphone_id}, 样本数={len(prices)}, "
+    #     f"参考价格={reference_price:.0f}, 区间=[{price_min:.0f}, {price_max:.0f}]"
+    # )
 
     return price_min, price_max
 
@@ -3456,6 +3456,7 @@ def batch_generate_psta_same_ts(
                                            task_ver=TASK_VER_PSTA)  # 可把 ctx 传给回调（可选）
         chord_result = chord(subtasks)(callback)
         return {"timestamp": ts_iso, "total_buckets": len(subtasks), "job_id": task_job_id, "chord_id": chord_result.id}
+
 # -----------------------------------------------------
 # --------------------------------------------------------
 # -----------------------------------------------------------

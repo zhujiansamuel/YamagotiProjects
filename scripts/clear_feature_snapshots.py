@@ -43,7 +43,7 @@ from datetime import datetime
 
 # Django 环境初始化
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'yamagoti.settings')
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'YamagotiProjects.settings')
 
 import django
 django.setup()
@@ -72,7 +72,7 @@ def get_statistics():
         FeatureSnapshot.objects
         .values('name')
         .annotate(count=django.db.models.Count('id'))
-        .order_by('-count')[:10]
+        .order_by('-count')
     )
 
     # 按 scope 前缀统计（取冒号前的部分）
@@ -89,7 +89,7 @@ def get_statistics():
         [{'prefix': k, 'count': v} for k, v in scope_prefixes.items()],
         key=lambda x: x['count'],
         reverse=True
-    )[:10]
+    )
 
     # 按 is_final 统计
     by_is_final = {
@@ -144,11 +144,11 @@ def print_statistics(stats):
     print(f"   is_final=True:  {stats['by_is_final']['final']:,}")
     print(f"   is_final=False: {stats['by_is_final']['not_final']:,}")
 
-    print(f"\n🏷️  Top 10 特征名 (name):")
+    print(f"\n🏷️  特征名 (name):")
     for item in stats['by_name']:
         print(f"   {item['name']:20} {item['count']:>10,} 条")
 
-    print(f"\n🎯 Top 10 作用域前缀 (scope):")
+    print(f"\n🎯 作用域前缀 (scope):")
     for item in stats['by_scope_prefix']:
         print(f"   {item['prefix']:20} ~{item['count']:>9} 个")
 
