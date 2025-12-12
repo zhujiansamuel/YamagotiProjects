@@ -117,9 +117,10 @@ def collect_items_for_psta(
 
         # —— 维度索引 —— #
         key = f"{sid}:{iid}"
-        buf = index_by_key.setdefault(key, {"order": [], "times": []})
+        buf = index_by_key.setdefault(key, {"order": [], "times": [], "new_price": []})
         buf["order"].append(idx)
         buf["times"].append(rec_iso)
+        buf["new_price"].append(r.get("price_new"))
 
         # —— 全局分钟桶 —— #
         bucket_by_minute[minute_iso].append(idx)
