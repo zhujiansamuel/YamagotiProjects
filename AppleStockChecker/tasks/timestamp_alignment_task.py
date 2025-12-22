@@ -691,8 +691,34 @@ def _agg_feature_combos(
 
     try:
         # —— 预取本桶出现过的 shop/iphone —— #
-        shops_seen = sorted({int(r.get("shop_id")) for r in rows if r.get("shop_id")})
-        iphones_seen = sorted({int(r.get("iphone_id")) for r in rows if r.get("iphone_id")})
+        # Bug修复: 窗口模式时应该从窗口内的 PSTA 数据提取 shop/iphone，而不是从 rows（单分钟数据）
+        # 原因: 边界分钟的 rows 可能为空，但窗口内仍有历史数据需要聚合
+        if use_window:
+            # 窗口模式: 从数据库查询窗口内所有的 shop_id 和 iphone_id
+            shops_seen = sorted(set(
+                PurchasingShopTimeAnalysis.objects
+                .filter(
+                    Timestamp_Time__gte=bucket_start,
+                    Timestamp_Time__lt=bucket_end,
+                    New_Product_Price__isnull=False,
+                )
+                .values_list('shop_id', flat=True)
+                .distinct()
+            ))
+            iphones_seen = sorted(set(
+                PurchasingShopTimeAnalysis.objects
+                .filter(
+                    Timestamp_Time__gte=bucket_start,
+                    Timestamp_Time__lt=bucket_end,
+                    New_Product_Price__isnull=False,
+                )
+                .values_list('iphone_id', flat=True)
+                .distinct()
+            ))
+        else:
+            # 单分钟模式: 从 rows 提取（原有逻辑）
+            shops_seen = sorted({int(r.get("shop_id")) for r in rows if r.get("shop_id")})
+            iphones_seen = sorted({int(r.get("iphone_id")) for r in rows if r.get("iphone_id")})
 
         if use_window:
             base_qs = (
