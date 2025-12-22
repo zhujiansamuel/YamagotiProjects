@@ -720,6 +720,12 @@ def _agg_feature_combos(
             shops_seen = sorted({int(r.get("shop_id")) for r in rows if r.get("shop_id")})
             iphones_seen = sorted({int(r.get("iphone_id")) for r in rows if r.get("iphone_id")})
 
+        # 日志输出：数据提取情况
+        logger.info(
+            f"  📊 [数据源] shops: {len(shops_seen)}个, iphones: {len(iphones_seen)}个 | "
+            f"来源: {'窗口PSTA数据' if use_window else 'rows参数'}"
+        )
+
         if use_window:
             base_qs = (
                 PurchasingShopTimeAnalysis.objects
@@ -1029,6 +1035,22 @@ def _agg_feature_combos(
                         })
         else:
             combo_debug["skipped"].append("case4: no ShopWeightProfile defined")
+
+        # 汇总日志输出
+        total_features = (
+            combo_debug["case1_shop_iphone"] +
+            combo_debug["case2_shopcohort_iphone"] +
+            combo_debug["case3_shop_cohortiphone"] +
+            combo_debug["case4_shopcohort_cohortiphone"]
+        )
+        logger.info(
+            f"  ✍️  [特征写入] "
+            f"Case1(shop×iphone): {combo_debug['case1_shop_iphone']}, "
+            f"Case2(shopcohort×iphone): {combo_debug['case2_shopcohort_iphone']}, "
+            f"Case3(shop×cohort): {combo_debug['case3_shop_cohortiphone']}, "
+            f"Case4(shopcohort×cohort): {combo_debug['case4_shopcohort_cohortiphone']} | "
+            f"总计: {total_features} 个组合"
+        )
 
         try:
             notify_progress_all(data={
@@ -1703,6 +1725,16 @@ def _run_aggregation(
     bucket_end = bucket_start + timezone.timedelta(minutes=agg_minutes or 1)
     use_window = (agg_minutes or 1) > 1
 
+    # ========== FeatureSnapshot 聚合开始 ==========
+    logger.info(
+        f"🔄 [FeatureSnapshot 聚合] 开始计算 | "
+        f"时间点: {ts_iso} | "
+        f"窗口: {bucket_start.isoformat()} → {bucket_end.isoformat()} | "
+        f"聚合步长: {agg_minutes}分钟 | "
+        f"模式: {'窗口' if use_window else '单分钟'}"
+    )
+    # =============================================
+
     # === 统一锚点：所有 FeatureSnapshot / 派生指标的 bucket，都用 anchor_bucket ===
     anchor_bucket = bucket_start if use_window else ts_dt
     ob_bucket = anchor_bucket  # OverallBar / CohortBar 也用同一锚点
@@ -1766,6 +1798,16 @@ def _run_aggregation(
         agg_ctx=agg_ctx,
         is_final_bar=is_final_bar,
         writer=writer,
+    )
+
+    # 查询刚生成的 FeatureSnapshot 数据量
+    from AppleStockChecker.models import FeatureSnapshot
+    feature_count = FeatureSnapshot.objects.filter(bucket=anchor_bucket).count()
+    logger.info(
+        f"✅ [FeatureSnapshot 聚合] 完成 | "
+        f"时间点: {ts_iso} | "
+        f"bucket: {anchor_bucket.isoformat()} | "
+        f"生成记录数: {feature_count} 条"
     )
 
     # 4) 时间序列（返回 base_now 给 Bollinger 用）
