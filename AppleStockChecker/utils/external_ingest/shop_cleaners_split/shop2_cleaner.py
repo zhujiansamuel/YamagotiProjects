@@ -87,14 +87,17 @@ def _pick_model_name_loose(model_token: str, iphone17_df: pd.DataFrame) -> str |
 
 # ---------------------- 颜色组匹配逻辑（黒 -> ブラック 等） ----------------------
 
-
 def _match_color_group(group: str, color_name: str) -> tuple[bool, str]:
     """
     返回 (is_match, reason)
-    这里集中管理 data5 里“组名”到实际颜色名的映射规则。
+    集中管理 data5 里“组名”到实际颜色名的映射规则。
     """
     g = (group or "").strip()
     c = color_name or ""
+
+    # 常见后缀清理：青系 / 橙色 / 黒色 等
+    # （避免 LLM 或简单解析把“色/系”也带进 group_label）
+    g = re.sub(r"(系|色)$", "", g).strip()
 
     # Blue 系
     if g in ("青", "ブルー", "ミストブルー", "ディープブルー", "スカイブルー"):
@@ -104,7 +107,7 @@ def _match_color_group(group: str, color_name: str) -> tuple[bool, str]:
     if g in ("銀", "シルバー"):
         return ("シルバー" in c), "contains シルバー"
 
-    # Black 系 —— 修复：黒 也命中 スペースブラック
+    # Black 系 —— 黒 也命中 スペースブラック
     if g in ("黒", "ブラック"):
         return (
             ("ブラック" in c) or ("黒" in c) or ("ミッドナイト" in c),
@@ -122,12 +125,18 @@ def _match_color_group(group: str, color_name: str) -> tuple[bool, str]:
     if g in ("金", "ゴールド"):
         return ("ゴールド" in c), "contains ゴールド"
 
-    # Fallback: 允许 data5 里直接写具体颜色
+    # ★ Orange 系 —— 修复点：橙 -> オレンジ（コズミックオレンジ 等）
+    if g in ("橙", "オレンジ"):
+        return (
+            ("オレンジ" in c) or ("橙" in c),
+            "contains オレンジ/橙",
+        )
+
+    # Fallback: 允许 data5 里直接写具体颜色（例如 “コズミックオレンジ-3000”）
     if g:
         return (g in c), "substring match"
 
     return False, ""
-
 
 def _apply_adjust_for_colorname(color_name: str, rules: dict) -> int:
     """根据规则返回针对该“颜色名”的价格修正（给业务逻辑使用的简版）"""
@@ -510,6 +519,9 @@ def _parse_capacity_gb(text: str) -> Optional[int]:
 
 
 def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> pd.DataFrame:
+    now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    print(f"shop2:海峡通信---------->进入清洗器时间: {now}")
+
     """
     debug=True 时：仅对疑似含“颜色减价规则(data5)”的行输出对照信息，用于核对：
       - data5 的潜在颜色减价
@@ -549,7 +561,7 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
     debug_pos_set: set[int] = set()
     if debug:
         # data5 里通常是：青-1000 / 銀-5000+++青-5000 等
-        _RULE_PAT = re.compile(r"(青|銀|黒|白|ブルー|シルバー|ブラック|ホワイト).{0,6}-\d+", re.I)
+        _RULE_PAT = re.compile(r"(青|銀|黒|白|橙|ブルー|シルバー|ブラック|ホワイト|オレンジ).{0,6}-\d+", re.I)
         s5 = df["data5"].fillna("").astype(str)
 
         mask = s5.str.contains(_RULE_PAT, na=False) | s5.str.contains(
@@ -590,13 +602,18 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
         raw_price = row.get("data3")
         raw_rule = row.get("data5")
 
-        if _dbg_on(pos):
-            print("\n[shop2 debug] row_pos=", pos)
-            print("  data2-2(raw):", repr(raw_targetflag))
-            print("  data2-1(raw):", repr(raw_modelcap))
-            print("  data3(raw):", repr(raw_price))
-            print("  data5(raw):", repr(raw_rule))
-            print("  time-scraped(raw):", repr(rec_raw))
+        # if _dbg_on(pos):
+        #     print(f" [shop2 debug] row_pos= {pos}")
+        #     # print("\n[shop2 debug] row_pos=", pos)
+        #     # print("  data2-2(raw):", repr(raw_targetflag))
+        #     print(f" ata2-1(raw)       : {repr(raw_modelcap)}")
+        #     # print("  data2-1(raw):", repr(raw_modelcap))
+        #     print(f" data3(raw)        : {repr(raw_price)}")
+        #     # print("  data3(raw):", repr(raw_price))
+        #     print(f" data5(raw)        : {repr(raw_rule)}")
+        #     # print("  data5(raw):", repr(raw_rule))
+        #     print(f" time-scraped(raw) : {repr(rec_raw)}")
+        #     # print("  time-scraped(raw):", repr(rec_raw))
 
         if not raw_modelcap:
             _dprint(pos, "  SKIP_REASON: data2-1 为空")
@@ -631,14 +648,20 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
         rules = _parse_adjust_rule(raw_rule)
 
         if _dbg_on(pos):
-            print("  parsed cap_gb:", cap_gb)
-            print("  matched model_name:", repr(model_name))
-            print("  base_price:", base_price)
-            print("  parsed rules:", rules)
-            print(
-                "  sub colors:",
-                sub["color"].dropna().astype(str).unique().tolist(),
-            )
+            print(f" [shop2 debug] row_pos= {pos}")
+            print(f" ata2-1(raw)        : {repr(raw_modelcap)}")
+            print(f" data3(raw)         : {repr(raw_price)}")
+            print(f" data5(raw)         : {repr(raw_rule)}")
+
+            # print("  parsed cap_gb:", cap_gb)
+            # print("  matched model_name:", repr(model_name))
+            # print("  base_price:", base_price)
+            # print("  parsed rules:", rules)
+            print(f" parsed rules       : {rules}")
+            # print(
+            #     "  sub colors:",
+            #     sub["color"].dropna().astype(str).unique().tolist(),
+            # )
 
             # 规则命中概览（group -> 命中哪些颜色）
             if rules:
@@ -649,7 +672,8 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
                         adj, tr = _apply_adjust_with_trace(c, {g: rules[g]})
                         if adj != 0:
                             group_hits[g].append(c)
-                print("  rule_hit_overview:", group_hits)
+                print(f" rule_hit_overview  : {group_hits}")
+                # print("  rule_hit_overview:", group_hits)
 
         used_groups: set[str] = set()
 
@@ -674,17 +698,18 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
                 continue
 
             if _dbg_on(pos):
-                print(
-                    "  -> OUT_ITEM:",
-                    {
-                        "color": color,
-                        "part_number": part,
-                        "base": base_price,
-                        "adj": adj,
-                        "final": price,
-                        "trace": trace,
-                    },
-                )
+                print(f" OUT_ITEM--->  color: {color:<10},base: {base_price}, adj: {adj},final: {price},trace: {trace}")
+                # print(
+                #     "  -> OUT_ITEM:",
+                #     {
+                #         "color": color,
+                #         "part_number": part,
+                #         "base": base_price,
+                #         "adj": adj,
+                #         "final": price,
+                #         "trace": trace,
+                #     },
+                # )
 
             out_rows.append(
                 {
@@ -709,7 +734,7 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
         out_rows, columns=["part_number", "shop_name", "price_new", "recorded_at"]
     )
 
-    if debug:
-        print(f"\n[shop2 debug] out_rows={len(out)} head=\n{out.head(10).to_string(index=False)}")
+    # if debug:
+    #     print(f"\n[shop2 debug] out_rows={len(out)} head=\n{out.head(10).to_string(index=False)}")
 
     return out

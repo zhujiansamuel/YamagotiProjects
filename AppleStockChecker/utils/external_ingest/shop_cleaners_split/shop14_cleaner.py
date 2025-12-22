@@ -518,6 +518,42 @@ def _coerce_amount_yen(v) -> Optional[int]:
 
     return sign * int(n)
 
+PAIR_RE_MULTI = re.compile(
+    r"([^\d¥円,，＋+－\-−\s]+)\s*([+\-−－]?\s*\d[\d,，]*)"
+)
+
+def _split_color_amount_pairs_multi(txt: str) -> List[Tuple[str, int]]:
+    """
+    在单个文本里拆成多个 (label, amount) 对。
+    仅当检测到 >=2 个“颜色+金额”对时才返回非空，用于解决：
+      '橙227000、青228000' 被 LLM 当成一个 abs_group 的情况。
+    例子：
+      '橙227000、青228000'
+      'コズミックオレンジ227000、ディープブルー228000'
+      '青229500/銀228000'
+      '橙 -2500、青 +3000'
+    """
+    out: List[Tuple[str, int]] = []
+    if not txt:
+        return out
+    s = str(txt)
+
+    for label, amt_s in PAIR_RE_MULTI.findall(s):
+        # 去掉分隔符前缀：顿号/斜杠/逗号/分号等
+        label = label.lstrip("、/,／，,;；").strip()
+        if not label:
+            continue
+        amt = _coerce_amount_yen(amt_s)
+        if amt is None:
+            continue
+        out.append((label, amt))
+
+    # 只有发现了 2 个及以上 pair，我们才认为这是“多颜色规则”
+    if len(out) >= 2:
+        return out
+    return []
+
+
 def _labels_from_text_fallback(extraction_text: str) -> str:
     """
     当 LLM 没给 label/labels 时，用 extraction_text 兜底把金额去掉，剩下的当 labels。
@@ -801,15 +837,17 @@ def _repair_abs_delta_from_compound_text(text: str) -> Tuple[List[Tuple[str, int
 
 
 @lru_cache(maxsize=4096)
-def _shop14_extract_rules_with_langextract(text: str) -> Dict[str, Union[Optional[int], List[Tuple[str, int]], List[dict]]]:
+def _shop14_extract_rules_with_langextract(
+    text: str,
+) -> Dict[str, Union[Optional[int], List[Tuple[str, int]], List[dict]]]:
     """
     用 LangExtract(Ollama) 抽取规则。
     返回：
       {
         "all_delta": Optional[int],
-        "abs": List[(label_raw, abs_price)],
+        "abs":   List[(label_raw, abs_price)],
         "delta": List[(label_raw, delta)],
-        "raw": List[{"class","text","attributes"}]   # 便于 print 对照
+        "raw":   List[{"class","text","attributes"}],
       }
     """
     out = {"all_delta": None, "abs": [], "delta": [], "raw": []}
@@ -821,7 +859,6 @@ def _shop14_extract_rules_with_langextract(text: str) -> Dict[str, Union[Optiona
 
     prompt, examples = _shop14_lx_prompt_and_examples()
 
-    # 兼容不同版本 API：优先显式 OllamaLanguageModel；不支持则退化为自动 provider 选择
     try:
         result = lx.extract(
             text_or_documents=s,
@@ -834,6 +871,7 @@ def _shop14_extract_rules_with_langextract(text: str) -> Dict[str, Union[Optiona
             use_schema_constraints=False,
         )
     except TypeError:
+        # 兼容旧版 API
         result = lx.extract(
             text_or_documents=s,
             prompt_description=prompt,
@@ -856,17 +894,54 @@ def _shop14_extract_rules_with_langextract(text: str) -> Dict[str, Union[Optiona
         out["raw"].append({"class": cls, "text": txt, "attributes": attrs})
 
         cls_l = cls.lower().strip()
+
+        # ---------- 0) 先看能不能在 text 里拆出多组 “颜色+金额” ----------
+        multi_pairs = _split_color_amount_pairs_multi(txt)
+        if multi_pairs:
+            # 推断这是 abs 还是 delta（全部金额都很大 -> abs；都很小 -> delta）
+            vals_abs = [abs(v) for _, v in multi_pairs]
+            kind: Optional[str] = None
+            if "abs" in cls_l:
+                kind = "abs"
+            elif "delta" in cls_l or "diff" in cls_l:
+                kind = "delta"
+            else:
+                if all(v >= 20000 for v in vals_abs):
+                    kind = "abs"
+                elif all(v <= 20000 for v in vals_abs):
+                    kind = "delta"
+                else:
+                    big = sum(1 for v in vals_abs if v >= 20000)
+                    kind = "abs" if big >= len(vals_abs) / 2.0 else "delta"
+
+            for label, amt in multi_pairs:
+                if kind == "abs":
+                    abs_list.append((label, abs(int(amt))))
+                else:
+                    delta_list.append((label, int(amt)))
+
+            if SHOP14_DEBUG:
+                _dprint(
+                    True,
+                    f"[LangExtract-multi] txt='{txt}' -> kind={kind}, pairs={multi_pairs}",
+                )
+            # 已处理完这一条 extraction，继续下一条
+            continue
+
+        # ---------- 1) 全色 ----------
         amount = None
         if isinstance(attrs, dict):
-            amount = _coerce_amount_yen(attrs.get("amount_yen")) or _coerce_amount_yen(attrs.get("amount"))
+            amount = _coerce_amount_yen(attrs.get("amount_yen")) or _coerce_amount_yen(
+                attrs.get("amount")
+            )
         if amount is None:
             amount = _coerce_amount_yen(txt)
 
-        # all colors
         if ("all" in cls_l) or ("全色" in txt):
             all_delta = int(amount) if amount is not None else 0
             continue
 
+        # ---------- 2) 普通 abs/delta ----------
         labels_str = ""
         if isinstance(attrs, dict):
             labels_str = str(attrs.get("labels") or attrs.get("label") or "").strip()
@@ -875,7 +950,6 @@ def _shop14_extract_rules_with_langextract(text: str) -> Dict[str, Union[Optiona
 
         labels = _split_labels(labels_str)
 
-        # 规则类型判定：优先看 cls；否则用金额大小兜底（>2万基本是绝对价）
         kind: Optional[str] = None
         if "abs" in cls_l:
             kind = "abs"
@@ -906,7 +980,8 @@ def _shop14_extract_rules_with_langextract(text: str) -> Dict[str, Union[Optiona
 
 
 def clean_shop14(df: "pd.DataFrame") -> "pd.DataFrame":
-    print("shop14:買取楽園---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+    now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    print(f"shop14:買取楽園---------->进入清洗器时间: {now}")
 
     # 必要列：remark 的三列允许缺失（缺失则当空），其余保持强校验
     for c in ["name", "data6", "price2", "time-scraped"]:
@@ -988,19 +1063,17 @@ def clean_shop14(df: "pd.DataFrame") -> "pd.DataFrame":
 
         # ====== print：对照 原始文字 vs 抽取结果
         if SHOP14_DEBUG and any(v for v in frags.values()):
-            print(f"\n[{idx}] model='{model_text}' -> norm='{model_norm}', cap={cap_gb}, base_price={base_price}")
+            print(f"[{idx}] model='{model_text}' -> norm='{model_norm}', cap={cap_gb}, base_price={base_price}")
             for c in remark_cols:
                 if c in df.columns:
-                    print(f"[{idx}] RAW {c} = '{row.get(c)}'   | CLEAN = '{frags.get(c, '')}'")
+                    print(f"[{idx}]        RAW {c:<5} = '{row.get(c):<20}'   | CLEAN = '{frags.get(c, '')}'")
+            # for c, parsed in per_col_debug.items():
+            #     print(f"[{idx}] LangExtract({c}) raw_extractions:")
+            #     for ex in (parsed.get("raw") or []):
+            #         print(f"      - class = {ex.get('class')} text = '{ex.get('text')}' attrs = {ex.get('attributes')}")
+            #     print(f"[{idx}] LangExtract({c}) parsed -> all_delta={parsed.get('all_delta')}, abs={parsed.get('abs')}, delta={parsed.get('delta')}")
 
-            for c, parsed in per_col_debug.items():
-                print(f"[{idx}] LangExtract({c}) raw_extractions:")
-                for ex in (parsed.get("raw") or []):
-                    print(f"    - class={ex.get('class')} text='{ex.get('text')}' attrs={ex.get('attributes')}")
-                print(f"[{idx}] LangExtract({c}) parsed -> all_delta={parsed.get('all_delta')}, abs={parsed.get('abs')}, delta={parsed.get('delta')}")
-
-            print(f"[{idx}] AGG -> all_delta={agg_all_delta}, abs={agg_abs}, delta={agg_delta}")
-
+            # print(f"[{idx}] AGG -> all_delta={agg_all_delta}, abs={agg_abs}, delta={agg_delta}")
         # ====== 全色优先（保持你原逻辑）
         if agg_all_delta is not None:
             final_price = base_price + int(agg_all_delta)
@@ -1028,7 +1101,7 @@ def clean_shop14(df: "pd.DataFrame") -> "pd.DataFrame":
                     if _label_matches_color_shop14(label_raw, col_raw, col_norm):
                         color_abs[col_norm] = int(abs_price)
                         if SHOP14_DEBUG:
-                            print(f"[{idx}] abs match -> label='{label_raw}' hits color_raw='{col_raw}' abs={abs_price}")
+                            print(f"[{idx}] abs match -> label='{label_raw:<10}' hits color_raw='{col_raw:<10}' abs={abs_price}")
 
         if agg_delta:
             for col_norm, (pn, col_raw) in color_map.items():
@@ -1036,7 +1109,7 @@ def clean_shop14(df: "pd.DataFrame") -> "pd.DataFrame":
                     if _label_matches_color_shop14(label_raw, col_raw, col_norm):
                         color_deltas[col_norm] = int(delta)
                         if SHOP14_DEBUG:
-                            print(f"[{idx}] delta match -> label='{label_raw}' hits color_raw='{col_raw}' delta={delta}")
+                            print(f"[{idx}] delta match -> label='{label_raw:<10}' hits color_raw='{col_raw:<10}' delta={delta}")
 
         # ====== 生成各色价格：绝对价优先 > base+delta > base
         for col_norm, (pn, col_raw) in color_map.items():
@@ -1049,7 +1122,7 @@ def clean_shop14(df: "pd.DataFrame") -> "pd.DataFrame":
                 reason = f"base+delta({d})" if col_norm in color_deltas else "base"
 
             if SHOP14_DEBUG:
-                print(f"[{idx}] -> color='{col_raw}' pn={pn} price={price_val} reason={reason}")
+                print(f"[{idx}] ------> color='{col_raw:<10}' pn={pn} price={price_val:<7} reason={reason}")
 
             rows.append(
                 {
@@ -1059,6 +1132,7 @@ def clean_shop14(df: "pd.DataFrame") -> "pd.DataFrame":
                     "recorded_at": rec_at,
                 }
             )
+        print("-----------------")
 
     out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
     if not out.empty:

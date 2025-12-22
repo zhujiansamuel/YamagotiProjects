@@ -311,6 +311,92 @@ def _coerce_specs_shop15(price_text: str, base_price: Optional[int], specs: List
         fixed.append((label, kind2, value2))
     return fixed
 
+# 颜色列表 + 差额 的 block，例如:
+# "オレンジ、ブルー-1000円", "シルバー、ブルー-3000円"
+MULTI_LABEL_DELTA_BLOCK_RE_shop15 = re.compile(
+    r"""
+    (?P<label_blob>[^\d円¥]+?)     # 一个或多个颜色标签（可包含 、／/・ 等）
+    \s*
+    (?P<sign>[+\-−－])            # + 或 -
+    \s*
+    (?P<amount>\d[\d,]*)          # 金额
+    \s*円?
+    """,
+    re.UNICODE | re.VERBOSE,
+)
+
+def _augment_multi_label_block_specs_shop15(
+    price_text: str,
+    specs: List[Tuple[str, str, int]],
+    debug: bool = False,
+) -> List[Tuple[str, str, int]]:
+    """
+    处理形如: 'オレンジ、ブルー-1000円', 'シルバー、ブルー-3000円' 这种“多个颜色共享一个差额”的表达。
+
+    规则：
+      - 在 price_text 里用 MULTI_LABEL_DELTA_BLOCK_RE_shop15 找到所有 block
+      - label_blob 用 _split_color_labels_shop15 拆成 ['オレンジ','ブルー'] 这类列表
+      - 对每个 label:
+          * 强制 kind='delta'
+          * value = sign (+/-) * amount
+          * 若 specs 中已有该 label 的条目 => 覆盖为这个 delta（纠正 LLM）
+          * 若 specs 中没有该 label => 新增一条 delta
+      - 多个 block 顺序执行，后面的覆盖前面的（和你 _build_color_prices_from_specs_shop15 的逻辑一致）
+    """
+    if not price_text:
+        return specs
+
+    s = str(price_text)
+    new_specs: List[Tuple[str, str, int]] = list(specs)
+
+    for m in MULTI_LABEL_DELTA_BLOCK_RE_shop15.finditer(s):
+        label_blob = m.group("label_blob") or ""
+        sign = m.group("sign")
+        amount_str = m.group("amount")
+
+        # 金额解析失败直接跳过
+        try:
+            amt = int(amount_str.replace(",", ""))
+        except Exception:
+            continue
+
+        # 根据符号决定正负
+        value = -amt if sign in ("-", "−", "－") else amt
+
+        labels = _split_color_labels_shop15(label_blob)
+
+        for lab in labels:
+            lab_clean = _clean_label_shop15(lab)
+            if not lab_clean:
+                continue
+
+            found = False
+            for idx, (lbl_old, kind_old, val_old) in enumerate(new_specs):
+                if lbl_old == lab_clean:
+                    old = new_specs[idx]
+                    new_specs[idx] = (lab_clean, "delta", int(value))
+                    found = True
+                    if _shop15_debug_enabled(debug) and old != new_specs[idx]:
+                        print(
+                            f"[shop15][lx] multi-label block override "
+                            f"{old} -> {new_specs[idx]} from block {m.group(0)!r}"
+                        )
+                    break
+
+            if not found:
+                new_specs.append((lab_clean, "delta", int(value)))
+                if _shop15_debug_enabled(debug):
+                    print(
+                        f"[shop15][lx] multi-label block add "
+                        f"{new_specs[-1]} from block {m.group(0)!r}"
+                    )
+
+    if _shop15_debug_enabled(debug):
+        print(f"[shop15][lx] specs after multi-label augment = {new_specs}")
+
+    return new_specs
+
+
 @lru_cache(maxsize=4096)
 def _parse_shop15_price_via_langextract_cached(
     price_text: str,
@@ -400,9 +486,6 @@ def _parse_shop15_price_via_langextract(
     model_url: str = SHOP15_OLLAMA_URL_DEFAULT,
     debug: bool = False,
 ) -> Tuple[Optional[int], List[Tuple[str, str, int]]]:
-    """
-    非缓存入口：做类型处理 + debug 输出 + base regex 兜底
-    """
     if price_text is None:
         return None, []
     s = str(price_text)
@@ -414,14 +497,20 @@ def _parse_shop15_price_via_langextract(
         if _shop15_debug_enabled(debug):
             print(f"[shop15][lx] ERROR: {e!r} -> fallback base-only")
 
-    # base 兜底：如果 LLM 没给 base，就从开头提取
+    # 兜底：LLM 没给 base，就自己从开头 regex 抓
     if base_price is None:
         base_price = _extract_base_price_at_start(s)
+
+    # 第一步：对单 label 的错标做纠偏（abs 负数 -> delta, 从原文补 +/-）
     specs = _coerce_specs_shop15(s, base_price, specs, debug=debug)
+
+    # 第二步：对 "シルバー、ブルー-3000円" / "オレンジ、ブルー-1000円" 这类多颜色 block 做增强/覆盖
+    specs = _augment_multi_label_block_specs_shop15(s, specs, debug=debug)
+
     if _shop15_debug_enabled(debug):
-        print(f"[shop15][lx]---------------------------> price_raw={s!r}")
-        print(f"[shop15][lx] base_price={base_price}")
-        print(f"[shop15][lx] specs={specs}")
+        # print(f"[shop15][lx]    price_raw  = {s!r}")
+        # print(f"[shop15][lx]    base_price = {base_price}")
+        print(f"[shop15][lx]    specs      = {specs}")
 
     return base_price, specs
 
@@ -468,7 +557,7 @@ def _build_color_prices_from_specs_shop15(
                     break
 
     if _shop15_debug_enabled(debug):
-        print(f"[shop15][price] hit_log={hit_log}")
+        print(f"[shop15][price] hit_log    = {hit_log}")
         if unmatched:
             print(f"[shop15][price] unmatched_specs={unmatched}")
 
@@ -895,7 +984,9 @@ def _build_color_prices_shop15(
 
 def clean_shop15(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
     debug = _shop15_debug_enabled(debug)
-    print("shop15:買取当番---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+
+    now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    print(f"shop15:買取当番---------->进入清洗器时间: {now}")
 
     for c in ["price", "data2", "time-scraped"]:
         if c not in df.columns:
@@ -907,6 +998,7 @@ def clean_shop15(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
     rows: List[dict] = []
 
     for i, row in df.iterrows():
+        print("----------------------------------------------------------")
         model_text = str(row.get("data2") or "").strip()
         if not model_text:
             continue
@@ -927,10 +1019,10 @@ def clean_shop15(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
 
         price_text = row.get("price")
         if debug:
-            print(f"\n[shop15][row {i}] data2={model_text!r}")
-            print(f"[shop15][row {i}] parsed -> model_norm={model_norm!r}, cap_gb={int(cap_gb)}")
-            print(f"[shop15][row {i}] --------------------------->price_raw={str(price_text)!r}")
-            print(f"[shop15][row {i}] known_colors_in_info={[cr for (_, cr) in color_map.values()]}")
+            print(f"[shop15][row {i}] data2      = {model_text!r}")
+            # print(f"[shop15][row {i}] parsed -> model_norm={model_norm!r}, cap_gb={int(cap_gb)}")
+            print(f"[shop15][row {i}] price_raw  = {str(price_text)!r}")
+            # print(f"[shop15][row {i}] known_colors_in_info={[cr for (_, cr) in color_map.values()]}")
 
         # 关键：用 LangExtract + Ollama 解析 price
         base_price, specs = _parse_shop15_price_via_langextract(
@@ -968,7 +1060,7 @@ def clean_shop15(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
             for col_norm, (pn, col_raw) in color_map.items():
                 if col_norm in color_prices:
                     preview.append((col_raw, pn, color_prices[col_norm]))
-            print(f"[shop15][row {i}] =======> per_color_final_price(color_raw, part_number, final_price)={preview}")
+            print(f"[shop15][row {i}] final      = {preview}")
 
     out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
     if out.empty:
