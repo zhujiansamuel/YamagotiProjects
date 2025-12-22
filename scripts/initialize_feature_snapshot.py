@@ -3,8 +3,8 @@
 初始化 FeatureSnapshot 数据
 
 用途：
-  当 FeatureSnapshot 表为空时，使用 force_agg=True 强制生成初始数据。
-  解决"没有历史数据就无法计算新数据"的循环依赖问题。
+  当 FeatureSnapshot 表为空时，处理边界时间生成初始数据。
+  使用边界模式（boundary mode），只在边界分钟（0, 15, 30, 45）执行聚合。
 
 使用方法：
   # 初始化指定时间范围（15分钟间隔）
@@ -23,7 +23,7 @@
   python scripts/initialize_feature_snapshot.py --auto
 
 注意事项：
-  1. 使用 force_agg=True 强制执行聚合
+  1. 使用 agg_mode=boundary，只在边界分钟聚合（不会在所有15个分钟桶都聚合）
   2. 使用 sequential=True 顺序执行避免数据库压力
   3. 每个时间点处理完会验证 FeatureSnapshot 数据
   4. 建议从最早的有效数据开始初始化
@@ -159,7 +159,7 @@ def initialize_single_timestamp(timestamp_dt, dry_run=False):
     job_id = uuid4().hex
 
     print(f"  任务 ID: {job_id}")
-    print(f"  参数: agg_minutes=15, force_agg=True, sequential=True")
+    print(f"  参数: agg_minutes=15, agg_mode=boundary, sequential=True")
 
     try:
         result = batch_generate_psta_same_ts(
@@ -167,7 +167,7 @@ def initialize_single_timestamp(timestamp_dt, dry_run=False):
             timestamp_iso=ts_iso,
             agg_minutes=15,
             agg_mode="boundary",
-            force_agg=True,  # 强制聚合
+            force_agg=False,  # 已废弃：边界模式自动只在边界分钟聚合
             sequential=True,  # 顺序执行
         )
 

@@ -3434,7 +3434,10 @@ def batch_generate_psta_same_ts(
             do_agg_local = True
             agg_start_iso = _rolling_start(mdt, int(agg_minutes)).isoformat()
         else:  # boundary
-            do_agg_local = bool(force_agg) or is_boundary
+            # 修复：只在边界分钟聚合，不在所有分钟都聚合
+            # force_agg 参数保留用于向后兼容，但不再影响非边界分钟的聚合行为
+            # 原问题：force_agg=True 会让所有15个分钟桶都聚合，产生大量趋近于零的不准确数值
+            do_agg_local = is_boundary
             agg_start_iso = boundary.isoformat()
 
         # 若 minute_rows 空，但 do_agg_local=True（例如边界分钟），仍然下发“仅聚合”的子任务
