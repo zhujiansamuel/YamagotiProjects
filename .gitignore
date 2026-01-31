@@ -64,3 +64,4 @@ htmlcov/
 # Temporary files
 *.tmp
 .tmp_csv_uploads/
+/.tmp_csv_uploads/

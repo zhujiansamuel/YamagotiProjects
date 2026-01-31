@@ -712,6 +712,8 @@ DATA_UPLOAD_MAX_MEMORY_SIZE=10 * 1024 * 1024
 # ============================================================================
 # Logging Configuration
 # ============================================================================
+LOG_DIR = BASE_DIR / "logs"
+LOG_DIR.mkdir(exist_ok=True)
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,

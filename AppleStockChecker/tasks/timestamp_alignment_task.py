@@ -1711,6 +1711,10 @@ def _run_aggregation(
     4) 时间序列
     5) Bollinger Bands
     """
+    logger.info(
+        f"🔄 [FeatureSnapshot 聚合] 进入聚合流程 | "
+
+    )
     from django.utils import timezone
     from AppleStockChecker.models import OverallBar
     # FeatureWriter / FeatureRecord 需要在模块顶部 import：
@@ -1858,6 +1862,7 @@ def psta_process_minute_bucket(
         task_ver=task_ver,
         **_compat,
     )
+
 
     normalized, meta = guard_params(
         "psta_process_minute_bucket",
