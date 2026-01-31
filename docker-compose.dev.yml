@@ -121,6 +121,34 @@ services:
     profiles:
       - celery
 
+  # Celery Worker - Shop1 数据清洗专用队列 (开发时可选)
+  celery_worker_shop1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_shop1_dev
+    command: celery -A YamagotiProjects worker -Q shop_shop1 -l info -c 1 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=false
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5433
+      - POSTGRES_DATABASE=applestockchecker_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=localpass
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - yapp_network_dev
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    profiles:
+      - celery
+
   # Celery Worker - AutoML Preprocessing 专用队列 (开发时可选)
   celery_worker_automl_preprocessing:
     build:

@@ -107,6 +107,34 @@ services:
       - .:/app
     restart: unless-stopped
 
+  # Celery Worker - Shop1 数据清洗专用队列
+  celery_worker_shop1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_shop1
+    command: celery -A YamagotiProjects worker -Q shop_shop1 -l info -c 1 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=true
+      - PGBOUNCER_HOST=pgbouncer
+      - PGBOUNCER_PORT=5432
+      - PGBOUNCER_DATABASE=${PG_DATABASE}
+      - PGBOUNCER_USER=${PG_USER}
+      - PGBOUNCER_PASSWORD=${PG_PASSWORD}
+    depends_on:
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - yapp_network
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
   # Celery Worker - AutoML Preprocessing 专用队列
   celery_worker_automl_preprocessing:
     build:
