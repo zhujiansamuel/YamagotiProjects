@@ -2,7 +2,7 @@
 # 启动开发环境服务
 # 用法:
 #   ./scripts/dev_up.sh          # 仅启动基础服务 + Web
-#   ./scripts/dev_up.sh --celery # 启动基础服务 + Web + Celery workers
+#   ./scripts/dev_up.sh --celery # 启动基础服务 + Web + Celery workers（含 shop 专用）
 #   ./scripts/dev_up.sh --all    # 启动所有服务（等同于 prod 模式）
 
 set -e
@@ -37,7 +37,7 @@ if [ "$ALL_SERVICES" = true ]; then
     echo "模式: 全服务 (使用 docker-compose.yml)"
     docker compose up -d
 elif [ "$WITH_CELERY" = true ]; then
-    echo "模式: Web + Celery (使用 docker-compose.dev.yml)"
+    echo "模式: Web + Celery (使用 docker-compose.dev.yml，含 shop 专用 worker)"
     docker compose -f docker-compose.dev.yml --profile celery up -d
 else
     echo "模式: 仅 Web (使用 docker-compose.dev.yml)"
@@ -75,6 +75,7 @@ echo ""
 echo "常用命令:"
 echo "  - 查看日志:        docker compose -f docker-compose.dev.yml logs -f"
 echo "  - 查看 Web 日志:   docker compose -f docker-compose.dev.yml logs -f web"
+echo "  - 查看 Shop 日志:  docker compose -f docker-compose.dev.yml logs -f celery_worker_shop1"
 echo "  - 进入容器:        docker compose -f docker-compose.dev.yml exec web bash"
 echo "  - 运行 migrate:    docker compose -f docker-compose.dev.yml exec web python manage.py migrate"
 echo "  - 创建超级用户:    docker compose -f docker-compose.dev.yml exec web python manage.py createsuperuser"
