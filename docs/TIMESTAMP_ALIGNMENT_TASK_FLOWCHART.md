@@ -2,7 +2,14 @@
 
 本文档描述 `timestamp_alignment_task.py` 中的任务执行流程。
 
-## 整体架构图
+> **v3 重大变更**（2026-01）：
+> - 聚合逻辑从子任务移至 `psta_finalize_buckets`
+> - 新增独立聚合任务 `psta_aggregate_features`
+> - 新增专用队列 `psta_finalize` 和 `psta_aggregation`
+> - 简化 `agg_mode`：`off` 禁用聚合，其他值统一为边界模式
+> - 废弃参数：`do_agg`, `agg_start_iso`, `force_agg`, `chunk_size`
+
+## 整体架构图（v3）
 
 ```mermaid
 flowchart TB
@@ -13,60 +20,62 @@ flowchart TB
     subgraph DataCollection["数据收集层"]
         B[collect_items_for_psta<br/>收集价格记录数据]
         C[按分钟桶分组数据<br/>bucket_minute_key]
+        D[计算 is_boundary<br/>判断是否为边界时间]
     end
 
     subgraph AggControl["聚合控制层"]
-        D{聚合模式<br/>agg_mode}
-        D1[boundary<br/>边界模式]
-        D2[rolling<br/>滚动模式]
-        D3[off<br/>关闭聚合]
+        E{聚合模式<br/>agg_mode}
+        E1[boundary<br/>边界模式]
+        E2[off<br/>关闭聚合]
     end
 
     subgraph Execution["执行层"]
-        E{执行模式<br/>sequential}
-        E1[顺序执行<br/>逐个处理子任务]
-        E2[并发执行<br/>Celery chord]
+        F{执行模式<br/>sequential}
+        F1[顺序执行<br/>逐个处理子任务]
+        F2[并发执行<br/>Celery chord]
     end
 
-    subgraph Processing["处理层"]
-        F[psta_process_minute_bucket<br/>分钟桶处理任务]
-        F1[guard_params<br/>参数守卫]
-        F2[_process_minute_rows<br/>写入分钟数据]
-        F3[_run_aggregation<br/>统计聚合]
+    subgraph Processing["处理层 (psta_finalize 队列)"]
+        G[psta_process_minute_bucket<br/>分钟桶处理任务<br/>仅写入数据，不做聚合]
     end
 
-    subgraph Finalization["聚合层"]
-        G[psta_finalize_buckets<br/>最终聚合回调]
-        G1[汇总计数统计]
-        G2[生成影子点<br/>Shadow Points]
-        G3[WebSocket广播<br/>notify_progress_all]
+    subgraph Finalization["汇总层 (psta_finalize 队列)"]
+        H[psta_finalize_buckets<br/>汇总结果回调]
+        H1[汇总计数统计]
+        H2[生成影子点]
+        H3[WebSocket广播]
+        H4{is_boundary?}
+    end
+
+    subgraph Aggregation["聚合层 (psta_aggregation 队列)"]
+        I[psta_aggregate_features<br/>独立聚合任务]
+        I1[_run_aggregation<br/>执行统计聚合]
     end
 
     A --> B
     B --> C
     C --> D
-    D --> D1
-    D --> D2
-    D --> D3
-    D1 --> E
-    D2 --> E
-    D3 --> E
-    E -->|sequential=True| E1
-    E -->|sequential=False| E2
+    D --> E
+    E --> E1
+    E --> E2
     E1 --> F
     E2 --> F
-    F --> F1
-    F1 --> F2
-    F2 --> F3
-    F3 --> G
-    E1 -->|直接调用| G
-    E2 -->|chord回调| G
-    G --> G1
-    G1 --> G2
-    G2 --> G3
+    F -->|sequential=True| F1
+    F -->|sequential=False| F2
+    F1 --> G
+    F2 --> G
+    G --> H
+    H --> H1
+    H1 --> H2
+    H2 --> H3
+    H3 --> H4
+    H4 -->|是 且 mode≠off| I
+    H4 -->|否 或 mode=off| END([结束])
+    I --> I1
+    I1 --> END
 ```
 
-## 详细流程图
+## 详细流程图（v3）
 
 ```mermaid
 flowchart TD
@@ -76,28 +85,18 @@ flowchart TD
         A[接收参数<br/>job_id, timestamp_iso, agg_minutes, agg_mode等]
         A --> B[调用 collect_items_for_psta<br/>查询 query_window_minutes 内的价格记录]
         B --> C[获取 rows 和 bucket_minute_key]
-        C --> D[计算聚合上下文 ctx<br/>bucket_start, bucket_end]
-        D --> E[广播 agg_ctx 通知]
+        C --> D[计算 is_boundary<br/>dt0 == floor_to_step]
+        D --> E[构建 agg_ctx<br/>包含 is_boundary 标志]
+        E --> F[广播 agg_ctx 通知]
 
-        E --> F{遍历每个分钟桶}
-        F --> G[提取该分钟的行数据<br/>minute_rows]
-        G --> H{检查聚合模式}
+        F --> G{遍历每个分钟桶}
+        G --> H[提取该分钟的行数据<br/>minute_rows]
+        H --> I{有数据?}
+        I -->|是| J[创建子任务 signature<br/>psta_process_minute_bucket.s]
+        I -->|否| G
+        J --> G
 
-        H -->|off| I1[do_agg = False<br/>agg_start_iso = None]
-        H -->|rolling| I2[do_agg = True<br/>agg_start_iso = rolling_start]
-        H -->|boundary| I3{是否为边界分钟?}
-        I3 -->|是| I4[do_agg = True]
-        I3 -->|否| I5[do_agg = False]
-
-        I1 --> J
-        I2 --> J
-        I4 --> J
-        I5 --> J
-
-        J[创建子任务 signature<br/>psta_process_minute_bucket.s]
-        J --> F
-
-        F -->|所有桶处理完| K{subtasks 是否为空?}
+        G -->|所有桶处理完| K{subtasks 是否为空?}
         K -->|是| L[广播空结果并返回]
         K -->|否| M{sequential 参数}
 
@@ -118,61 +117,70 @@ flowchart TD
         O2 --> O3[Celery 并行处理所有子任务]
     end
 
-    subgraph process["psta_process_minute_bucket"]
-        P[接收参数<br/>ts_iso, rows, job_id, do_agg等]
-        P --> P1[guard_params 参数守卫<br/>类型校验/版本检查]
-        P1 --> P2[_to_aware 转换时间戳]
-        P2 --> P3[_process_minute_rows<br/>处理并写入分钟数据]
-        P3 --> P4{有错误?}
-        P4 -->|是| P5[广播 bucket_errors 通知]
-        P4 -->|否| P6{do_agg = True?}
-        P5 --> P6
-        P6 -->|是| P7[_run_aggregation<br/>执行统计聚合]
-        P6 -->|否| P8[跳过聚合]
-        P7 --> P9[返回结果<br/>ok, failed, chart_points等]
-        P8 --> P9
+    subgraph process["psta_process_minute_bucket (v3简化)"]
+        P[接收参数<br/>ts_iso, rows, job_id]
+        P --> P1[guard_params 参数守卫]
+        P1 --> P2[_process_minute_rows<br/>处理并写入分钟数据]
+        P2 --> P3{有错误?}
+        P3 -->|是| P4[广播 bucket_errors 通知]
+        P3 -->|否| P5[返回结果]
+        P4 --> P5
     end
 
-    subgraph finalize["psta_finalize_buckets"]
-        Q[接收所有子任务结果<br/>results 列表]
+    subgraph finalize["psta_finalize_buckets (v3增强)"]
+        Q[接收所有子任务结果<br/>results 列表 + agg_ctx]
         Q --> Q1[guard_params 参数守卫]
         Q1 --> Q2[汇总计数<br/>total_ok, total_failed]
-        Q2 --> Q3[聚合错误直方图]
-        Q3 --> Q4[聚合真实数据点<br/>series_map]
-        Q4 --> Q5[计算 last_known 点]
-        Q5 --> Q6{超过 MAX_PUSH_POINTS?}
-        Q6 -->|是| Q7[截断保留最近N条]
-        Q6 -->|否| Q8[生成影子点 Shadow Points]
-        Q7 --> Q8
-        Q8 --> Q9[构建 series_delta]
-        Q9 --> Q10[构建最终 payload]
-        Q10 --> Q11[WebSocket 广播<br/>status=done]
-        Q11 --> Q12[返回 payload]
+        Q2 --> Q3[聚合真实数据点]
+        Q3 --> Q4[生成影子点 Shadow Points]
+        Q4 --> Q5[WebSocket 广播<br/>status=done]
+        Q5 --> Q6{检查 agg_ctx}
+        Q6 --> Q7{agg_mode ≠ off<br/>且 is_boundary?}
+        Q7 -->|是| Q8[同步调用<br/>psta_aggregate_features]
+        Q7 -->|否| Q9[跳过聚合]
+        Q8 --> Q10[返回 payload<br/>含聚合结果]
+        Q9 --> Q10
+    end
+
+    subgraph aggregate["psta_aggregate_features (v3新增)"]
+        R[接收 agg_ctx]
+        R --> R1{agg_mode = off?}
+        R1 -->|是| R2[跳过，返回 skipped]
+        R1 -->|否| R3{is_boundary?}
+        R3 -->|否| R2
+        R3 -->|是| R4[_run_aggregation<br/>执行统计聚合]
+        R4 --> R5{聚合成功?}
+        R5 -->|是| R6[返回成功]
+        R5 -->|否| R7[记录 ERROR log<br/>返回失败原因]
     end
 
     N4 --> Q
     O3 --> P
-    P9 --> Q
+    P5 --> Q
+    Q8 --> R
 
     L --> END([结束])
-    Q12 --> END
+    Q10 --> END
+    R2 --> END
+    R6 --> END
+    R7 --> END
 ```
 
-## 聚合模式详解
+## 聚合模式详解（v3简化）
 
 ```mermaid
 flowchart LR
-    subgraph modes["聚合模式 agg_mode"]
+    subgraph modes["聚合模式 agg_mode (v3)"]
         direction TB
         M1["boundary (默认)<br/>━━━━━━━━━━━━━━━<br/>仅在时间边界触发聚合<br/>例: 15分钟步长时<br/>00:00, 00:15, 00:30, 00:45<br/>这些时刻才会聚合"]
 
-        M2["rolling<br/>━━━━━━━━━━━━━━━<br/>每分钟都执行滚动聚合<br/>聚合窗口: [当前-步长+1, 当前]<br/>例: 15分钟步长<br/>00:07 聚合 [00:00, 00:07]"]
+        M2["off<br/>━━━━━━━━━━━━━━━<br/>完全关闭聚合<br/>仅写入分钟级原始数据<br/>不计算统计特征"]
 
-        M3["off<br/>━━━━━━━━━━━━━━━<br/>完全关闭聚合<br/>仅写入分钟级原始数据<br/>不计算统计特征"]
+        M3["其他值<br/>━━━━━━━━━━━━━━━<br/>v3起统一作为 boundary 处理<br/>rolling 模式已废弃"]
     end
 ```
 
-## 数据流图
+## 数据流图（v3）
 
 ```mermaid
 flowchart LR
@@ -184,16 +192,15 @@ flowchart LR
 
     subgraph Processing["处理过程"]
         P1[collect_items_for_psta<br/>数据收集]
-        P2[psta_process_minute_bucket<br/>分钟对齐]
-        P3[_run_aggregation<br/>统计聚合]
+        P2[psta_process_minute_bucket<br/>分钟对齐写入]
+        P3[psta_finalize_buckets<br/>汇总结果]
+        P4[psta_aggregate_features<br/>统计聚合]
     end
 
     subgraph Output["输出数据"]
         O1[PurchasingShopTimeAnalysis<br/>分钟级对齐数据]
         O2[FeatureSnapshot<br/>统计特征快照]
-        O3[OverallBar<br/>全局统计条]
-        O4[CohortBar<br/>群组统计条]
-        O5[WebSocket Notification<br/>实时推送]
+        O3[WebSocket Notification<br/>实时推送]
     end
 
     I1 --> P1
@@ -202,24 +209,25 @@ flowchart LR
     P1 --> P2
     P2 --> O1
     P2 --> P3
-    P3 --> O2
     P3 --> O3
-    P3 --> O4
-    P2 --> O5
+    P3 -->|边界时间| P4
+    P4 --> O2
 ```
 
-## 任务关系图
+## 任务关系图（v3）
 
 ```mermaid
 flowchart TB
     subgraph Tasks["Celery Tasks"]
-        T1["batch_generate_psta_same_ts<br/>━━━━━━━━━━━━━━━━━━━━━<br/>@shared_task(bind=True)<br/>父任务 / 编排器"]
+        T1["batch_generate_psta_same_ts<br/>━━━━━━━━━━━━━━━━━━━━━<br/>@shared_task(bind=True)<br/>父任务 / 编排器<br/>队列: default"]
 
-        T2["psta_process_minute_bucket<br/>━━━━━━━━━━━━━━━━━━━━━<br/>核心处理任务<br/>分钟桶数据处理"]
+        T2["psta_process_minute_bucket<br/>━━━━━━━━━━━━━━━━━━━━━<br/>v3: 仅写入数据<br/>队列: default"]
 
         T3["psta_collect_result<br/>━━━━━━━━━━━━━━━━━━━━━<br/>结果收集器<br/>chain模式下使用"]
 
-        T4["psta_finalize_buckets<br/>━━━━━━━━━━━━━━━━━━━━━<br/>@shared_task<br/>最终聚合回调"]
+        T4["psta_finalize_buckets<br/>━━━━━━━━━━━━━━━━━━━━━<br/>v3: 汇总 + 触发聚合<br/>队列: psta_finalize"]
+
+        T5["psta_aggregate_features<br/>━━━━━━━━━━━━━━━━━━━━━<br/>v3新增: 独立聚合任务<br/>队列: psta_aggregation"]
     end
 
     T1 -->|创建子任务| T2
@@ -227,20 +235,21 @@ flowchart TB
     T2 -->|结果传递| T3
     T3 -->|累积结果| T4
     T2 -->|chord回调| T4
+    T4 -->|边界时间同步调用| T5
 ```
 
-## 关键函数说明
+## 关键函数说明（v3）
 
-| 函数名 | 位置 | 说明 |
-|--------|------|------|
-| `batch_generate_psta_same_ts` | L3518 | 父任务入口，负责数据收集、分桶、任务编排 |
-| `psta_process_minute_bucket` | L1988 | 核心处理任务，写入分钟数据并可选执行聚合 |
-| `psta_collect_result` | L3287 | chain模式下累积子任务结果 |
-| `psta_finalize_buckets` | L3320 | 最终聚合回调，汇总结果并广播通知 |
-| `guard_params` | L67 | 参数守卫，类型校验、版本检查、别名迁移 |
-| `_process_minute_rows` | L1690 | 处理并写入分钟级数据 |
-| `_run_aggregation` | L1838 | 执行统计聚合计算 |
-| `collect_items_for_psta` | (collectors) | 从数据库收集待处理的价格记录 |
+| 函数名 | 说明 | v3 变更 |
+|--------|------|---------|
+| `batch_generate_psta_same_ts` | 父任务入口，负责数据收集、分桶、任务编排 | 计算 is_boundary，不再传递 do_agg/agg_start_iso |
+| `psta_process_minute_bucket` | 子任务，写入分钟数据 | 移除聚合逻辑，仅做数据写入 |
+| `psta_finalize_buckets` | 回调任务，汇总结果并触发聚合 | 新增聚合任务调用逻辑 |
+| `psta_aggregate_features` | **v3新增** 独立聚合任务 | - |
+| `psta_collect_result` | chain模式下累积子任务结果 | 无变化 |
+| `guard_params` | 参数守卫，类型校验、版本检查 | 无变化 |
+| `_process_minute_rows` | 处理并写入分钟级数据 | 无变化 |
+| `_run_aggregation` | 执行统计聚合计算 | 由 psta_aggregate_features 调用 |
 
 ## 执行模式对比
 
@@ -255,106 +264,129 @@ flowchart TB
 
 ---
 
-## 默认数字参数汇总
+## 默认数字参数汇总（v3）
 
 ### 1. 任务版本控制
 
-| 参数名 | 默认值 | 说明 | 位置 |
-|--------|--------|------|------|
-| `TASK_VER_PSTA` | `2` | 当前任务版本号，用于参数握手校验 | L1687 |
-| `MIN_ACCEPTED_TASK_VER` | `0` | 最低可接受的任务版本（可通过环境变量 `PSTA_MIN_ACCEPTED_VER` 配置） | L30 |
+| 参数名 | 默认值 | 说明 |
+|--------|--------|------|
+| `TASK_VER_PSTA` | `3` | 当前任务版本号（v3） |
+| `MIN_ACCEPTED_TASK_VER` | `0` | 最低可接受的任务版本 |
 
 ### 2. 父任务入口参数 (`batch_generate_psta_same_ts`)
 
 | 参数名 | 默认值 | 说明 |
 |--------|--------|------|
-| ~~`chunk_size`~~ | ~~`200`~~ | ~~分块大小~~ (已废弃，未实际使用) |
 | `query_window_minutes` | `15` | 数据查询窗口（分钟） |
 | `agg_minutes` | `15` | 聚合步长（分钟） |
-| `agg_mode` | `"boundary"` | 聚合模式：`boundary` / `rolling` / `off` |
-| `force_agg` | `False` | 强制聚合开关（已废弃，仅向后兼容） |
+| `agg_mode` | `"boundary"` | 聚合模式：`off` 禁用，其他 = 边界模式 |
 | `sequential` | `False` | 顺序执行模式（默认并发） |
+| ~~`chunk_size`~~ | - | 已废弃 |
+| ~~`force_agg`~~ | - | 已废弃 |
 
 ### 3. 子任务参数 (`psta_process_minute_bucket`)
 
 | 参数名 | 默认值 | 说明 |
 |--------|--------|------|
-| `do_agg` | `True` | 是否执行聚合 |
-| `agg_minutes` | `1` | 聚合窗口（分钟） |
+| `agg_minutes` | `1` | 保留用于日志/调试 |
+| ~~`do_agg`~~ | - | 已废弃（v3移除） |
+| ~~`agg_start_iso`~~ | - | 已废弃（v3移除） |
 
-### 4. 数据容量限制
+### 4. 聚合任务参数 (`psta_aggregate_features`) - v3新增
 
-| 常量名 | 默认值 | 说明 | 位置 |
-|--------|--------|------|------|
-| `MAX_BUCKET_ERROR_SAMPLES` | `50` | 单桶保留的错误明细条数上限 | L1552 |
-| `MAX_BUCKET_CHART_POINTS` | `3000` | 单桶打包给回调聚合用的图表点上限 | L1553 |
-| `MAX_PUSH_POINTS` | `60000` | 本次广播给前端的真实点总上限（超过则截断保留最近N条） | L1554 |
+| 参数名 | 说明 |
+|--------|------|
+| `ts_iso` | 时间戳 ISO 格式 |
+| `job_id` | 任务 ID |
+| `agg_ctx` | 聚合上下文字典 |
+| `task_ver` | 任务版本号 |
 
-### 5. 价格验证参数
+### 5. 数据容量限制
 
-| 常量名 | 默认值 | 说明 | 位置 |
-|--------|--------|------|------|
-| `PRICE_MIN` | `100000` | 固定价格下限（后备值，已废弃） | L1557 |
-| `PRICE_MAX` | `350000` | 固定价格上限（后备值，已废弃） | L1558 |
-| `PRICE_LOOKBACK_MINUTES` | `30` | 动态价格区间：向前查询的时间窗口（分钟） | L1561 |
-| `PRICE_TOLERANCE_RATIO` | `0.10` | 动态价格区间：容差比例（±10%） | L1562 |
-| `PRICE_MIN_SAMPLES` | `3` | 动态价格区间：计算参考价格所需的最少样本数 | L1563 |
-| `PRICE_FALLBACK_MIN` | `100000` | 动态价格区间：数据不足时的后备最小值 | L1564 |
-| `PRICE_FALLBACK_MAX` | `350000` | 动态价格区间：数据不足时的后备最大值 | L1565 |
+| 常量名 | 默认值 | 说明 |
+|--------|--------|------|
+| `MAX_BUCKET_ERROR_SAMPLES` | `50` | 单桶保留的错误明细条数上限 |
+| `MAX_BUCKET_CHART_POINTS` | `3000` | 单桶打包给回调聚合用的图表点上限 |
+| `MAX_PUSH_POINTS` | `60000` | 本次广播给前端的真实点总上限 |
 
-### 6. 聚合计算参数
+### 6. 价格验证参数
 
-| 参数名 | 默认值 | 说明 | 来源 |
-|--------|--------|------|------|
-| `WATERMARK_MINUTES` | `5` | 水位线（分钟）：超过此时间的数据标记为 `is_final=True` | L1864 |
-| `AGE_CAP_MIN` | `12.0` | 时效权重：超过此分钟数的数据不计入加权（可通过 `settings.PSTA_AGE_CAP_MIN` 配置） | L809 |
-| `RECENCY_HALF_LIFE_MIN` | `6.0` | 时效权重：指数半衰期（分钟）（可通过 `settings.PSTA_RECENCY_HALF_LIFE_MIN` 配置） | L810 |
-| `RECENCY_DECAY` | `"exp"` | 时效衰减模式：`exp`（指数） / `linear`（线性）（可通过 `settings.PSTA_RECENCY_DECAY` 配置） | L811 |
+| 常量名 | 默认值 | 说明 |
+|--------|--------|------|
+| `PRICE_LOOKBACK_MINUTES` | `30` | 动态价格区间：向前查询的时间窗口（分钟） |
+| `PRICE_TOLERANCE_RATIO` | `0.10` | 动态价格区间：容差比例（±10%） |
+| `PRICE_MIN_SAMPLES` | `3` | 计算参考价格所需的最少样本数 |
+| `PRICE_FALLBACK_MIN` | `100000` | 数据不足时的后备最小值 |
+| `PRICE_FALLBACK_MAX` | `350000` | 数据不足时的后备最大值 |
 
-### 7. 时间序列特征参数 (SMA/EMA/WMA)
+### 7. 聚合计算参数
 
 | 参数名 | 默认值 | 说明 |
 |--------|--------|------|
-| `window` | `15` | 移动平均窗口大小 |
-| `min_count` / `min_periods` | `1` | 计算所需的最小样本数 |
-| `weights` | `"linear"` | WMA 权重模式 |
-| `alpha` (EMA) | `2.0 / (window + 1.0)` | EMA 平滑系数（若未指定，由 window 推导） |
+| `WATERMARK_MINUTES` | `5` | 水位线（分钟）：超过此时间的数据标记为 `is_final=True` |
+| `AGE_CAP_MIN` | `12.0` | 时效权重：超过此分钟数的数据不计入加权 |
+| `RECENCY_HALF_LIFE_MIN` | `6.0` | 时效权重：指数半衰期（分钟） |
 
-### 8. Bollinger Bands 参数
+### 8. 任务超时配置（v3新增）
 
-| 参数名 | 默认值 | 说明 |
-|--------|--------|------|
-| `window` | `20` | 布林带窗口大小 |
-| `k` | `2.0` | 标准差倍数（上下轨距离） |
-| `min_periods` | `= window` | 计算所需的最小样本数 |
-| `center_mode` | `"sma"` | 中轨计算模式：`sma` / `ema` / `sma60` 等 |
-
-### 9. 安全 Upsert 参数
-
-| 参数名 | 默认值 | 说明 |
-|--------|--------|------|
-| `max_retries` | `2` | `safe_upsert_feature_snapshot` 重试次数 |
+| 任务 | soft_time_limit | time_limit |
+|------|-----------------|------------|
+| `psta_finalize_buckets` | 240s | 360s |
+| `psta_aggregate_features` | 240s | 360s |
 
 ---
 
-## 参数配置示意图
+## Celery 队列配置（v3）
+
+| 队列名称 | 用途 | Worker 并发数 |
+|---------|------|--------------|
+| `default` | 默认队列、父任务、子任务 | 4 |
+| `psta_finalize` | finalize 回调任务 | 2 |
+| `psta_aggregation` | 聚合任务 | 4 |
+| `webscraper` | 网页爬虫任务 | 2 |
+| `automl_preprocessing` | AutoML 预处理 | 2 |
+| `automl_cause_effect` | AutoML 因果分析 | 2 |
+| `automl_impact` | AutoML 影响量化 | 2 |
+
+**Worker 启动示例：**
+```bash
+# PSTA Finalize Worker
+celery -A YamagotiProjects worker -Q psta_finalize -l info -c 2
+
+# PSTA Aggregation Worker
+celery -A YamagotiProjects worker -Q psta_aggregation -l info -c 4
+```
+
+---
+
+## 参数配置示意图（v3）
 
 ```mermaid
 flowchart TB
-    subgraph TaskParams["任务参数层级"]
+    subgraph TaskParams["任务参数层级 (v3)"]
         direction TB
 
         subgraph Parent["batch_generate_psta_same_ts"]
             P1["query_window_minutes = 15"]
             P2["agg_minutes = 15"]
-            P3["agg_mode = 'boundary'"]
+            P3["agg_mode = 'boundary' | 'off'"]
             P4["sequential = False"]
         end
 
         subgraph Child["psta_process_minute_bucket"]
-            C1["do_agg = True"]
-            C2["agg_minutes = 1"]
-            C3["task_ver = 2"]
+            C1["agg_minutes (日志用)"]
+            C2["task_ver = 3"]
+        end
+
+        subgraph Finalize["psta_finalize_buckets"]
+            F1["agg_ctx.is_boundary"]
+            F2["agg_ctx.agg_mode"]
+            F3["agg_ctx.bucket_start/end"]
+        end
+
+        subgraph Aggregate["psta_aggregate_features"]
+            AG1["soft_time_limit = 240"]
+            AG2["time_limit = 360"]
         end
 
         subgraph Limits["容量限制"]
@@ -362,38 +394,15 @@ flowchart TB
             L2["MAX_BUCKET_CHART_POINTS = 3000"]
             L3["MAX_PUSH_POINTS = 60000"]
         end
-
-        subgraph Price["价格验证"]
-            PR1["PRICE_LOOKBACK_MINUTES = 30"]
-            PR2["PRICE_TOLERANCE_RATIO = 0.10"]
-            PR3["PRICE_MIN_SAMPLES = 3"]
-            PR4["PRICE_FALLBACK_MIN = 100000"]
-            PR5["PRICE_FALLBACK_MAX = 350000"]
-        end
-
-        subgraph Agg["聚合计算"]
-            A1["WATERMARK_MINUTES = 5"]
-            A2["AGE_CAP_MIN = 12.0"]
-            A3["RECENCY_HALF_LIFE_MIN = 6.0"]
-        end
-
-        subgraph Features["特征计算"]
-            F1["SMA/EMA/WMA window = 15"]
-            F2["Bollinger window = 20"]
-            F3["Bollinger k = 2.0"]
-        end
     end
 
     Parent --> Child
-    Child --> Limits
-    Child --> Price
-    Child --> Agg
-    Agg --> Features
+    Child --> Finalize
+    Finalize -->|is_boundary| Aggregate
+    Finalize --> Limits
 ```
 
 ## 环境变量配置
-
-以下参数可通过环境变量或 Django settings 进行配置：
 
 | 环境变量 / Settings | 默认值 | 说明 |
 |---------------------|--------|------|
@@ -402,4 +411,37 @@ flowchart TB
 | `settings.PSTA_AGE_CAP_MIN` | `12.0` | 时效权重年龄上限（分钟） |
 | `settings.PSTA_RECENCY_HALF_LIFE_MIN` | `6.0` | 时效衰减半衰期（分钟） |
 | `settings.PSTA_RECENCY_DECAY` | `"exp"` | 时效衰减模式 |
-| `settings.IPHONE_OFFICIAL_PRICES` | `{}` | iPhone 官方价格字典（用于 log 溢价计算） |
+| `settings.IPHONE_OFFICIAL_PRICES` | `{}` | iPhone 官方价格字典 |
+
+---
+
+## v3 迁移指南
+
+### 废弃参数处理
+
+调用 `batch_generate_psta_same_ts` 时：
+- `force_agg` 参数会被忽略并记录警告
+- `chunk_size` 参数会被忽略并记录警告
+
+调用 `psta_process_minute_bucket` 时：
+- `do_agg` 参数会被忽略并记录警告
+- `agg_start_iso` 参数会被忽略并记录警告
+
+### 新增 Worker 配置
+
+需要在 docker-compose.yml 中添加：
+```yaml
+celery_worker_psta_finalize:
+  command: celery -A YamagotiProjects worker -Q psta_finalize -l info -c 2
+
+celery_worker_psta_aggregation:
+  command: celery -A YamagotiProjects worker -Q psta_aggregation -l info -c 4
+```
+
+### 聚合模式变化
+
+| 原模式 | v3 行为 |
+|--------|---------|
+| `boundary` | 保持不变 |
+| `rolling` | 自动转为 `boundary` |
+| `off` | 保持不变 |

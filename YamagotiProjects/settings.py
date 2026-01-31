@@ -355,6 +355,24 @@ CELERY_TASK_ACKS_LATE = True  # 任务跑完才确认，异常能重派
 CELERY_TASK_REJECT_ON_WORKER_LOST = True  # WorkerLost 也回到队列
 CELERY_TASK_TRACK_STARTED = True
 
+# Celery 任务路由配置
+CELERY_TASK_ROUTES = {
+    # PSTA 任务路由（v3新增）
+    "AppleStockChecker.tasks.psta_finalize_buckets": {"queue": "psta_finalize"},
+    "AppleStockChecker.tasks.psta_aggregate_features": {"queue": "psta_aggregation"},
+    # WebScraper 任务路由
+    "AppleStockChecker.tasks.task_process_xlsx": {"queue": "webscraper"},
+    "AppleStockChecker.tasks.webscraper_tasks.task_process_webscraper_job": {"queue": "webscraper"},
+    "AppleStockChecker.tasks.webscraper_tasks.task_ingest_json_shop1": {"queue": "webscraper"},
+    # AutoML 任务路由
+    "automl.preprocessing_rapid": {"queue": "automl_preprocessing"},
+    "automl.preprocessing_rapid_simple": {"queue": "automl_preprocessing"},
+    "automl.cause_and_effect_testing": {"queue": "automl_cause_effect"},
+    "automl.cause_and_effect_testing_simple": {"queue": "automl_cause_effect"},
+    "automl.quantification_of_impact": {"queue": "automl_impact"},
+    "automl.quantification_of_impact_simple": {"queue": "automl_impact"},
+}
+
 USE_X_FORWARDED_HOST = True
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
