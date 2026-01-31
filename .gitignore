@@ -65,3 +65,4 @@ htmlcov/
 *.tmp
 .tmp_csv_uploads/
 /.tmp_csv_uploads/
+/.tmp_csv_uploads/
