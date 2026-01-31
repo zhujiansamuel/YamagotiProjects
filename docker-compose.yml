@@ -191,6 +191,62 @@ services:
       - .:/app
     restart: unless-stopped
 
+  # Celery Worker - PSTA Finalize 专用队列（v3新增）
+  celery_worker_psta_finalize:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_psta_finalize
+    command: celery -A YamagotiProjects worker -Q psta_finalize -l info -c 2 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=true
+      - PGBOUNCER_HOST=pgbouncer
+      - PGBOUNCER_PORT=5432
+      - PGBOUNCER_DATABASE=${PG_DATABASE}
+      - PGBOUNCER_USER=${PG_USER}
+      - PGBOUNCER_PASSWORD=${PG_PASSWORD}
+    depends_on:
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - yapp_network
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
+  # Celery Worker - PSTA Aggregation 专用队列（v3新增）
+  celery_worker_psta_aggregation:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_psta_aggregation
+    command: celery -A YamagotiProjects worker -Q psta_aggregation -l info -c 4 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=true
+      - PGBOUNCER_HOST=pgbouncer
+      - PGBOUNCER_PORT=5432
+      - PGBOUNCER_DATABASE=${PG_DATABASE}
+      - PGBOUNCER_USER=${PG_USER}
+      - PGBOUNCER_PASSWORD=${PG_PASSWORD}
+    depends_on:
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - yapp_network
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
   # Celery Beat - 定时任务调度器
   celery_beat:
     build:

@@ -1662,7 +1662,7 @@ def is_price_valid(
 # -----------------------------------------------
 # 子任务：处理"分钟桶"并返回桶级摘要 + 图表增量
 # -----------------------------------------------
-TASK_VER_PSTA = 2
+TASK_VER_PSTA = 3
 
 
 def _process_minute_rows(*, ts_iso: str, ts_dt, rows, job_id: str):
@@ -1968,41 +1968,43 @@ def psta_process_minute_bucket(
     ts_iso: str,
     rows: list[dict],
     job_id: str,
-    do_agg: bool = True,
-    agg_start_iso: str | None = None,
-    agg_minutes: int = 1,
+    agg_minutes: int = 1,  # 保留用于日志/调试
     task_ver: int | None = None,
-    **_compat,
+    **_compat,  # 向后兼容：接受已废弃参数 do_agg, agg_start_iso
 ) -> dict:
     """
-    入口任务：参数守卫 + 写入分钟数据 +（可选）做聚合
+    子任务：参数守卫 + 写入分钟数据（v3起聚合移至 finalize）
+
+    v3 变更：
+    - 移除 do_agg 参数（聚合逻辑移至 psta_finalize_buckets）
+    - 移除 agg_start_iso 参数
+    - 保留 agg_minutes 用于日志/调试
     """
+    # 检查废弃参数并记录警告
+    if "do_agg" in _compat:
+        logger.warning(f"[psta_process_minute_bucket] do_agg 参数已废弃(v3)，将被忽略")
+    if "agg_start_iso" in _compat:
+        logger.warning(f"[psta_process_minute_bucket] agg_start_iso 参数已废弃(v3)，将被忽略")
 
     # ---------- 参数守卫 ----------
     incoming = dict(
         ts_iso=ts_iso,
         rows=rows,
         job_id=job_id,
-        do_agg=do_agg,
-        agg_start_iso=agg_start_iso,
         agg_minutes=agg_minutes,
         task_ver=task_ver,
-        **_compat,
     )
-
 
     normalized, meta = guard_params(
         "psta_process_minute_bucket",
         incoming,
         required={"ts_iso": str, "rows": list, "job_id": str},
         optional={
-            "do_agg": (bool, int, str),
-            "agg_start_iso": (str, type(None)),
             "agg_minutes": (int, str),
             "task_ver": (int, str, type(None)),
         },
-        defaults={"do_agg": True, "agg_minutes": 1},
-        coerce={"do_agg": to_bool, "agg_minutes": to_int},
+        defaults={"agg_minutes": 1},
+        coerce={"agg_minutes": to_int},
         task_ver_field="task_ver",
         expected_ver=TASK_VER_PSTA,
         notify=notify_progress_all,
@@ -2012,11 +2014,9 @@ def psta_process_minute_bucket(
     ts_iso = normalized["ts_iso"]
     rows = normalized["rows"] or []
     job_id = normalized["job_id"]
-    do_agg = normalized.get("do_agg", True)
-    agg_start_iso = normalized.get("agg_start_iso")
     agg_minutes = normalized.get("agg_minutes", 1)
 
-    # ---------- 模块一：分钟对齐数据写入 ----------
+    # ---------- 写入分钟对齐数据 ----------
     ts_dt = _to_aware(ts_iso)
 
     ok, failed, err_counter, errors, chart_points = _process_minute_rows(
@@ -2040,15 +2040,7 @@ def psta_process_minute_bucket(
         except Exception:
             pass
 
-    # ---------- 模块二：统计聚合 ----------
-    if do_agg:
-        _run_aggregation(
-            ts_iso=ts_iso,
-            ts_dt=ts_dt,
-            rows=rows,
-            agg_start_iso=agg_start_iso,
-            agg_minutes=agg_minutes,
-        )
+    # v3: 聚合逻辑已移至 psta_finalize_buckets，此处不再执行
 
     # ---------- 返回任务结果 ----------
     return {
@@ -2095,11 +2087,137 @@ def psta_collect_result(prev_result, current_result=None):
 
 
 # -----------------------------------------------
-# 回调：聚合所有分钟桶，广播最终"done + 图表增量"
+# 独立聚合任务（v3新增）
 # -----------------------------------------------
 
 
-@shared_task(name="AppleStockChecker.tasks.psta_finalize_buckets")
+@shared_task(
+    name="AppleStockChecker.tasks.psta_aggregate_features",
+    queue="psta_aggregation",
+    soft_time_limit=240,
+    time_limit=360,
+)
+def psta_aggregate_features(
+    *,
+    ts_iso: str,
+    job_id: str,
+    agg_ctx: dict,
+    task_ver: int | None = None,
+    **_compat,
+) -> dict:
+    """
+    独立聚合任务（v3新增）
+
+    在所有分钟桶数据写入完成后执行统计聚合。
+    由 psta_finalize_buckets 在边界时间点同步调用。
+
+    参数:
+        ts_iso: 时间戳 ISO 格式
+        job_id: 任务 ID
+        agg_ctx: 聚合上下文，包含:
+            - agg_minutes: 聚合步长
+            - agg_mode: 聚合模式 (off 禁用，其他 = 边界模式)
+            - is_boundary: 是否为边界时间点
+            - bucket_start: 聚合窗口起始
+            - bucket_end: 聚合窗口结束
+        task_ver: 任务版本号
+
+    返回:
+        聚合结果或错误信息
+    """
+    agg_result = {
+        "ts_iso": ts_iso,
+        "job_id": job_id,
+        "aggregation_success": False,
+        "error": None,
+    }
+
+    try:
+        # 参数校验
+        if not agg_ctx:
+            raise ValueError("agg_ctx is required")
+
+        agg_mode = (agg_ctx.get("agg_mode") or "boundary").lower()
+        is_boundary = agg_ctx.get("is_boundary", False)
+        agg_minutes = int(agg_ctx.get("agg_minutes", 15))
+        agg_start_iso = agg_ctx.get("bucket_start")
+
+        # 如果 agg_mode 为 off，不执行聚合
+        if agg_mode == "off":
+            logger.info(f"[psta_aggregate_features] agg_mode=off，跳过聚合 | ts_iso={ts_iso}")
+            agg_result["aggregation_success"] = True
+            agg_result["skipped"] = True
+            agg_result["reason"] = "agg_mode=off"
+            return agg_result
+
+        # 如果不是边界时间点，不执行聚合
+        if not is_boundary:
+            logger.info(f"[psta_aggregate_features] 非边界时间点，跳过聚合 | ts_iso={ts_iso}")
+            agg_result["aggregation_success"] = True
+            agg_result["skipped"] = True
+            agg_result["reason"] = "not_boundary"
+            return agg_result
+
+        logger.info(
+            f"[psta_aggregate_features] 开始聚合 | "
+            f"ts_iso={ts_iso} | agg_minutes={agg_minutes} | "
+            f"bucket_start={agg_start_iso}"
+        )
+
+        # 执行聚合
+        ts_dt = _to_aware(ts_iso)
+        _run_aggregation(
+            ts_iso=ts_iso,
+            ts_dt=ts_dt,
+            rows=[],  # v3: 聚合从数据库读取，不再依赖 rows 参数
+            agg_start_iso=agg_start_iso,
+            agg_minutes=agg_minutes,
+        )
+
+        agg_result["aggregation_success"] = True
+        logger.info(f"[psta_aggregate_features] 聚合完成 | ts_iso={ts_iso}")
+
+        # 广播聚合完成通知
+        try:
+            notify_progress_all(data={
+                "type": "aggregation_complete",
+                "ts_iso": ts_iso,
+                "job_id": job_id,
+                "agg_ctx": agg_ctx,
+            })
+        except Exception:
+            pass
+
+    except Exception as e:
+        error_msg = f"聚合失败: {repr(e)}"
+        logger.error(f"[psta_aggregate_features] {error_msg} | ts_iso={ts_iso}", exc_info=True)
+        agg_result["error"] = error_msg
+
+        # 广播聚合失败通知
+        try:
+            notify_progress_all(data={
+                "type": "aggregation_failed",
+                "ts_iso": ts_iso,
+                "job_id": job_id,
+                "error": error_msg,
+            })
+        except Exception:
+            pass
+
+    return agg_result
+
+
+# -----------------------------------------------
+# 回调：聚合所有分钟桶，广播最终"done + 图表增量"（v3: 触发独立聚合任务）
+# -----------------------------------------------
+
+
+@shared_task(
+    name="AppleStockChecker.tasks.psta_finalize_buckets",
+    queue="psta_finalize",
+    soft_time_limit=240,
+    time_limit=360,
+)
 def psta_finalize_buckets(
         results: List[Dict[str, Any]],
         job_id: str,
@@ -2109,7 +2227,12 @@ def psta_finalize_buckets(
         **_compat
 ) -> Dict[str, Any]:
     """
+    回调任务：汇总所有分钟桶结果，广播通知，并触发聚合任务。
 
+    v3 变更：
+    - 添加独立队列 psta_finalize
+    - 在边界时间点同步调用 psta_aggregate_features 执行聚合
+    - 聚合失败不影响数据写入结果的返回
     """
     from collections import defaultdict, Counter
     incoming = dict(results=results, job_id=job_id, ts_iso=ts_iso,
@@ -2265,6 +2388,53 @@ def psta_finalize_buckets(
     except Exception:
         pass
 
+    # ========== v3: 触发聚合任务 ==========
+    agg_result = None
+    if agg_ctx:
+        agg_mode = (agg_ctx.get("agg_mode") or "boundary").lower()
+        is_boundary = agg_ctx.get("is_boundary", False)
+
+        # 仅在非 off 模式且为边界时间点时触发聚合
+        if agg_mode != "off" and is_boundary:
+            logger.info(
+                f"[psta_finalize_buckets] 触发聚合任务 | "
+                f"ts_iso={ts_iso} | is_boundary={is_boundary}"
+            )
+            try:
+                # 同步调用聚合任务并等待结果
+                agg_result = psta_aggregate_features.apply(
+                    kwargs={
+                        "ts_iso": ts_iso,
+                        "job_id": job_id,
+                        "agg_ctx": agg_ctx,
+                        "task_ver": TASK_VER_PSTA,
+                    }
+                ).get(timeout=300)  # 5分钟超时
+
+                if agg_result and not agg_result.get("aggregation_success"):
+                    logger.error(
+                        f"[psta_finalize_buckets] 聚合任务返回失败 | "
+                        f"ts_iso={ts_iso} | error={agg_result.get('error')}"
+                    )
+            except Exception as e:
+                logger.error(
+                    f"[psta_finalize_buckets] 聚合任务执行异常 | "
+                    f"ts_iso={ts_iso} | error={repr(e)}",
+                    exc_info=True
+                )
+                agg_result = {
+                    "aggregation_success": False,
+                    "error": repr(e),
+                }
+        else:
+            logger.info(
+                f"[psta_finalize_buckets] 跳过聚合 | "
+                f"agg_mode={agg_mode} | is_boundary={is_boundary}"
+            )
+
+    # 将聚合结果附加到 payload
+    payload["aggregation"] = agg_result
+
     return payload
 
 
@@ -2304,21 +2474,39 @@ def batch_generate_psta_same_ts(
         job_id: Optional[str] = None,
         items: Optional[List[Dict[str, Any]]] = None,
         timestamp_iso: Optional[str] = None,
-        # chunk_size: 已废弃，未实际使用，通过 **_compat 保持向后兼容
         query_window_minutes: int = 15,
         shop_ids: Optional[List[int]] = None,
         iphone_ids: Optional[List[int]] = None,
         max_items: Optional[int] = None,
-        # ✅ 新：聚合控制
+        # 聚合控制
         agg_minutes: int = 15,  # 聚合步长
-        agg_mode: str = "boundary",  # 'boundary'|'rolling'|'off'
-        force_agg: bool = False,  # 强制本轮聚合
+        agg_mode: str = "boundary",  # 'off' 禁用聚合，其他值统一为边界模式
         sequential: bool = False,  # 是否顺序执行子任务
-        **_compat,  # 向后兼容：接受已废弃参数如 chunk_size
+        **_compat,  # 向后兼容：接受已废弃参数 chunk_size, force_agg
 ) -> Dict[str, Any]:
+    """
+    父任务：分发分钟桶子任务，汇总结果。
+
+    v3 变更：
+    - 移除 force_agg 参数（已废弃）
+    - agg_mode 简化：off 禁用聚合，其他值统一为边界模式
+    - 聚合逻辑移至 psta_finalize_buckets
+    - 子任务不再传递 do_agg, agg_start_iso 参数
+    """
+    # 检查废弃参数
+    if "force_agg" in _compat:
+        logger.warning("[batch_generate_psta_same_ts] force_agg 参数已废弃(v3)，将被忽略")
+    if "chunk_size" in _compat:
+        logger.warning("[batch_generate_psta_same_ts] chunk_size 参数已废弃，将被忽略")
+
     task_job_id = job_id or self.request.id
     ts_iso = timestamp_iso or nearest_past_minute_iso()
+
+    # v3: agg_mode 简化 - off 禁用，其他统一为边界模式
     MODE = (agg_mode or "boundary").lower()
+    if MODE not in ("off", "boundary"):
+        logger.info(f"[batch_generate_psta_same_ts] agg_mode='{agg_mode}' 将作为边界模式处理")
+        MODE = "boundary"
 
     pack = (collect_items_for_psta(
         window_minutes=query_window_minutes,
@@ -2331,22 +2519,26 @@ def batch_generate_psta_same_ts(
     rows = pack.get("rows") or []
     bucket_minute_key: Dict[str, Dict[str, List[int]]] = pack.get("bucket_minute_key") or {}
 
-    # 广播聚合上下文（便于在前端/日志中确认）
+    # 计算边界时间和 is_boundary 标志
     dt0 = _to_aware(ts_iso)
     step0 = _floor_to_step(dt0, int(agg_minutes))
+    is_boundary = (dt0 == step0)
+
+    # 构建聚合上下文（传递给 finalize）
     ctx = {
         "agg_minutes": int(agg_minutes),
         "agg_mode": MODE,
-        "force_agg": bool(force_agg),
+        "is_boundary": is_boundary,  # v3: 新增边界标志
         "bucket_start": step0.isoformat(),
         "bucket_end": (step0 + timezone.timedelta(minutes=int(agg_minutes))).isoformat(),
     }
+
     try:
         notify_progress_all(data={"type": "agg_ctx", "timestamp": ts_iso, "job_id": task_job_id, "ctx": ctx})
     except Exception:
         pass
 
-    # 构建子任务（注意：即使该分钟无行，但需要聚合，也要下发“空行聚合”任务）
+    # 构建子任务（v3: 子任务仅负责写入数据，不做聚合）
     subtasks: List = []
     for minute_iso, key_map in bucket_minute_key.items():
         minute_rows: List[Dict[str, Any]] = []
@@ -2361,34 +2553,15 @@ def batch_generate_psta_same_ts(
                         "price_new": r.get("price_new", r.get("New_Product_Price")),
                     })
 
-        mdt = _to_aware(minute_iso)
-        boundary = _floor_to_step(mdt, int(agg_minutes))
-        is_boundary = (mdt == boundary)
-
-        if MODE == "off":
-            do_agg_local = False
-            agg_start_iso = None
-        elif MODE == "rolling":
-            do_agg_local = True
-            agg_start_iso = _rolling_start(mdt, int(agg_minutes)).isoformat()
-        else:  # boundary
-            # 修复：只在边界分钟聚合，不在所有分钟都聚合
-            # force_agg 参数保留用于向后兼容，但不再影响非边界分钟的聚合行为
-            # 原问题：force_agg=True 会让所有15个分钟桶都聚合，产生大量趋近于零的不准确数值
-            do_agg_local = is_boundary
-            agg_start_iso = boundary.isoformat()
-
-        # 若 minute_rows 空，但 do_agg_local=True（例如边界分钟），仍然下发“仅聚合”的子任务
-        if minute_rows or do_agg_local:
+        # v3: 只要有数据就下发子任务（聚合由 finalize 统一处理）
+        if minute_rows:
             subtasks.append(
                 psta_process_minute_bucket.s(
                     ts_iso=minute_iso,
                     rows=minute_rows,
                     job_id=task_job_id,
-                    do_agg=do_agg_local,
-                    agg_start_iso=agg_start_iso,
-                    agg_minutes=int(agg_minutes),
-                    task_ver=TASK_VER_PSTA,  # <--- 新增
+                    agg_minutes=int(agg_minutes),  # 保留用于日志
+                    task_ver=TASK_VER_PSTA,
                 )
             )
 
