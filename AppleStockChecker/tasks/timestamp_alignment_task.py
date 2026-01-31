@@ -1551,17 +1551,17 @@ def _agg_market_log_premium(
 # === 可调参数（根据你们前后端链路容量调节） ===
 MAX_BUCKET_ERROR_SAMPLES = 50  # 单桶保留的 error 明细条数上限
 MAX_BUCKET_CHART_POINTS = 3000  # 单桶打包给回调聚合用的 chart point 上限
-MAX_PUSH_POINTS = 20000  # 本次广播给前端的 point 总上限（超过则裁剪到最近 N 条）
+MAX_PUSH_POINTS = 60000  # 本次广播给前端的 point 总上限（超过则裁剪到最近 N 条）
 
 # 废弃：固定的价格阈值（保留用于后备）
-PRICE_MIN = 10000
+PRICE_MIN = 100000
 PRICE_MAX = 350000
 
 # 动态价格区间配置
 PRICE_LOOKBACK_MINUTES = 30  # 向前查询多少分钟的数据作为参考
 PRICE_TOLERANCE_RATIO = 0.10  # 容差比例：±50%
 PRICE_MIN_SAMPLES = 3  # 计算参考价格所需的最少样本数
-PRICE_FALLBACK_MIN = 10000  # 数据不足时的后备最小值
+PRICE_FALLBACK_MIN = 100000  # 数据不足时的后备最小值
 PRICE_FALLBACK_MAX = 350000  # 数据不足时的后备最大值
 
 
@@ -3521,7 +3521,7 @@ def batch_generate_psta_same_ts(
         job_id: Optional[str] = None,
         items: Optional[List[Dict[str, Any]]] = None,
         timestamp_iso: Optional[str] = None,
-        chunk_size: int = 200,
+        # chunk_size: 已废弃，未实际使用，通过 **_compat 保持向后兼容
         query_window_minutes: int = 15,
         shop_ids: Optional[List[int]] = None,
         iphone_ids: Optional[List[int]] = None,
@@ -3531,6 +3531,7 @@ def batch_generate_psta_same_ts(
         agg_mode: str = "boundary",  # 'boundary'|'rolling'|'off'
         force_agg: bool = False,  # 强制本轮聚合
         sequential: bool = False,  # 是否顺序执行子任务
+        **_compat,  # 向后兼容：接受已废弃参数如 chunk_size
 ) -> Dict[str, Any]:
     task_job_id = job_id or self.request.id
     ts_iso = timestamp_iso or nearest_past_minute_iso()

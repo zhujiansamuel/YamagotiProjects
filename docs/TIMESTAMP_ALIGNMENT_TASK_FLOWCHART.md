@@ -268,7 +268,7 @@ flowchart TB
 
 | 参数名 | 默认值 | 说明 |
 |--------|--------|------|
-| `chunk_size` | `200` | 分块大小 |
+| ~~`chunk_size`~~ | ~~`200`~~ | ~~分块大小~~ (已废弃，未实际使用) |
 | `query_window_minutes` | `15` | 数据查询窗口（分钟） |
 | `agg_minutes` | `15` | 聚合步长（分钟） |
 | `agg_mode` | `"boundary"` | 聚合模式：`boundary` / `rolling` / `off` |
@@ -288,18 +288,18 @@ flowchart TB
 |--------|--------|------|------|
 | `MAX_BUCKET_ERROR_SAMPLES` | `50` | 单桶保留的错误明细条数上限 | L1552 |
 | `MAX_BUCKET_CHART_POINTS` | `3000` | 单桶打包给回调聚合用的图表点上限 | L1553 |
-| `MAX_PUSH_POINTS` | `20000` | 本次广播给前端的真实点总上限（超过则截断保留最近N条） | L1554 |
+| `MAX_PUSH_POINTS` | `60000` | 本次广播给前端的真实点总上限（超过则截断保留最近N条） | L1554 |
 
 ### 5. 价格验证参数
 
 | 常量名 | 默认值 | 说明 | 位置 |
 |--------|--------|------|------|
-| `PRICE_MIN` | `10000` | 固定价格下限（后备值，已废弃） | L1557 |
+| `PRICE_MIN` | `100000` | 固定价格下限（后备值，已废弃） | L1557 |
 | `PRICE_MAX` | `350000` | 固定价格上限（后备值，已废弃） | L1558 |
 | `PRICE_LOOKBACK_MINUTES` | `30` | 动态价格区间：向前查询的时间窗口（分钟） | L1561 |
 | `PRICE_TOLERANCE_RATIO` | `0.10` | 动态价格区间：容差比例（±10%） | L1562 |
 | `PRICE_MIN_SAMPLES` | `3` | 动态价格区间：计算参考价格所需的最少样本数 | L1563 |
-| `PRICE_FALLBACK_MIN` | `10000` | 动态价格区间：数据不足时的后备最小值 | L1564 |
+| `PRICE_FALLBACK_MIN` | `100000` | 动态价格区间：数据不足时的后备最小值 | L1564 |
 | `PRICE_FALLBACK_MAX` | `350000` | 动态价格区间：数据不足时的后备最大值 | L1565 |
 
 ### 6. 聚合计算参数
@@ -345,11 +345,10 @@ flowchart TB
         direction TB
 
         subgraph Parent["batch_generate_psta_same_ts"]
-            P1["chunk_size = 200"]
-            P2["query_window_minutes = 15"]
-            P3["agg_minutes = 15"]
-            P4["agg_mode = 'boundary'"]
-            P5["sequential = False"]
+            P1["query_window_minutes = 15"]
+            P2["agg_minutes = 15"]
+            P3["agg_mode = 'boundary'"]
+            P4["sequential = False"]
         end
 
         subgraph Child["psta_process_minute_bucket"]
@@ -361,14 +360,14 @@ flowchart TB
         subgraph Limits["容量限制"]
             L1["MAX_BUCKET_ERROR_SAMPLES = 50"]
             L2["MAX_BUCKET_CHART_POINTS = 3000"]
-            L3["MAX_PUSH_POINTS = 20000"]
+            L3["MAX_PUSH_POINTS = 60000"]
         end
 
         subgraph Price["价格验证"]
             PR1["PRICE_LOOKBACK_MINUTES = 30"]
             PR2["PRICE_TOLERANCE_RATIO = 0.10"]
             PR3["PRICE_MIN_SAMPLES = 3"]
-            PR4["PRICE_FALLBACK_MIN = 10000"]
+            PR4["PRICE_FALLBACK_MIN = 100000"]
             PR5["PRICE_FALLBACK_MAX = 350000"]
         end
 
