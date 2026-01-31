@@ -581,7 +581,9 @@ def _build_color_map_shop3(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict[
 
 
 def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> pd.DataFrame:
-    print("shop3:買取一丁目---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+    now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    # print("shop4:モバイルミックス---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+    print(f"shop3:買取一丁目---------->进入清洗器时间: {now}")
     """
     debug=True 时：
       - 仅对“减价1”中可抽出颜色差额的行（deltas 非空）打印对照信息（最多 debug_limit 条）
@@ -658,15 +660,15 @@ def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         deltas = deltas_series.iat[i]
 
         if _dbg_on(i):
-            print("\n[shop3 debug] row_pos=", i)
-            print("  title(raw):", repr(src["title"].iat[i]))
-            print("  data5(raw):", repr(src["data5"].iat[i]))
-            print("  ----------------------------------------> remark(raw 减价1):", repr(rem_text))
-            print("  model_norm:", repr(m))
-            print("  capacity_gb:", repr(c))
-            print("  base_price:", repr(p0))
-            print("  deltas_extracted:", deltas)
-            print("  recorded_at:", repr(t))
+            # print("\n[shop3 debug] row_pos=", i)
+            # print("  title(raw):", repr(src["title"].iat[i]))
+            # print("  data5(raw):", repr(src["data5"].iat[i]))
+            print(f"price_raw       : {repr(rem_text)}<-----------------")
+            # print("  model_norm:", repr(m))
+            # print("  capacity_gb:", repr(c))
+            print(f"deltas_extracted: {deltas}<-----------------")
+            print(f"base_price      : {repr(p0)}")
+            # print("  recorded_at:", repr(t))
 
         if not m:
             _dprint(i, "  SKIP_REASON: model_norm 为空（无法识别机型）")
@@ -684,10 +686,10 @@ def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
             _dprint(i, f"  SKIP_REASON: info 表中找不到该机型+容量 key={key}")
             continue
 
-        if _dbg_on(i):
-            sample_colors = [(cn, v[0], v[1]) for cn, v in list(cmap.items())[:10]]
-            print("  match_key:", repr(key))
-            print("  cmap_sample(color_norm, pn, color_raw):", sample_colors, f"(len={len(cmap)})")
+        # if _dbg_on(i):
+            # sample_colors = [(cn, v[0], v[1]) for cn, v in list(cmap.items())[:10]]
+            # print("  match_key:", repr(key))
+            # print("  cmap_sample(color_norm, pn, color_raw):", sample_colors, f"(len={len(cmap)})")
 
         per_color_abs: Dict[str, int] = {}
         per_color_delta: Dict[str, int] = {}
@@ -716,15 +718,17 @@ def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
                 trace = per_color_trace.get(col_norm, None)
 
             if _dbg_on(i):
-                print("  -> OUT_ITEM:", {
-                    "part_number": str(pn),
-                    "color_raw": str(col_raw),
-                    "base": int(p0),
-                    "delta": int(per_color_delta.get(col_norm, 0)),
-                    "final": int(price_val),
-                    "reason": reason,
-                    "match_trace": trace,
-                })
+                print(f"OUT_ITEM        : color_raw: {str(col_raw):<10},base: {int(p0):<7},--->  delta: {int(per_color_delta.get(col_norm, 0)):<7} ,final: {int(price_val):<7},reason: {reason},match_trace: {trace}")
+
+                # print("  -> OUT_ITEM:", {
+                #     "part_number": str(pn),
+                #     "color_raw": str(col_raw),
+                #     "base": int(p0),
+                #     "delta": int(per_color_delta.get(col_norm, 0)),
+                #     "final": int(price_val),
+                #     "reason": reason,
+                #     "match_trace": trace,
+                # })
 
             rows.append({
                 "part_number": str(pn),
@@ -744,7 +748,7 @@ def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
         out["part_number"] = out["part_number"].astype(str)
 
-    if debug:
-        print(f"\n[shop3 debug] out_rows={len(out)} head=\n{out.head(10).to_string(index=False)}")
+    # if debug:
+    #     print(f"\n[shop3 debug] out_rows={len(out)} head=\n{out.head(10).to_string(index=False)}")
 
     return out

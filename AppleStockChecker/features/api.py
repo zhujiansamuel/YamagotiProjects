@@ -20,7 +20,7 @@ def _quantize_2(x: float | int | str | Decimal | None) -> float | None:
     """统一数值量化到 2 位小数；None 透传。"""
     if x is None:
         return None
-    return float(Decimal(str(x)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+    return float(Decimal(str(x)).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP))
 
 try:
     UTC_TZ = timezone.utc          # Django < 5

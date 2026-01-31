@@ -189,10 +189,12 @@ def clean_shop9(
 ) -> pd.DataFrame:
     import time
     import textwrap
-    print("shop9:アキモバ---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+    now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    print(f"shop9:アキモバ---------->进入清洗器时间: {now}")
+
+    # print("shop9:アキモバ---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
 
     info_df = _load_iphone17_info_df_for_shop2()
-
     col_model = "機種名"
     col_price = "買取価格"
     col_color = "色・詳細等"
@@ -489,6 +491,8 @@ def clean_shop9(
           1) colors=["橙","銀"], amount_yen=230500
           2) colors=["青"], amount_yen=229000
         - Condition words are NOT colors: ignore terms like "未開", "未使用", "中古", "美品", etc.
+        - When several colors and numbers appear in one sequence without separators
+  (e.g. "橙193,500青193,500銀195,000"), each color MUST be paired with the closest number immediately following it.
 
         What to output:
         - extraction_class MUST be one of: "abs_price", "delta"
@@ -584,6 +588,61 @@ def clean_shop9(
             return None
         return int(s)
 
+    ABS_MIN_YEN = int(os.getenv("SHOP9_ABS_LIKE_MIN", "50000"))  # 认为是绝对价的最小金额
+
+    def _extract_amount_after_alias(text: str, alias: str) -> Optional[int]:
+        """
+        在 text 中查找形如 'alias 193,500' / 'alias193,500' / 'alias 193500円' 这种片段，
+        只取 alias 后面“最近的那串数字”。
+        不吃减价形式 'alias-500円'（中间有 '-'）。
+        """
+        if not text or not alias:
+            return None
+        s = str(text)
+
+        # 允许 alias 后有若干空白，再跟可选的货币符号，再跟数字
+        pat = re.compile(
+            rf"{re.escape(alias)}\s*(?:¥|￥)?\s*([0-9０-９][0-9０-９,，]*)"
+        )
+        m = pat.search(s)
+        if not m:
+            return None
+        return _norm_amount_to_int(m.group(1))
+
+    def _direct_abs_overrides_for_row(
+            raw_color_text: str,
+            color_to_pn: Dict[str, str],
+            synonym_lookup: Dict[str, List[str]],
+    ) -> Dict[str, int]:
+        """
+        针对当前行，直接在 raw_color_text 里按“每个颜色的别名 -> 紧随其后的数字”扫描，
+        得到 per-color 的绝对价覆盖表：{color_norm: amount_yen}。
+        只接受金额 >= ABS_MIN_YEN，避免把 -500 / 500 之类 delta 当成 abs。
+        """
+        overrides: Dict[str, int] = {}
+        if not raw_color_text:
+            return overrides
+
+        s = str(raw_color_text)
+        for col_norm in color_to_pn.keys():
+            # 构建该颜色的别名集合：自身 + 同义词
+            aliases = {col_norm}
+            for syn in synonym_lookup.get(col_norm, []):
+                aliases.add(str(syn).strip())
+            amt_for_color: Optional[int] = None
+            for alias in aliases:
+                alias = alias.strip()
+                if not alias:
+                    continue
+                val = _extract_amount_after_alias(s, alias)
+                if val is not None and val >= ABS_MIN_YEN:
+                    amt_for_color = val
+                    break
+            if amt_for_color is not None:
+                overrides[col_norm] = int(amt_for_color)
+
+        return overrides
+
     # 回退版 ABS / DELTA（修正：允许 “青,銀195,500” 这种逗号分隔标签进入 labels 再 split）
     ABS_PRICE_RE = re.compile(
         r"(?P<labels>[^0-9０-９¥￥円]+?)\s*(?:¥|￥)?\s*(?P<amount>[０-９0-9][０-９0-9,，]*)\s*(?:円)?",
@@ -663,8 +722,9 @@ def clean_shop9(
         t = recorded_at.iat[i]
         raw_price_cell = df[col_price].iat[i]
         raw_color_cell = df[col_color].iat[i]
-
-        _dprint(i, f"[DEBUG row={i}] raw_model={raw_model!r} -> norm={m!r}, cap={c!r}, raw_price={raw_price_cell!r}, raw_color={raw_color_cell!r}")
+        print("|| || || || || || || || ||")
+        print("\/ \/ \/ \/ \/ \/ \/ \/ \/")
+        _dprint(i, f"[DEBUG row={i}] raw_model={raw_model!r} -> norm={m!r}, cap={c!r}, raw_price={raw_price_cell!r},     raw_color = {raw_color_cell!r}")
 
         if not m or pd.isna(c):
             _dprint(i, f"[DEBUG row={i}] skip: model/cap missing")
@@ -743,7 +803,19 @@ def clean_shop9(
                         delta_map[matched] = int(delta)
 
         _dprint(i, f"[DEBUG row={i}] llm/regex abs_map={abs_map}, delta_map={delta_map}, base_price={base_price}")
+        print("/\ /\ /\ /\ /\ /\ /\ /\ /\ ")
+        print("|| || || || || || || || ||")
 
+        # ---- 关键新增：用原始 raw_color 文本对 abs_map 做“颜色级别”的覆盖修正 ----
+        overrides = _direct_abs_overrides_for_row(
+            raw_color_text=s_color,
+            color_to_pn=color_to_pn,
+            synonym_lookup=SYNONYM_LOOKUP,
+        )
+        if overrides:
+            for col_norm, v in overrides.items():
+                abs_map[col_norm] = int(v)
+            # _dprint(i, f"[DEBUG row={i}] overrides_from_text={overrides}")
         # =============== 输出生成逻辑（扩展：支持 abs_map['ALL']） ===============
         if "ALL" in delta_map:
             if base_price is None:

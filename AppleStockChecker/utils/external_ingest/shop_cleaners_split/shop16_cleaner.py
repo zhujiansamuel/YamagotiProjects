@@ -696,8 +696,10 @@ PRICE_COL = "買取価格"
 
 
 def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
-    print("shop16:携帯空間---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
-
+    # print("shop16:携帯空間---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+    now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    # print("shop4:モバイルミックス---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+    print(f"shop16:携帯空間---------->进入清洗器时间: {now}")
     for c in [MODEL_COL, DESC_COL, PRICE_COL, "time-scraped"]:
         if c not in df.columns:
             raise ValueError(f"shop16 清洗器缺少必要列：{c}")
@@ -854,23 +856,23 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
         if debug and (_looks_like_has_color_info(price_text) or deltas or absps):
             print("\n" + "-" * 120)
             print(f"[shop16 debug] row_index={idx} llm_ok={llm_ok}")
-            print(f"  model_text: {model_text!r}")
+            # print(f"  model_text: {model_text!r}")
             print(f"  model_norm/cap: {model_norm!r} / {cap_gb}")
-            print(f"  price_raw: {price_text!r}")
-            print(f"  extracted(base_llm/base_final): {base_llm!r} / {base_price!r}")
-            print(f"  extracted(deltas): {deltas!r}")
-            print(f"  extracted(absps):  {absps!r}")
-            if dbg_extractions:
-                print("  llm_extractions:")
-                for it in dbg_extractions:
-                    print("   -", it)
+            print(f"  price_raw               : {price_text!r}")
+            # print(f"  extracted(base_llm/base_final): {base_llm!r} / {base_price!r}")
+            print(f"  extracted(deltas)       : {deltas!r}")
+            print(f"  matched color_delta_map : {color_delta_map}")
+            print(f"  extracted(absps)        :  {absps!r}")
+            print(f"  matched color_abs_map   : {color_abs_map} ")
 
-            print("  color candidates (iphone17_info):")
-            for col_norm, (pn, col_raw) in color_map.items():
-                print(f"    - color_norm={col_norm!r}, color_raw={col_raw!r}, pn={pn!r}")
+            # if dbg_extractions:
+            #     print("  llm_extractions:")
+            #     for it in dbg_extractions:
+            #         print("   -", it)
 
-            print(f"  matched color_delta_map: {color_delta_map}")
-            print(f"  matched color_abs_map  : {color_abs_map}")
+            # print("  color candidates (iphone17_info):")
+            # for col_norm, (pn, col_raw) in color_map.items():
+            #     print(f"    - color_norm={col_norm!r}, color_raw={col_raw!r}, pn={pn!r}")
 
             print("  final prices by color:")
             for col_norm, (pn, col_raw) in color_map.items():
@@ -883,7 +885,7 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
                     delta = color_delta_map.get(col_norm, 0)
                     final_price = int(base_price) + int(delta)
                     src = "base+delta" if col_norm in color_delta_map else "base"
-                print(f"    - {col_norm!r} ({col_raw}) pn={pn}: {final_price} [{src}]")
+                print(f"    - {col_norm!r:} ({col_raw:}) : {final_price:<7} [{src}]")
 
         # 7) 生成输出：绝对价优先，否则 base ± delta
         for col_norm, (pn, _col_raw) in color_map.items():

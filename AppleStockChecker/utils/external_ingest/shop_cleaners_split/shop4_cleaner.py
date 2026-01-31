@@ -19,7 +19,6 @@ from ...external_ingest.helpers import to_int_yen, parse_dt_aware
 _NUM_MODEL_PAT = re.compile(r"(iPhone)\s*(\d{2})(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
 _AIR_PAT = re.compile(r"(iPhone)\s*(Air)(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
 
-
 def _find_base_price(df: pd.DataFrame, idx: int) -> Optional[int]:
     """
     按规范：机种行(data11非空)的上一行 data 是基准价。
@@ -552,7 +551,9 @@ def _collect_adjustments_shop4(df: pd.DataFrame, start_idx: int) -> Dict[str, in
 # shop4 主清洗器
 # ----------------------------
 def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> pd.DataFrame:
-    print("shop4:モバイルミックス---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+    now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    # print("shop4:モバイルミックス---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+    print(f"shop4:モバイルミックス---------->进入清洗器时间: {now}")
 
     for c in ["data", "data11", "time-scraped"]:
         if c not in df.columns:
@@ -611,29 +612,32 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
                 return
             printed_models += 1
 
-            print("\n[shop4 debug] model_row_idx=", i, " block_end_idx=", block_end)
-            print("  data11(raw):", repr(model_text))
-            print("  model_norm:", repr(model_norm), " capacity_gb:", repr(cap_gb))
-            print("  recorded_at:", repr(rec_at))
+            # print("\n[shop4 debug] model_row_idx=", i, " block_end_idx=", block_end)
+            print(f"[shop4 debug] model_row_idx= {i} ,block_end_idx={block_end}")
+            print(f"data11(raw)      : {repr(model_text)}")
+            # print("  data11(raw):", repr(model_text))
+            # print("  model_norm:", repr(model_norm), " capacity_gb:", repr(cap_gb))
+            # print("  recorded_at:", repr(rec_at))
+            print(f"recorded_at      : {repr(rec_at)}")
             if reason:
-                print("  SKIP_REASON:", reason)
+                print(f"SKIP_REASON      : {reason}")
 
-            print("  base_price_backtrack:")
+            # print("base_price_backtrack                ||")
             for j in range(i - 1, max(-1, i - 4), -1):
                 if j < 0:
                     break
                 raw = str(df["data"].iat[j]) if df["data"].iat[j] is not None else ""
                 parsed = to_int_yen(raw) if raw else None
-                print(f"    idx={j} data(raw)={raw!r} -> parsed={parsed!r}")
+                # print(f"       idx={j} data(raw)={raw!r} -> parsed={parsed!r}")
 
-            print("  block_lines(color_delta_candidates):")
+            print("block_lines(color_delta_candidates) ||")
             for j in range(i, block_end + 1):
                 raw = str(df["data"].iat[j]) if df["data"].iat[j] is not None else ""
                 if not raw.strip():
                     continue
                 if not _DEBUG_HINT_PAT.search(raw):
                     continue
-                print(f"    idx={j} data(raw)={raw!r}")
+                print(f"-----> idx={j} data(raw)={raw!r}")
 
         if not model_norm or pd.isna(cap_gb):
             if debug and printed_models < int(debug_limit):
@@ -674,10 +678,15 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
             )
             if has_hint:
                 _maybe_print_header(None)
-                print("  base_price(final):", base_price)
-                print("  adjustments(collected):", adjustments)
-                print("  llm_enabled:", bool(SHOP4_USE_LLM and lx is not None),
-                      " model_id:", SHOP4_OLLAMA_MODEL_ID, " url:", SHOP4_OLLAMA_URL)
+                print(f"adjustments(collected)  : {adjustments}")
+                print(f"base_price(final)       : {base_price:<7}")
+                # print("  base_price(final):", base_price)
+
+                # print("  adjustments(collected):", adjustments)
+
+
+                # print("  llm_enabled:", bool(SHOP4_USE_LLM and lx is not None),
+                #       " model_id:", SHOP4_OLLAMA_MODEL_ID, " url:", SHOP4_OLLAMA_URL)
 
         if "ALL" in adjustments:
             final_price = int(base_price + adjustments["ALL"])
@@ -705,7 +714,7 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         out["part_number"] = out["part_number"].astype(str)
         out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
 
-    if debug:
-        print(f"\n[shop4 debug] out_rows={len(out)} head=\n{out.head(10).to_string(index=False)}")
+    # if debug:
+    #     print(f"\n[shop4 debug] out_rows={len(out)} head=\n{out.head(10).to_string(index=False)}")
 
     return out

@@ -280,24 +280,18 @@ def _lx_examples():
                 ),
             ],
         ),
-        lx.data.ExampleData(
-            text="全色-2000円",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="delta",
-                    extraction_text="全色-2000円",
-                    attributes={"color_label": "全色", "delta_yen": -2000},
-                ),
-            ],
-        ),
+
     ]
 
 @lru_cache(maxsize=8192)
 def _parse_rules_with_langextract(remark_for_llm: str) -> Tuple[List[Tuple[str, int]], List[Tuple[str, int]], List[Tuple[str, str, dict]]]:
     """
-    返回: abs_list, delta_list, llm_extractions_debug
-    - abs_list:  [(label_raw, absolute_price_yen), ...]
-    - delta_list:[(label_raw, delta_yen), ...]
+    返回:
+      abs_list  = [(label_raw, absolute_price_yen), ...]
+      delta_list= [(label_raw, delta_yen), ...]
+      llm_dbg   = [(effective_class, extraction_text, attrs), ...]
+    这里的 effective_class 是经过“带货币符号/有正负号”的规则修正后的结果，
+    不再完全相信 LLM 的 extraction_class。
     """
     remark_for_llm = (remark_for_llm or "").strip()
     if not remark_for_llm:
@@ -306,10 +300,9 @@ def _parse_rules_with_langextract(remark_for_llm: str) -> Tuple[List[Tuple[str, 
     try:
         import langextract as lx
 
-        model_id = os.getenv("SHOP12_OLLAMA_MODEL_ID") or os.getenv("OLLAMA_MODEL_ID") or "gemma2:2b"
+        model_id = os.getenv("SHOP12_OLLAMA_MODEL_ID") or os.getenv("OLLAMA_MODEL_ID") or "gemma3:1b"
         model_url = os.getenv("SHOP12_OLLAMA_HOST") or os.getenv("OLLAMA_HOST") or "http://localhost:11434"
 
-        # 轻微加一点上下文（对部分本地模型能显著提升短串抽取稳定性）
         llm_input = "色別価格ルール:\n" + remark_for_llm
 
         res = lx.extract(
@@ -322,7 +315,6 @@ def _parse_rules_with_langextract(remark_for_llm: str) -> Tuple[List[Tuple[str, 
             fence_output=False,
             use_schema_constraints=False,
             max_char_buffer=2000,
-            # 可选：透传 ollama options / timeout 等（不同版本 provider 的支持度略不同）
             language_model_params={
                 "timeout": int(os.getenv("SHOP12_LLM_TIMEOUT", "120")),
                 "num_ctx": int(os.getenv("SHOP12_LLM_NUM_CTX", "4096")),
@@ -330,54 +322,103 @@ def _parse_rules_with_langextract(remark_for_llm: str) -> Tuple[List[Tuple[str, 
         )
 
         exts = getattr(res, "extractions", []) or []
-        dbg: List[Tuple[str, str, dict]] = []
+        llm_dbg: List[Tuple[str, str, dict]] = []
         abs_list: List[Tuple[str, int]] = []
         delta_list: List[Tuple[str, int]] = []
 
         for e in exts:
-            cls = (getattr(e, "extraction_class", "") or "").strip()
+            cls_raw = (getattr(e, "extraction_class", "") or "").strip()
             txt = getattr(e, "extraction_text", "") or ""
             attrs = dict(getattr(e, "attributes", {}) or {})
-            dbg.append((cls, txt, attrs))
 
-            if cls == "abs_price":
-                label = str(attrs.get("color_label") or "").strip()
-                price = attrs.get("price_yen")
-                if price is None:
-                    price = _norm_amount_to_int(txt)
-                price_i = _norm_amount_to_int(price) if not isinstance(price, int) else price
-                if label and price_i is not None:
-                    abs_list.append((label, int(price_i)))
+            # ---------- 关键逻辑：由文本内容来决定 effective_class ----------
+            # 有 + / - 号 + 数字 => delta
+            has_sign = bool(re.search(r"[+\-−－]\s*[０-９0-9]", txt))
+            # 有 日元符号(¥ / ￥ / 円) => 价格
+            has_currency = bool(re.search(r"[¥￥円]", txt))
 
-            elif cls == "delta":
-                label = str(attrs.get("color_label") or "").strip()
-                delta = attrs.get("delta_yen")
-                if delta is None:
-                    # 尝试从文本里抓数字（默认按 - 处理）
+            if has_sign:
+                # 像 "Orange-1000円" / "全色-2000円"
+                effective_cls = "delta"
+            elif has_currency:
+                # 像 "Orange ¥193,500" / "Silver 230,500円"
+                effective_cls = "abs_price"
+            else:
+                # 兜底：用 LLM 原始的分类
+                effective_cls = cls_raw or "delta"
+
+            llm_dbg.append((effective_cls, txt, attrs))
+
+            # ---------- 解析 label ----------
+            label = (
+                str(attrs.get("color_label") or attrs.get("color") or attrs.get("colour") or "")
+                .strip()
+            )
+            if not label:
+                # 再粗暴一点：如果前面有一串非数字非货币符号，就当颜色
+                m_lbl = re.match(r"^[^\d0-9¥￥円+\-−－]+", txt)
+                if m_lbl:
+                    label = m_lbl.group(0).strip()
+            if not label:
+                continue
+
+            # ---------- abs_price 逻辑 ----------
+            if effective_cls == "abs_price":
+                # LLM 可能给的是 price_yen，也可能误放在 delta_yen，统一兜一下
+                raw_price = attrs.get("price_yen")
+                if raw_price is None:
+                    raw_price = attrs.get("delta_yen")
+                if raw_price is None:
+                    raw_price = txt
+                price_i = _norm_amount_to_int(raw_price)
+                if price_i is None:
+                    price_i = _norm_amount_to_int(txt)
+                if price_i is None:
+                    continue
+                # 绝对价一律用正数
+                price_i = abs(int(price_i))
+                abs_list.append((label, price_i))
+                continue
+
+            # ---------- delta 逻辑 ----------
+            if effective_cls == "delta":
+                raw_delta = attrs.get("delta_yen")
+                delta_i: Optional[int] = None
+
+                if isinstance(raw_delta, (int,)):
+                    delta_i = int(raw_delta)
+                else:
+                    # 先从属性里解析
+                    if raw_delta is not None:
+                        delta_i = _norm_amount_to_int(raw_delta)
+
+                # 属性里拿不到，再从文本里按 “符号 + 金额” 模式解析
+                if delta_i is None:
                     m = re.search(r"([+\-−－])\s*([０-９0-9][０-９0-9,，]*)", txt)
                     if m:
                         sign = m.group(1)
                         amt = _norm_amount_to_int(m.group(2))
                         if amt is not None:
-                            delta = -amt if sign in ("-", "−", "－") else amt
-                if label and delta is not None:
-                    delta_i = _norm_amount_to_int(delta) if not isinstance(delta, int) else delta
-                    if delta_i is not None:
-                        delta_list.append((label, int(delta_i)))
+                            delta_i = -amt if sign in ("-", "−", "－") else amt
 
-        # 去重（同 label 以最后一个为准）
+                if delta_i is None:
+                    continue
+                delta_list.append((label, int(delta_i)))
+                continue
+
+        # 同一 label 去重（后者覆盖前者）
         if abs_list:
-            d = {}
+            tmp = {}
             for k, v in abs_list:
-                d[k] = v
-            abs_list = list(d.items())
+                tmp[k] = v
+            abs_list = list(tmp.items())
         if delta_list:
-            d = {}
+            tmp = {}
             for k, v in delta_list:
-                d[k] = v
-            delta_list = list(d.items())
+                tmp[k] = v
+            delta_list = list(tmp.items())
 
-        return abs_list, delta_list, dbg
+        return abs_list, delta_list, llm_dbg
 
     except Exception as e:
         _dprint(f"[WARN] LangExtract failed: {e!r}")
@@ -428,7 +469,10 @@ def _label_matches_color(label_raw: str, color_raw: str, color_norm: str) -> boo
 
 
 def clean_shop12(df: pd.DataFrame) -> pd.DataFrame:
-    _dprint("shop12:トゥインクル---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+    now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    print(f"shop12:トゥインクル---------->进入清洗器时间: {now}")
+
+    # _dprint("shop12:トゥインクル---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
 
     for c in ["モデルナンバー", "備考1", "買取価格", "time-scraped"]:
         if c not in df.columns:
@@ -487,10 +531,12 @@ def clean_shop12(df: pd.DataFrame) -> pd.DataFrame:
                 _dprint(f"[ROW {idx}] LLM empty -> fallback_regex used.")
                 abs_list, delta_list = f_abs, f_delta
 
-        _dprint(f"[ROW {idx}] model={model_text!r} base={price_base} remark_raw={remark_raw!r}")
-        _dprint(f"[ROW {idx}] remark_for_llm={remark_for_llm!r}")
-        _dprint(f"[ROW {idx}] llm_extractions={llm_dbg}")
-        _dprint(f"[ROW {idx}] abs_list={abs_list} delta_list={delta_list}")
+        _dprint(f"[ROW {idx}]     model              =  {model_text!r}      base  =  {price_base}")
+        _dprint(f"[ROW {idx}]     remark_raw         =  {remark_raw!r}")
+        _dprint(f"[ROW {idx}]     remark_for_llm     =  {remark_for_llm!r}")
+        _dprint(f"[ROW {idx}]     llm_extractions    =  {llm_dbg}")
+        _dprint(f"[ROW {idx}]     abs_list           =  {abs_list}")
+        _dprint(f"[ROW {idx}]     delta_list         =  {delta_list}")
 
         # label -> color_norm
         color_abs_map: Dict[str, int] = {}
@@ -504,14 +550,14 @@ def clean_shop12(df: pd.DataFrame) -> pd.DataFrame:
                     break
             if matched:
                 color_abs_map[matched] = int(amt)
-                _dprint(f"[ROW {idx}] ABS match: {label_raw!r} -> {matched!r} price={amt}")
+                _dprint(f"[ROW {idx}]     ABS match          : {label_raw!r} -> {matched!r} price={amt}")
             else:
-                _dprint(f"[ROW {idx}] ABS NO-match: {label_raw!r}")
+                _dprint(f"[ROW {idx}]     ABS NO-match       : {label_raw!r}")
 
         for label_raw, delta in delta_list:
             if str(label_raw).strip() in {"全色", "ALL"}:
                 color_delta_map["ALL"] = int(delta)
-                _dprint(f"[ROW {idx}] DELTA ALL = {delta}")
+                _dprint(f"[ROW {idx}]     DELTA ALL          = {delta}")
                 continue
             matched = None
             for col_norm, (pn, col_raw) in color_map.items():
@@ -520,9 +566,9 @@ def clean_shop12(df: pd.DataFrame) -> pd.DataFrame:
                     break
             if matched:
                 color_delta_map[matched] = int(delta)
-                _dprint(f"[ROW {idx}] DELTA match: {label_raw!r} -> {matched!r} delta={delta}")
+                _dprint(f"[ROW {idx}]     DELTA match        : {label_raw!r} -> {matched!r} delta={delta}")
             else:
-                _dprint(f"[ROW {idx}] DELTA NO-match: {label_raw!r}")
+                _dprint(f"[ROW {idx}]     DELTA NO-match     : {label_raw!r}")
 
         recorded_at = parse_dt_aware(row.get("time-scraped"))
 
@@ -531,7 +577,7 @@ def clean_shop12(df: pd.DataFrame) -> pd.DataFrame:
             final_price = int(price_base + color_delta_map["ALL"])
             for col_norm, (pn, _) in color_map.items():
                 rows.append({"part_number": pn, "shop_name": "トゥインクル", "price_new": final_price, "recorded_at": recorded_at})
-                _dprint(f"[ROW {idx}] OUT pn={pn} color={col_norm!r} price={final_price} reason=ALL")
+                _dprint(f"[ROW {idx}] OUT pn={pn} color  =  {col_norm!r:<10} price={final_price:<7} reason=ALL")
             continue
 
         # 绝对价覆盖
@@ -540,10 +586,10 @@ def clean_shop12(df: pd.DataFrame) -> pd.DataFrame:
                 if col_norm in color_abs_map:
                     val = int(color_abs_map[col_norm])
                     rows.append({"part_number": pn, "shop_name": "トゥインクル", "price_new": val, "recorded_at": recorded_at})
-                    _dprint(f"[ROW {idx}] OUT pn={pn} color={col_norm!r} price={val} reason=ABS")
+                    _dprint(f"[ROW {idx}] OUT pn={pn} color  =  {col_norm!r:<10} price={val:<7} reason=ABS")
                 else:
                     rows.append({"part_number": pn, "shop_name": "トゥインクル", "price_new": int(price_base), "recorded_at": recorded_at})
-                    _dprint(f"[ROW {idx}] OUT pn={pn} color={col_norm!r} price={price_base} reason=BASE-FALLBACK")
+                    _dprint(f"[ROW {idx}] OUT pn={pn} color  =  {col_norm!r:<10} price={price_base:<7} reason=BASE-FALLBACK")
             continue
 
         # 普通差额
@@ -551,7 +597,7 @@ def clean_shop12(df: pd.DataFrame) -> pd.DataFrame:
             delta = color_delta_map.get(col_norm, 0)
             val = int(price_base + delta)
             rows.append({"part_number": pn, "shop_name": "トゥインクル", "price_new": val, "recorded_at": recorded_at})
-            _dprint(f"[ROW {idx}] OUT pn={pn} color={col_norm!r} price={val} reason={'BASE+DELTA' if delta else 'BASE'}")
+            _dprint(f"[ROW {idx}] OUT pn={pn} color  =  {col_norm!r:<10} price={val:<7} reason={'BASE+DELTA' if delta else 'BASE'}")
 
     out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
     if not out.empty:

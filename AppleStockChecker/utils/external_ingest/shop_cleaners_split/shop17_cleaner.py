@@ -13,9 +13,50 @@ import time
 import textwrap
 
 
-DEBUG_SHOP17 = str(os.getenv("DEBUG_SHOP17", "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+DEBUG_SHOP17 = str(True)
 DEBUG_SHOP17_MAX_ROWS = int(os.getenv("DEBUG_SHOP17_MAX_ROWS", "20") or 20)
 DEBUG_SHOP17_SHOW_ALL_COLORS = str(os.getenv("DEBUG_SHOP17_SHOW_ALL_COLORS", "")).strip().lower() in {"1", "true", "yes", "on"}
+
+_DASH_TRANS_shop17 = str.maketrans({
+    "−": "-",  # U+2212
+    "－": "-",  # U+FF0D
+    "‐": "-",  # U+2010
+    "‑": "-",  # U+2011
+    "‒": "-",  # U+2012
+    "–": "-",  # U+2013
+    "—": "-",  # U+2014
+})
+_FW_DIGITS_TRANS_shop17 = str.maketrans("０１２３４５６７８９", "0123456789")
+
+_BAD_LABEL_WORDS_shop17 = ("利用制限", "保証", "郵送", "持ち込み", "開始", "未満", "減額", "SIM", "制限")
+
+def _normalize_color_text_shop17(s: str) -> str:
+    """统一色減額文本里的全角数字/逗号/各种 dash，顺便清理空白。"""
+    s = "" if s is None else str(s)
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    s = s.translate(_FW_DIGITS_TRANS_shop17)
+    s = s.replace("，", ",")
+    s = s.translate(_DASH_TRANS_shop17)
+    s = s.replace("／", "/")
+    s = re.sub(r"[ \t\u3000\xa0]+", " ", s)
+    return s.strip()
+
+def _is_plausible_color_label_shop17(label: str) -> bool:
+    """过滤掉明显不是“颜色名”的 label（比如 利用制限△ / 保証開始3か月未満 等）。"""
+    label = _normalize_label_shop17(label)
+    if not label:
+        return False
+    if label.startswith(("△", "▲")):
+        return False
+    if re.search(r"\d", label):
+        return False
+    if len(label) > 16:
+        return False
+    if any(w in label for w in _BAD_LABEL_WORDS_shop17):
+        return False
+    return True
 
 def _dbg_short(s: str, n: int = 400) -> str:
     if s is None:
@@ -363,73 +404,59 @@ COLOR_NONE_RE_shop17 = re.compile(
     re.UNICODE | re.VERBOSE,
 )
 
-COLOR_NONE_RE_shop17 = re.compile(
-    r"""(?P<label>[^：:\-\s/、／\n]+(?:\([^)]*\))?)\s*
-        (?P<sep>[：:\-])\s*
-        (?:減額)?なし
-    """,
-    re.UNICODE | re.VERBOSE,
-)
 
 SPLIT_TOKENS_RE_shop17 = re.compile(r"[／/、]|(?:\s*;\s*)|\n")
 
 def _normalize_label_shop17(lbl: str) -> str:
     return re.sub(r"[\s\u3000\xa0]+", "", lbl or "")
 
-def _extract_color_deltas_shop17_regex(text: str, *, ctx: str = "", dbg: bool = False) -> List[Tuple[str, int]]:
+def _extract_color_deltas_shop17_regex(text: str) -> List[Tuple[str, int]]:
+    """
+    正则版提取 [(label_raw, delta_int)]，作为 LLM 的 fallback，也可以单独使用。
+    """
     out: List[Tuple[str, int]] = []
     if not text:
-        _dbg_print(ctx, "[regex] empty text -> []", dbg)
         return out
 
-    s0 = _pick_unopened_section(str(text))
-    s = _normalize_color_text_shop17(s0)
+    s = _normalize_color_text_shop17(_pick_unopened_section(str(text)))
 
     if "色減額" in s:
         s = s.split("色減額", 1)[-1].lstrip(":：")
 
-    _dbg_block(ctx, "[regex] input", f"raw:\n{_dbg_short(s0)}\n\nnormalized:\n{_dbg_short(s)}", dbg)
-
+    # 整段就是「なし/減額なし」-> 无色差额
     if re.fullmatch(r"\s*(?:なし|減額なし)\s*", s):
-        _dbg_print(ctx, "[regex] whole segment is 'なし/減額なし' -> []", dbg)
         return out
 
     parts = [p.strip() for p in SPLIT_TOKENS_RE_shop17.split(s) if p and p.strip()]
     if not parts:
         parts = [s.strip()]
 
-    _dbg_print(ctx, f"[regex] parts={parts}", dbg)
-
     for part in parts:
+        # 「シルバーなし」/「クラウドホワイト：なし」
         m0 = COLOR_NONE_RE_shop17.search(part)
         if m0:
             label = _normalize_label_shop17(m0.group("label"))
             if _is_plausible_color_label_shop17(label):
                 out.append((label, 0))
-                _dbg_print(ctx, f"[regex] NONE hit: label={label!r} delta=0 from part={part!r}", dbg)
-            else:
-                _dbg_print(ctx, f"[regex] NONE ignored (implausible): label={label!r} part={part!r}", dbg)
             continue
 
+        # 「ブルー-1000」「スカイブルー: -3,000」 等
         for m in COLOR_DELTA_RE_shop17.finditer(part):
             label = _normalize_label_shop17(m.group("label"))
             if not _is_plausible_color_label_shop17(label):
-                _dbg_print(ctx, f"[regex] DELTA ignored (implausible): label={label!r} part={part!r}", dbg)
                 continue
-
             sep = m.group("sep")
             sign = m.group("sign")
             amt = to_int_yen(m.group("amount"))
             if amt is None:
-                _dbg_print(ctx, f"[regex] DELTA parse amount failed: amount={m.group('amount')!r} part={part!r}", dbg)
                 continue
-
-            negative = (sign == "-") if sign else (sep == "-" if sep else False)
+            if sign:
+                negative = sign in ("-", "−", "－")
+            else:
+                negative = sep in ("-", "−", "－") if sep else False
             delta = -int(amt) if negative else int(amt)
             out.append((label, delta))
-            _dbg_print(ctx, f"[regex] DELTA hit: label={label!r} delta={delta} from part={part!r}", dbg)
 
-    _dbg_print(ctx, f"[regex] result={out}", dbg)
     return out
 
 # ----------------------------------------------------------------------
@@ -443,44 +470,44 @@ COLOR_DELTA_PROMPT_SHOP17 = textwrap.dedent("""
 
 タスク:
 - 色名ごとの減額（または増額）だけを抽出してください。
-- 色名の例: スカイブルー, スペースブラック, クラウドホワイト, ライトゴールド など。
-- 「利用制限△-10000」や「郵送は翌日着のみ保証」など、色と無関係な金額・文言は無視してください。
-- 「なし」「減額なし」はその色の delta=0 として扱ってください。
+- 色名の例: スカイブルー, スペースブラック, クラウドホワイト, ライトゴールド, シルバー, ブルー など。
+- 「利用制限△-10000」や「保証開始3か月未満減額なし」など、色と無関係な金額・文言は無視してください。
+- 「色名なし」(例: シルバーなし) はその色の delta=0 として扱います。
+- 色名が付いていない「減額なし」(例: △減額なし) は無視します。
 
 出力ポリシー:
 - extraction_class は必ず "color_delta" にしてください。
-- extraction_text は「色名そのもの」（例: "スカイブルー"）だけにしてください。
+- extraction_text には、表に書かれている「色と金額のフレーズ全体」
+  （例: "スカイブルー-3,000", "クラウドホワイト：なし", "シルバーなし"）をそのまま入れてください。
 - attributes には必ず次のキーを入れてください:
+  - "color": 色名だけ（例: "スカイブルー"）
   - "delta": その色の価格差（整数。値引きは負の数。例: -3000）
-  - "raw": 元の部分文字列（例: "スカイブルー-3,000"）
+  - "raw": 抜き出した元の部分文字列（extraction_text と同じでもよい）
+
+その他ルール:
 - 価格は円単位で扱い、「円」「,」などは無視して整数に変換してください。
 - 色名が複数ある場合は、それぞれ1つずつ color_delta を出力してください。
-- 色に関係しない金額（例: 利用制限△-10000）は一切出力しないでください。
-追加ルール:
-- 「色名なし」(例: シルバーなし) はその色の delta=0 として扱う。
-- 「△減額なし」「保証開始3か月未満減額なし」など、色名が直前に無い「減額なし」は無視する。
-- 入力には改行/空行が含まれる。改行は無視してよい。
+- 文章内の改行や空行は無視して構いません。
 """).strip()
 
 @lru_cache()
+@lru_cache()
 def _get_color_delta_examples_shop17() -> List[ExampleData]:
-    """
-    few-shot 例。LangExtract が色名 + delta の抽出パターンを学習する。
-    """
     if not _HAS_LANGEXTRACT:
         return []
 
     examples: List[ExampleData] = []
 
-    # Example 1: あなたが提供したケースそのまま
+    # Example 0: スカイブルーのみ
     examples.append(
         ExampleData(
             text="色減額:スカイブルー-3,000\n\n郵送は翌日着のみ保証\n\n利用制限△-10000",
             extractions=[
                 Extraction(
                     extraction_class="color_delta",
-                    extraction_text="スカイブルー",
+                    extraction_text="スカイブルー-3,000",
                     attributes={
+                        "color": "スカイブルー",
                         "delta": "-3000",
                         "raw": "スカイブルー-3,000",
                     },
@@ -488,41 +515,26 @@ def _get_color_delta_examples_shop17() -> List[ExampleData]:
             ],
         )
     )
-    examples.append(
-        ExampleData(
-            text="色減額:シルバーなし/ブルー-1000\n\n郵送は翌日着のみ保証\n\n△減額なし 保証開始3か月未満減額なし",
-            extractions=[
-                Extraction(
-                    extraction_class="color_delta",
-                    extraction_text="シルバー",
-                    attributes={"delta": "0", "raw": "シルバーなし"},
-                ),
-                Extraction(
-                    extraction_class="color_delta",
-                    extraction_text="ブルー",
-                    attributes={"delta": "-1000", "raw": "ブルー-1000"},
-                ),
-            ],
-        )
-    )
 
-    # Example 2: 2 色 + 利用制限△
+    # Example 1: 2 色 + 利用制限△
     examples.append(
         ExampleData(
             text="色減額:スカイブルー-4,000/スペースブラック-4,000\n\n持ち込みのみ保証\n\n利用制限△-10000",
             extractions=[
                 Extraction(
                     extraction_class="color_delta",
-                    extraction_text="スカイブルー",
+                    extraction_text="スカイブルー-4,000",
                     attributes={
+                        "color": "スカイブルー",
                         "delta": "-4000",
                         "raw": "スカイブルー-4,000",
                     },
                 ),
                 Extraction(
                     extraction_class="color_delta",
-                    extraction_text="スペースブラック",
+                    extraction_text="スペースブラック-4,000",
                     attributes={
+                        "color": "スペースブラック",
                         "delta": "-4000",
                         "raw": "スペースブラック-4,000",
                     },
@@ -531,25 +543,27 @@ def _get_color_delta_examples_shop17() -> List[ExampleData]:
         )
     )
 
-    # Example 3: 「なし」パターン
+    # Example 2: 你这条问题里的真实样例
     examples.append(
         ExampleData(
-            text="色減額:スカイブルー-3,000/クラウドホワイト：なし",
+            text="色減額:シルバーなし/ブルー-1000\n\n郵送は翌日着のみ保証\n\n△減額なし 保証開始3か月未満減額なし",
             extractions=[
                 Extraction(
                     extraction_class="color_delta",
-                    extraction_text="スカイブルー",
+                    extraction_text="シルバーなし",
                     attributes={
-                        "delta": "-3000",
-                        "raw": "スカイブルー-3,000",
+                        "color": "シルバー",
+                        "delta": "0",
+                        "raw": "シルバーなし",
                     },
                 ),
                 Extraction(
                     extraction_class="color_delta",
-                    extraction_text="クラウドホワイト",
+                    extraction_text="ブルー-1000",
                     attributes={
-                        "delta": "0",
-                        "raw": "クラウドホワイト：なし",
+                        "color": "ブルー",
+                        "delta": "-1000",
+                        "raw": "ブルー-1000",
                     },
                 ),
             ],
@@ -562,11 +576,7 @@ def _parse_delta_attr_to_int(val) -> Optional[int]:
     if val is None:
         return None
     s = str(val)
-    # 统一成整数
-    s = s.replace("円", "")
-    s = s.replace(",", "")
-    s = s.replace(" ", "")
-    s = s.replace("　", "")
+    s = s.replace("円", "").replace(",", "").replace(" ", "").replace("　", "")
     s = s.replace("−", "-").replace("－", "-")
     if not s:
         return None
@@ -575,137 +585,72 @@ def _parse_delta_attr_to_int(val) -> Optional[int]:
     except Exception:
         return None
 
-def _extract_color_deltas_shop17_llm(text: str, *, ctx: str = "", dbg: bool = False) -> List[Tuple[str, int]]:
+
+def _extract_color_deltas_shop17_llm(text: str) -> List[Tuple[str, int]]:
     if not _HAS_LANGEXTRACT or not USE_LLM_FOR_SHOP17:
-        _dbg_print(ctx, "[llm] disabled or no langextract -> []", dbg)
+        return []
+    if not text or not str(text).strip():
         return []
 
-    raw0 = _normalize_color_text_shop17(_pick_unopened_section(str(text or "")))
-    if not raw0:
-        _dbg_print(ctx, "[llm] empty after normalize -> []", dbg)
+    s = _normalize_color_text_shop17(_pick_unopened_section(str(text)))
+
+    if re.fullmatch(r"\s*(?:なし|減額なし)\s*", s):
         return []
 
-    if re.fullmatch(r"(?:なし|減額なし)", re.sub(r"\s+", "", raw0)):
-        _dbg_print(ctx, "[llm] whole segment is 'なし/減額なし' -> []", dbg)
+    import langextract as lx
+
+    try:
+        result = lx.extract(
+            text_or_documents=s,
+            prompt_description=COLOR_DELTA_PROMPT_SHOP17,
+            examples=_get_color_delta_examples_shop17(),
+            model_id=LX_SHOP17_MODEL_ID,
+            model_url=LX_SHOP17_MODEL_URL,
+            temperature=0.0,
+            fence_output=False,
+            use_schema_constraints=False,
+            # 这里是关键：关闭 few-shot 对齐校验，避免 WARNING
+            prompt_validation_level="OFF",
+            prompt_validation_strict=False,
+        )
+    except Exception as e:
+        print(f"[shop17][LangExtract] extraction error: {e}")
         return []
 
-    # 候选：优先色減額后的第一段/第一行，最后再用全量
-    candidates: List[str] = []
-    if "色減額" in raw0:
-        after = raw0.split("色減額", 1)[-1].lstrip(":：").strip()
-        first_block = re.split(r"\n\s*\n", after, maxsplit=1)[0].strip()
-        if first_block:
-            candidates.append(first_block)
-            first_line = first_block.split("\n", 1)[0].strip()
-            if first_line and first_line != first_block:
-                candidates.append(first_line)
-    candidates.append(raw0)
-
-    # 去重保序
-    seen = set()
-    deduped: List[str] = []
-    for c in candidates:
-        c = _normalize_color_text_shop17(c)
-        if c and c not in seen:
-            seen.add(c)
-            deduped.append(c)
-
-    _dbg_block(ctx, "[llm] candidates", "\n\n".join(f"- { _dbg_short(x) }" for x in deduped), dbg)
-
-    last_err: Optional[Exception] = None
-
-    for s in deduped:
-        if re.fullmatch(r"(?:なし|減額なし)", re.sub(r"\s+", "", s)):
-            continue
-
+    out: List[Tuple[str, int]] = []
+    extractions = getattr(result, "extractions", None) or []
+    for ext in extractions:
         try:
-            result = lx.extract(
-                text_or_documents=s,
-                prompt_description=COLOR_DELTA_PROMPT_SHOP17,
-                examples=_get_color_delta_examples_shop17(),
-                model_id=LX_SHOP17_MODEL_ID,
-                model_url=LX_SHOP17_MODEL_URL,
-                temperature=0.0,
-                fence_output=False,
-                use_schema_constraints=False,
-            )
-        except Exception as e:
-            last_err = e
-            _dbg_print(ctx, f"[llm] call failed: {e}", dbg)
+            if ext.extraction_class != "color_delta":
+                continue
+            attrs = ext.attributes or {}
+            color = (attrs.get("color") or ext.extraction_text or "").strip()
+            if not _is_plausible_color_label_shop17(color):
+                continue
+            delta_int = _parse_delta_attr_to_int(attrs.get("delta"))
+            if delta_int is None:
+                # fallback：从 extraction_text 再捞一次金额
+                txt = (ext.extraction_text or "").strip()
+                m = re.search(r"([+\-−－]?\d[\d,]*)", txt)
+                if m:
+                    delta_int = _parse_delta_attr_to_int(m.group(1))
+            if delta_int is None:
+                continue
+            out.append((color, delta_int))
+        except Exception:
             continue
 
-        extractions = getattr(result, "extractions", None) or []
-        if dbg:
-            _dbg_print(ctx, f"[llm] raw extractions count={len(extractions)}", dbg)
-            for ext in extractions[:20]:
-                _dbg_print(
-                    ctx,
-                    f"[llm] ext: class={getattr(ext,'extraction_class',None)!r}, text={getattr(ext,'extraction_text',None)!r}, attrs={getattr(ext,'attributes',None)!r}",
-                    dbg
-                )
+    return out
 
-        out: List[Tuple[str, int]] = []
-        for ext in extractions:
-            try:
-                if getattr(ext, "extraction_class", None) != "color_delta":
-                    continue
-
-                label = (getattr(ext, "extraction_text", "") or "").strip()
-                label = re.sub(r"(?:減額)?なし$", "", label).strip()
-                label = re.sub(r"[:：\-/／]+$", "", label).strip()
-                if not _is_plausible_color_label_shop17(label):
-                    _dbg_print(ctx, f"[llm] ignore label (implausible): {label!r}", dbg)
-                    continue
-
-                attrs = getattr(ext, "attributes", None) or {}
-                delta_int = _parse_delta_attr_to_int(attrs.get("delta"))
-
-                # raw 兜底
-                if delta_int is None:
-                    raw_piece = attrs.get("raw")
-                    if raw_piece:
-                        rp = _normalize_color_text_shop17(raw_piece)
-                        if "なし" in rp:
-                            delta_int = 0
-                        else:
-                            m = re.search(r"([+-])\s*(\d[\d,]*)", rp)
-                            if m:
-                                amt = to_int_yen(m.group(2))
-                                if amt is not None:
-                                    delta_int = int(amt) * (-1 if m.group(1) == "-" else 1)
-
-                if delta_int is None:
-                    _dbg_print(ctx, f"[llm] ignore ext (no delta): label={label!r} attrs={attrs!r}", dbg)
-                    continue
-
-                out.append((_normalize_label_shop17(label), int(delta_int)))
-            except Exception as e:
-                _dbg_print(ctx, f"[llm] parse ext error: {e}", dbg)
-                continue
-
-        if out:
-            merged: Dict[str, int] = {}
-            for lbl, d in out:
-                merged[lbl] = d
-            final = list(merged.items())
-            _dbg_print(ctx, f"[llm] result={final}", dbg)
-            return final
-
-        _dbg_print(ctx, "[llm] no usable output for this candidate", dbg)
-
-    if last_err is not None:
-        print(f"[shop17][LangExtract] extraction error: {last_err}")
-    return []
-
-def _extract_color_deltas_shop17(text: str, *, ctx: str = "", dbg: bool = False) -> List[Tuple[str, int]]:
-    llm_res = _extract_color_deltas_shop17_llm(text, ctx=ctx, dbg=dbg)
-    if llm_res:
-        _dbg_print(ctx, f"[extract] path=LLM labels_and_deltas={llm_res}", dbg)
-        return llm_res
-
-    rx = _extract_color_deltas_shop17_regex(text, ctx=ctx, dbg=dbg)
-    _dbg_print(ctx, f"[extract] path=REGEX labels_and_deltas={rx}", dbg)
-    return rx
+def _extract_color_deltas_shop17(text: str) -> List[Tuple[str, int]]:
+    """
+    优先使用正则（对像「シルバーなし/ブルー-1000」这种结构非常稳定），
+    当正则完全解析不到任何颜色差额时，再让 LangExtract + Ollama 兜底。
+    """
+    regex_res = _extract_color_deltas_shop17_regex(text)
+    if regex_res:
+        return regex_res
+    return _extract_color_deltas_shop17_llm(text)
 # ----------------------------------------------------------------------
 # 清洗主函数
 # ----------------------------------------------------------------------
@@ -764,7 +709,7 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
                        ", ".join([f"{cn}->{pn}" for cn, (pn, cr) in list(color_map.items())]),
                        dbg_row)
 
-        labels_and_deltas = _extract_color_deltas_shop17(raw_color_s, ctx=ctx, dbg=dbg_row)
+        labels_and_deltas = _extract_color_deltas_shop17(raw_color_s)
 
         # label -> color 命中 & 计算 delta
         color_deltas: Dict[str, int] = {}

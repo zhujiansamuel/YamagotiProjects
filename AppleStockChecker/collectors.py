@@ -94,7 +94,8 @@ def collect_items_for_psta(
 
     # 5) 建立两个索引：index_by_key（(shop,iphone)→升序时间索引） 与 bucket_by_minute（分钟桶）
     index_by_key: Dict[str, Dict[str, List]] = {}
-    bucket_by_minute: Dict[str, List[int]] = {}
+    # ✅ 修复：预先初始化所有 15 个分钟桶，避免数据被跳过
+    bucket_by_minute: Dict[str, List[int]] = {tick: [] for tick in ticks_iso}
 
     for idx, r in enumerate(rows):
         sid = r.get("shop_id")
@@ -116,9 +117,10 @@ def collect_items_for_psta(
 
         # —— 维度索引 —— #
         key = f"{sid}:{iid}"
-        buf = index_by_key.setdefault(key, {"order": [], "times": []})
+        buf = index_by_key.setdefault(key, {"order": [], "times": [], "new_price": []})
         buf["order"].append(idx)
         buf["times"].append(rec_iso)
+        buf["new_price"].append(r.get("price_new"))
 
         # —— 全局分钟桶 —— #
         bucket_by_minute[minute_iso].append(idx)

@@ -13,7 +13,7 @@ from AppleStockChecker.ws_notify import (
 )
 from typing import Any, Dict, List, Optional
 from collections import Counter, defaultdict
-from celery import shared_task, chord
+from celery import shared_task, chord, chain
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import transaction, IntegrityError
 from decimal import Decimal, ROUND_HALF_UP
@@ -691,8 +691,40 @@ def _agg_feature_combos(
 
     try:
         # —— 预取本桶出现过的 shop/iphone —— #
-        shops_seen = sorted({int(r.get("shop_id")) for r in rows if r.get("shop_id")})
-        iphones_seen = sorted({int(r.get("iphone_id")) for r in rows if r.get("iphone_id")})
+        # Bug修复: 窗口模式时应该从窗口内的 PSTA 数据提取 shop/iphone，而不是从 rows（单分钟数据）
+        # 原因: 边界分钟的 rows 可能为空，但窗口内仍有历史数据需要聚合
+        if use_window:
+            # 窗口模式: 从数据库查询窗口内所有的 shop_id 和 iphone_id
+            shops_seen = sorted(set(
+                PurchasingShopTimeAnalysis.objects
+                .filter(
+                    Timestamp_Time__gte=bucket_start,
+                    Timestamp_Time__lt=bucket_end,
+                    New_Product_Price__isnull=False,
+                )
+                .values_list('shop_id', flat=True)
+                .distinct()
+            ))
+            iphones_seen = sorted(set(
+                PurchasingShopTimeAnalysis.objects
+                .filter(
+                    Timestamp_Time__gte=bucket_start,
+                    Timestamp_Time__lt=bucket_end,
+                    New_Product_Price__isnull=False,
+                )
+                .values_list('iphone_id', flat=True)
+                .distinct()
+            ))
+        else:
+            # 单分钟模式: 从 rows 提取（原有逻辑）
+            shops_seen = sorted({int(r.get("shop_id")) for r in rows if r.get("shop_id")})
+            iphones_seen = sorted({int(r.get("iphone_id")) for r in rows if r.get("iphone_id")})
+
+        # 日志输出：数据提取情况
+        logger.info(
+            f"  📊 [数据源] shops: {len(shops_seen)}个, iphones: {len(iphones_seen)}个 | "
+            f"来源: {'窗口PSTA数据' if use_window else 'rows参数'}"
+        )
 
         if use_window:
             base_qs = (
@@ -1004,6 +1036,22 @@ def _agg_feature_combos(
         else:
             combo_debug["skipped"].append("case4: no ShopWeightProfile defined")
 
+        # 汇总日志输出
+        total_features = (
+            combo_debug["case1_shop_iphone"] +
+            combo_debug["case2_shopcohort_iphone"] +
+            combo_debug["case3_shop_cohortiphone"] +
+            combo_debug["case4_shopcohort_cohortiphone"]
+        )
+        logger.info(
+            f"  ✍️  [特征写入] "
+            f"Case1(shop×iphone): {combo_debug['case1_shop_iphone']}, "
+            f"Case2(shopcohort×iphone): {combo_debug['case2_shopcohort_iphone']}, "
+            f"Case3(shop×cohort): {combo_debug['case3_shop_cohortiphone']}, "
+            f"Case4(shopcohort×cohort): {combo_debug['case4_shopcohort_cohortiphone']} | "
+            f"总计: {total_features} 个组合"
+        )
+
         try:
             notify_progress_all(data={
                 "type": "feature_snapshot_update",
@@ -1064,7 +1112,7 @@ def _agg_time_series_features(
             .values("slug", "family", "base_name", "params", "version")
         )
 
-        # —— 收集“当前锚点”的基值 x_t：scope -> x_t —— #
+        # —— 收集"当前锚点"的基值 x_t：scope -> x_t —— #
         # 4.a 四类组合（FeatureSnapshot.mean@anchor_bucket）
         for row in (
             FeatureSnapshot.objects
@@ -1074,25 +1122,30 @@ def _agg_time_series_features(
             if row["value"] is not None:
                 base_now[row["scope"]] = float(row["value"])
 
-        # 4.b OverallBar.mean -> overall:iphone:<id>（@ob_bucket）
-        if ob_has_iphone:
-            for row in (
-                OverallBar.objects
-                .filter(bucket=ob_bucket)
-                .values("iphone_id", "mean")
-            ):
-                if row["mean"] is not None:
-                    base_now[f"overall:iphone:{row['iphone_id']}"] = float(row["mean"])
+        # ===== 已禁用：从 OverallBar/CohortBar 收集基值 =====
+        # 原因：已停用 OverallBar/CohortBar 计算
+        # 如果需要 scope="overall:iphone:*" 或 "cohort:*" 的时间序列指标，
+        # 请先恢复 _run_aggregation 中的 OverallBar/CohortBar 计算
 
-        # 4.c CohortBar.mean -> cohort:<slug>（@ob_bucket）
-        for row in (
-            CohortBar.objects
-            .filter(bucket=ob_bucket)
-            .select_related("cohort")
-            .values("cohort__slug", "mean")
-        ):
-            if row["mean"] is not None and row["cohort__slug"]:
-                base_now[f"cohort:{row['cohort__slug']}"] = float(row["mean"])
+        # # 4.b OverallBar.mean -> overall:iphone:<id>（@ob_bucket）
+        # if ob_has_iphone:
+        #     for row in (
+        #         OverallBar.objects
+        #         .filter(bucket=ob_bucket)
+        #         .values("iphone_id", "mean")
+        #     ):
+        #         if row["mean"] is not None:
+        #             base_now[f"overall:iphone:{row['iphone_id']}"] = float(row["mean"])
+
+        # # 4.c CohortBar.mean -> cohort:<slug>（@ob_bucket）
+        # for row in (
+        #     CohortBar.objects
+        #     .filter(bucket=ob_bucket)
+        #     .select_related("cohort")
+        #     .values("cohort__slug", "mean")
+        # ):
+        #     if row["mean"] is not None and row["cohort__slug"]:
+        #         base_now[f"cohort:{row['cohort__slug']}"] = float(row["mean"])
 
         # —— 工具：回写派生值（只给 SMA 用，EMA/WMA 走 writer） —— #
         def upsert_feat(scope: str, name: str, version: str, value: float):
@@ -1353,6 +1406,146 @@ def _agg_bollinger_bands(
             pass
 
 
+def _agg_market_log_premium(
+    *,
+    ts_iso: str,
+    anchor_bucket,
+    is_final_bar: bool,
+    writer,
+):
+    """
+    6) 市场 log 溢价（Market Log Premium）
+    公式: b_{k,t}^{wma_{tm}} = log(Q̄^{wma_{tm}}_{k,t} / P^{official}_k)
+
+    其中：
+    - Q̄^{wma_{tm}}_{k,t}: FeatureSnapshot 中 scope="shopcohort:full_store|iphone:{k}", name="wma", version="wma{tm}m" 的值
+    - P^{official}_k: iPhone ID=k 的官方发布价格（从 settings.IPHONE_OFFICIAL_PRICES 获取）
+    - 结果存储为：name="logb", version=对应的 wma 版本（如 "wma120m"）
+    """
+    import re
+    import math
+    from django.apps import apps
+    from django.conf import settings
+
+    FeatureSnapshot = apps.get_model("AppleStockChecker", "FeatureSnapshot")
+
+    logb_debug = {"bucket": ts_iso, "computed": 0, "skipped": [], "samples": []}
+
+    try:
+        # 获取官方价格配置
+        official_prices = getattr(settings, "IPHONE_OFFICIAL_PRICES", {})
+        if not official_prices:
+            logb_debug["skipped"].append("no_official_prices_in_settings")
+            try:
+                notify_progress_all(data={
+                    "type": "feature_logb_warning",
+                    "bucket": ts_iso,
+                    "message": "IPHONE_OFFICIAL_PRICES not configured in settings",
+                })
+            except Exception:
+                pass
+            return
+
+        # 查询当前 bucket 中所有 name="wma" 的 FeatureSnapshot 记录
+        # 只关注 scope 包含 "shopcohort:full_store" 的记录
+        wma_records = list(
+            FeatureSnapshot.objects
+            .filter(
+                bucket=anchor_bucket,
+                name="wma",
+                scope__startswith="shopcohort:full_store|iphone:"
+            )
+            .values("scope", "version", "value")
+        )
+
+        if not wma_records:
+            logb_debug["skipped"].append("no_wma_records_for_full_store")
+        else:
+            # 正则匹配 version 格式：wma[0-9]+m
+            wma_version_pattern = re.compile(r"^wma\d+m$")
+
+            for rec in wma_records:
+                scope = rec["scope"]
+                version = rec["version"]
+                wma_value = rec["value"]
+
+                # 检查 version 格式
+                if not wma_version_pattern.match(version):
+                    logb_debug["skipped"].append(f"{scope}@{version}:invalid_version_format")
+                    continue
+
+                # 从 scope 中提取 iPhone ID
+                # scope 格式: "shopcohort:full_store|iphone:{iphone_id}"
+                try:
+                    iphone_id = int(scope.split("|iphone:")[-1])
+                except (ValueError, IndexError):
+                    logb_debug["skipped"].append(f"{scope}@{version}:invalid_scope_format")
+                    continue
+
+                # 获取官方价格
+                official_price = official_prices.get(iphone_id)
+                if official_price is None:
+                    logb_debug["skipped"].append(f"{scope}@{version}:no_official_price_for_iphone_{iphone_id}")
+                    continue
+
+                if official_price <= 0:
+                    logb_debug["skipped"].append(f"{scope}@{version}:invalid_official_price_{official_price}")
+                    continue
+
+                # 检查 wma_value 有效性
+                if wma_value is None or wma_value <= 0:
+                    logb_debug["skipped"].append(f"{scope}@{version}:invalid_wma_value_{wma_value}")
+                    continue
+
+                # 计算 log 溢价：log(wma_value / official_price)
+                try:
+                    logb_value = math.log(wma_value / official_price)
+                except (ValueError, ZeroDivisionError) as e:
+                    logb_debug["skipped"].append(f"{scope}@{version}:math_error_{repr(e)}")
+                    continue
+
+                # 写入新的 FeatureSnapshot
+                logb_record = FeatureRecord(
+                    bucket=anchor_bucket,
+                    scope=scope,
+                    name="logb",
+                    version=version,  # 使用与 wma 相同的 version
+                    value=logb_value,
+                    is_final=is_final_bar,
+                )
+                writer.write_many([logb_record])
+
+                logb_debug["computed"] += 1
+                if len(logb_debug["samples"]) < 6:
+                    logb_debug["samples"].append({
+                        "scope": scope,
+                        "version": version,
+                        "iphone_id": iphone_id,
+                        "wma": round(wma_value, 2),
+                        "official": official_price,
+                        "logb": round(logb_value, 4),
+                    })
+
+        # 发送进度通知
+        try:
+            notify_progress_all(data={
+                "type": "feature_logb_update",
+                "bucket": ts_iso,
+                "summary": {k: v for k, v in logb_debug.items() if k != "samples"},
+                "samples": logb_debug["samples"],
+            })
+        except Exception:
+            pass
+
+    except Exception as e:
+        try:
+            notify_progress_all(data={
+                "type": "feature_logb_error",
+                "bucket": ts_iso,
+                "error": repr(e),
+            })
+        except Exception:
+            pass
 
 
 # === 可调参数（根据你们前后端链路容量调节） ===
@@ -1427,10 +1620,10 @@ def get_dynamic_price_range(
 
     # 如果样本数不足，返回后备区间
     if len(prices) < min_samples:
-        logger.warning(
-            f"动态价格区间: iphone_id={iphone_id}, 样本数不足({len(prices)}/{min_samples}), "
-            f"使用后备区间 [{PRICE_FALLBACK_MIN}, {PRICE_FALLBACK_MAX}]"
-        )
+        # logger.warning(
+        #     f"动态价格区间: iphone_id={iphone_id}, 样本数不足({len(prices)}/{min_samples}), "
+        #     f"使用后备区间 [{PRICE_FALLBACK_MIN}, {PRICE_FALLBACK_MAX}]"
+        # )
         return PRICE_FALLBACK_MIN, PRICE_FALLBACK_MAX
 
     # 计算平均价格作为参考价格
@@ -1446,10 +1639,10 @@ def get_dynamic_price_range(
         price_min = reference_price * 0.9
         price_max = reference_price * 1.1
 
-    logger.info(
-        f"动态价格区间: iphone_id={iphone_id}, 样本数={len(prices)}, "
-        f"参考价格={reference_price:.0f}, 区间=[{price_min:.0f}, {price_max:.0f}]"
-    )
+    # logger.info(
+    #     f"动态价格区间: iphone_id={iphone_id}, 样本数={len(prices)}, "
+    #     f"参考价格={reference_price:.0f}, 区间=[{price_min:.0f}, {price_max:.0f}]"
+    # )
 
     return price_min, price_max
 
@@ -1651,13 +1844,18 @@ def _run_aggregation(
     agg_minutes: int,
 ):
     """
-    聚合调度器：按顺序调用 5 个子步骤：
+    聚合调度器：按顺序调用 6 个子步骤：
     1) OverallBar
     2) CohortBar
     3) FeatureSnapshot 四类组合
     4) 时间序列
     5) Bollinger Bands
+    6) Market Log Premium（市场 log 溢价）
     """
+    logger.info(
+        f"🔄 [FeatureSnapshot 聚合] 进入聚合流程 | "
+
+    )
     from django.utils import timezone
     from AppleStockChecker.models import OverallBar
     # FeatureWriter / FeatureRecord 需要在模块顶部 import：
@@ -1671,6 +1869,16 @@ def _run_aggregation(
     bucket_start = _to_aware(agg_start_iso) if (agg_minutes and agg_start_iso) else ts_dt
     bucket_end = bucket_start + timezone.timedelta(minutes=agg_minutes or 1)
     use_window = (agg_minutes or 1) > 1
+
+    # ========== FeatureSnapshot 聚合开始 ==========
+    logger.info(
+        f"🔄 [FeatureSnapshot 聚合] 开始计算 | "
+        f"时间点: {ts_iso} | "
+        f"窗口: {bucket_start.isoformat()} → {bucket_end.isoformat()} | "
+        f"聚合步长: {agg_minutes}分钟 | "
+        f"模式: {'窗口' if use_window else '单分钟'}"
+    )
+    # =============================================
 
     # === 统一锚点：所有 FeatureSnapshot / 派生指标的 bucket，都用 anchor_bucket ===
     anchor_bucket = bucket_start if use_window else ts_dt
@@ -1697,27 +1905,31 @@ def _run_aggregation(
         for f in OverallBar._meta.get_fields()
     )
 
-    # 1) OverallBar
-    _agg_overallbar(
-        ts_iso=ts_iso,
-        ts_dt=ts_dt,
-        rows=rows,
-        use_window=use_window,
-        bucket_start=bucket_start,
-        bucket_end=bucket_end,
-        is_final_bar=is_final_bar,
-        agg_ctx=agg_ctx,
-        ob_has_iphone=ob_has_iphone,
-    )
+    # ===== 已禁用：OverallBar 和 CohortBar 计算 =====
+    # 原因：主要使用 FeatureSnapshot 四类组合，无需全店聚合统计
+    # 如需恢复，取消下面的注释
 
-    # 2) CohortBar
-    _agg_cohortbar(
-        ts_iso=ts_iso,
-        ob_bucket=ob_bucket,
-        is_final_bar=is_final_bar,
-        agg_ctx=agg_ctx,
-        ob_has_iphone=ob_has_iphone,
-    )
+    # # 1) OverallBar
+    # _agg_overallbar(
+    #     ts_iso=ts_iso,
+    #     ts_dt=ts_dt,
+    #     rows=rows,
+    #     use_window=use_window,
+    #     bucket_start=bucket_start,
+    #     bucket_end=bucket_end,
+    #     is_final_bar=is_final_bar,
+    #     agg_ctx=agg_ctx,
+    #     ob_has_iphone=ob_has_iphone,
+    # )
+
+    # # 2) CohortBar
+    # _agg_cohortbar(
+    #     ts_iso=ts_iso,
+    #     ob_bucket=ob_bucket,
+    #     is_final_bar=is_final_bar,
+    #     agg_ctx=agg_ctx,
+    #     ob_has_iphone=ob_has_iphone,
+    # )
 
     # 3) FeatureSnapshot 四类组合
     _agg_feature_combos(
@@ -1731,6 +1943,16 @@ def _run_aggregation(
         agg_ctx=agg_ctx,
         is_final_bar=is_final_bar,
         writer=writer,
+    )
+
+    # 查询刚生成的 FeatureSnapshot 数据量
+    from AppleStockChecker.models import FeatureSnapshot
+    feature_count = FeatureSnapshot.objects.filter(bucket=anchor_bucket).count()
+    logger.info(
+        f"✅ [FeatureSnapshot 聚合] 完成 | "
+        f"时间点: {ts_iso} | "
+        f"bucket: {anchor_bucket.isoformat()} | "
+        f"生成记录数: {feature_count} 条"
     )
 
     # 4) 时间序列（返回 base_now 给 Bollinger 用）
@@ -1749,6 +1971,14 @@ def _run_aggregation(
         anchor_bucket=anchor_bucket,
         is_final_bar=is_final_bar,
         base_now=base_now,
+        writer=writer,
+    )
+
+    # 6) Market Log Premium
+    _agg_market_log_premium(
+        ts_iso=ts_iso,
+        anchor_bucket=anchor_bucket,
+        is_final_bar=is_final_bar,
         writer=writer,
     )
 
@@ -1781,6 +2011,7 @@ def psta_process_minute_bucket(
         task_ver=task_ver,
         **_compat,
     )
+
 
     normalized, meta = guard_params(
         "psta_process_minute_bucket",
@@ -3048,7 +3279,40 @@ def psta_process_minute_bucket(
 # --------------------------------------------------------
 # -----------------------------------------------------
 # -----------------------------------------------
-# 回调：聚合所有分钟桶，广播最终“done + 图表增量”
+# 辅助任务：用于 chain 模式下累积结果
+# -----------------------------------------------
+
+
+@shared_task(name="AppleStockChecker.tasks.psta_collect_result")
+def psta_collect_result(prev_result, current_result=None):
+    """
+    用于 chain 模式下累积所有子任务的结果。
+
+    Args:
+        prev_result: 上一个任务传递的累积结果列表，或单个结果字典
+        current_result: 当前任务的结果（用于首次调用）
+
+    Returns:
+        累积的结果列表
+    """
+    # 初始化累积列表
+    if prev_result is None:
+        accumulated = []
+    elif isinstance(prev_result, list):
+        accumulated = prev_result
+    else:
+        # 第一个结果是单个字典
+        accumulated = [prev_result]
+
+    # 添加当前结果
+    if current_result is not None:
+        accumulated.append(current_result)
+
+    return accumulated
+
+
+# -----------------------------------------------
+# 回调：聚合所有分钟桶，广播最终"done + 图表增量"
 # -----------------------------------------------
 
 
@@ -3266,6 +3530,7 @@ def batch_generate_psta_same_ts(
         agg_minutes: int = 15,  # 聚合步长
         agg_mode: str = "boundary",  # 'boundary'|'rolling'|'off'
         force_agg: bool = False,  # 强制本轮聚合
+        sequential: bool = False,  # 是否顺序执行子任务
 ) -> Dict[str, Any]:
     task_job_id = job_id or self.request.id
     ts_iso = timestamp_iso or nearest_past_minute_iso()
@@ -3323,7 +3588,10 @@ def batch_generate_psta_same_ts(
             do_agg_local = True
             agg_start_iso = _rolling_start(mdt, int(agg_minutes)).isoformat()
         else:  # boundary
-            do_agg_local = bool(force_agg) or is_boundary
+            # 修复：只在边界分钟聚合，不在所有分钟都聚合
+            # force_agg 参数保留用于向后兼容，但不再影响非边界分钟的聚合行为
+            # 原问题：force_agg=True 会让所有15个分钟桶都聚合，产生大量趋近于零的不准确数值
+            do_agg_local = is_boundary
             agg_start_iso = boundary.isoformat()
 
         # 若 minute_rows 空，但 do_agg_local=True（例如边界分钟），仍然下发“仅聚合”的子任务
@@ -3359,10 +3627,61 @@ def batch_generate_psta_same_ts(
             pass
         return empty
 
-    callback = psta_finalize_buckets.s(job_id=task_job_id, ts_iso=ts_iso, agg_ctx=ctx,
-                                       task_ver=TASK_VER_PSTA)  # 可把 ctx 传给回调（可选）
-    chord_result = chord(subtasks)(callback)
-    return {"timestamp": ts_iso, "total_buckets": len(subtasks), "job_id": task_job_id, "chord_id": chord_result.id}
+    # 根据 sequential 参数选择执行方式
+    if sequential:
+        # 顺序执行模式：逐个执行子任务并收集结果
+        results = []
+        for i, subtask in enumerate(subtasks):
+            try:
+                # 同步调用子任务（阻塞等待完成）
+                result = subtask.apply().get()
+                results.append(result)
+
+                # 可选：报告进度
+                try:
+                    notify_progress_all(
+                        data={
+                            "status": "running",
+                            "step": f"processing_bucket_{i+1}",
+                            "progress": int((i + 1) * 100 / len(subtasks)),
+                            "current": i + 1,
+                            "total": len(subtasks),
+                            "timestamp": ts_iso,
+                        }
+                    )
+                except Exception:
+                    pass
+            except Exception as e:
+                # 记录错误但继续执行
+                results.append({
+                    "ok": 0,
+                    "failed": 1,
+                    "error": str(e),
+                    "error_hist": {"sequential_execution_error": 1},
+                })
+
+        # 直接调用 finalize 处理结果
+        final_result = psta_finalize_buckets(
+            results=results,
+            job_id=task_job_id,
+            ts_iso=ts_iso,
+            agg_ctx=ctx,
+            task_ver=TASK_VER_PSTA,
+        )
+        return {
+            "timestamp": ts_iso,
+            "total_buckets": len(subtasks),
+            "job_id": task_job_id,
+            "sequential": True,
+            "result": final_result,
+        }
+    else:
+        # 并发执行模式（默认）：使用 chord
+        callback = psta_finalize_buckets.s(job_id=task_job_id, ts_iso=ts_iso, agg_ctx=ctx,
+                                           task_ver=TASK_VER_PSTA)  # 可把 ctx 传给回调（可选）
+        chord_result = chord(subtasks)(callback)
+        return {"timestamp": ts_iso, "total_buckets": len(subtasks), "job_id": task_job_id, "chord_id": chord_result.id}
+
 # -----------------------------------------------------
 # --------------------------------------------------------
 # -----------------------------------------------------------

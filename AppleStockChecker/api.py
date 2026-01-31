@@ -97,10 +97,11 @@ def dispatch_psta_batch_same_ts(request):
             "iphone_ids": body.get("iphone_ids"),
             "max_items": body.get("max_items"),
 
-            # ✅ 新参数（统一用这三个）
+            # ✅ 新参数（统一用这四个）
             "agg_minutes": int(body.get("agg_minutes", 15)),  # 聚合步长（1/5/15）
             "agg_mode": (body.get("agg_mode") or "boundary").lower(),  # 'boundary' | 'rolling' | 'off'
             "force_agg": bool(body.get("force_agg", False)),  # 强制本轮聚合
+            "sequential": bool(body.get("sequential", False)),  # 是否顺序执行（默认并发）
         },
         task_id=job_id,
     )
