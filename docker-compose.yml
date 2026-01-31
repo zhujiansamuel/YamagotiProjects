@@ -1,62 +1,13 @@
 version: '3.8'
 
 services:
-  # PostgreSQL 数据库
-  db:
-    image: postgres:16-alpine
-    container_name: yapp_postgres
-    environment:
-      POSTGRES_DB: applestockchecker_dev
-      POSTGRES_USER: samuelzhu
-      POSTGRES_PASSWORD: Xdb73008762
-      # 增加最大连接数，为 PgBouncer 提供足够的后端连接
-      POSTGRES_INITDB_ARGS: "-c max_connections=200"
-    command:
-      - "postgres"
-      - "-c"
-      - "max_connections=200"
-      - "-c"
-      - "shared_buffers=256MB"
-      - "-c"
-      - "effective_cache_size=1GB"
-      - "-c"
-      - "maintenance_work_mem=64MB"
-      - "-c"
-      - "checkpoint_completion_target=0.9"
-      - "-c"
-      - "wal_buffers=16MB"
-      - "-c"
-      - "default_statistics_target=100"
-      - "-c"
-      - "random_page_cost=1.1"
-      - "-c"
-      - "effective_io_concurrency=200"
-      - "-c"
-      - "work_mem=5242kB"
-      - "-c"
-      - "huge_pages=off"
-      - "-c"
-      - "min_wal_size=1GB"
-      - "-c"
-      - "max_wal_size=4GB"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5433:5432"  # 外部访问端口
-    networks:
-      - yapp_network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U samuelzhu -d applestockchecker_dev"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   # PgBouncer 连接池 - 事务池模式
+  # 连接的 PostgreSQL 由 .env 中 PG_* 变量决定（外部数据库）
   pgbouncer:
-    image: edoburu/pgbouncer:1.21.0
+    image: edoburu/pgbouncer:1.21.0-p0
     container_name: yapp_pgbouncer
     environment:
-      DATABASE_URL: "postgres://samuelzhu:Xdb73008762@db:5432/applestockchecker_dev"
+      DATABASE_URL: "postgres://${PG_USER}:${PG_PASSWORD}@${PG_HOST}:${PG_PORT}/${PG_DATABASE}"
       POOL_MODE: transaction  # 事务池模式，每个事务结束后释放连接
       MAX_CLIENT_CONN: 1000   # 最大客户端连接数
       DEFAULT_POOL_SIZE: 25   # 每个数据库的默认连接池大小
@@ -71,9 +22,8 @@ services:
       QUERY_TIMEOUT: 0        # 查询超时（0=禁用）
       CLIENT_IDLE_TIMEOUT: 0  # 客户端空闲超时（0=禁用）
       IGNORE_STARTUP_PARAMETERS: extra_float_digits
-    depends_on:
-      db:
-        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Linux 兼容
     ports:
       - "6432:5432"  # PgBouncer 端口
     networks:
@@ -111,9 +61,13 @@ services:
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - DATABASE_URL=postgres://samuelzhu:Xdb73008762@pgbouncer:5432/applestockchecker_dev
       - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
       - USE_PGBOUNCER=true
+      - PGBOUNCER_HOST=pgbouncer
+      - PGBOUNCER_PORT=5432
+      - PGBOUNCER_DATABASE=${PG_DATABASE}
+      - PGBOUNCER_USER=${PG_USER}
+      - PGBOUNCER_PASSWORD=${PG_PASSWORD}
     depends_on:
       redis:
         condition: service_healthy
@@ -135,9 +89,13 @@ services:
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - DATABASE_URL=postgres://samuelzhu:Xdb73008762@pgbouncer:5432/applestockchecker_dev
       - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
       - USE_PGBOUNCER=true
+      - PGBOUNCER_HOST=pgbouncer
+      - PGBOUNCER_PORT=5432
+      - PGBOUNCER_DATABASE=${PG_DATABASE}
+      - PGBOUNCER_USER=${PG_USER}
+      - PGBOUNCER_PASSWORD=${PG_PASSWORD}
     depends_on:
       redis:
         condition: service_healthy
@@ -159,9 +117,13 @@ services:
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - DATABASE_URL=postgres://samuelzhu:Xdb73008762@pgbouncer:5432/applestockchecker_dev
       - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
       - USE_PGBOUNCER=true
+      - PGBOUNCER_HOST=pgbouncer
+      - PGBOUNCER_PORT=5432
+      - PGBOUNCER_DATABASE=${PG_DATABASE}
+      - PGBOUNCER_USER=${PG_USER}
+      - PGBOUNCER_PASSWORD=${PG_PASSWORD}
     depends_on:
       redis:
         condition: service_healthy
@@ -183,9 +145,13 @@ services:
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - DATABASE_URL=postgres://samuelzhu:Xdb73008762@pgbouncer:5432/applestockchecker_dev
       - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
       - USE_PGBOUNCER=true
+      - PGBOUNCER_HOST=pgbouncer
+      - PGBOUNCER_PORT=5432
+      - PGBOUNCER_DATABASE=${PG_DATABASE}
+      - PGBOUNCER_USER=${PG_USER}
+      - PGBOUNCER_PASSWORD=${PG_PASSWORD}
     depends_on:
       redis:
         condition: service_healthy
@@ -207,9 +173,13 @@ services:
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - DATABASE_URL=postgres://samuelzhu:Xdb73008762@pgbouncer:5432/applestockchecker_dev
       - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
       - USE_PGBOUNCER=true
+      - PGBOUNCER_HOST=pgbouncer
+      - PGBOUNCER_PORT=5432
+      - PGBOUNCER_DATABASE=${PG_DATABASE}
+      - PGBOUNCER_USER=${PG_USER}
+      - PGBOUNCER_PASSWORD=${PG_PASSWORD}
     depends_on:
       redis:
         condition: service_healthy
@@ -231,9 +201,13 @@ services:
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - DATABASE_URL=postgres://samuelzhu:Xdb73008762@pgbouncer:5432/applestockchecker_dev
       - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
       - USE_PGBOUNCER=true
+      - PGBOUNCER_HOST=pgbouncer
+      - PGBOUNCER_PORT=5432
+      - PGBOUNCER_DATABASE=${PG_DATABASE}
+      - PGBOUNCER_USER=${PG_USER}
+      - PGBOUNCER_PASSWORD=${PG_PASSWORD}
     depends_on:
       redis:
         condition: service_healthy
@@ -258,11 +232,13 @@ services:
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - DATABASE_URL=postgres://samuelzhu:Xdb73008762@pgbouncer:5432/applestockchecker_dev
       - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
       - USE_PGBOUNCER=true
       - PGBOUNCER_HOST=pgbouncer
       - PGBOUNCER_PORT=5432
+      - PGBOUNCER_DATABASE=${PG_DATABASE}
+      - PGBOUNCER_USER=${PG_USER}
+      - PGBOUNCER_PASSWORD=${PG_PASSWORD}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - DJANGO_DEBUG=True
@@ -310,8 +286,6 @@ services:
     restart: unless-stopped
 
 volumes:
-  postgres_data:
-    driver: local
   redis_data:
     driver: local
   static_data:

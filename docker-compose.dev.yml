@@ -2,7 +2,7 @@
 # 使用方法: docker compose -f docker-compose.dev.yml up -d
 #
 # 特点:
-# - 只启动基础服务 (db, redis, pgbouncer) + web
+# - 直接复用宿主机已有的 local-pg (postgres:5433)，不再启动 db/pgbouncer
 # - Celery workers 可选启动
 # - 代码热重载
 # - 本地开发更轻量
@@ -10,55 +10,6 @@
 version: '3.8'
 
 services:
-  # PostgreSQL 数据库
-  db:
-    image: postgres:16-alpine
-    container_name: yapp_postgres_dev
-    environment:
-      POSTGRES_DB: applestockchecker_dev
-      POSTGRES_USER: samuelzhu
-      POSTGRES_PASSWORD: Xdb73008762
-    command:
-      - "postgres"
-      - "-c"
-      - "max_connections=100"
-      - "-c"
-      - "shared_buffers=128MB"
-    volumes:
-      - postgres_data_dev:/var/lib/postgresql/data
-    ports:
-      - "5433:5432"
-    networks:
-      - yapp_network_dev
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U samuelzhu -d applestockchecker_dev"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # PgBouncer 连接池
-  pgbouncer:
-    image: edoburu/pgbouncer:1.21.0
-    container_name: yapp_pgbouncer_dev
-    environment:
-      DATABASE_URL: "postgres://samuelzhu:Xdb73008762@db:5432/applestockchecker_dev"
-      POOL_MODE: transaction
-      MAX_CLIENT_CONN: 200
-      DEFAULT_POOL_SIZE: 20
-      IGNORE_STARTUP_PARAMETERS: extra_float_digits
-    depends_on:
-      db:
-        condition: service_healthy
-    ports:
-      - "6432:5432"
-    networks:
-      - yapp_network_dev
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h localhost -p 5432"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   # Redis
   redis:
     image: redis:7-alpine
@@ -90,12 +41,12 @@ services:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
-      - USE_PGBOUNCER=true
-      - PGBOUNCER_HOST=pgbouncer
-      - PGBOUNCER_PORT=5432
-      - PGBOUNCER_DATABASE=applestockchecker_dev
-      - PGBOUNCER_USER=samuelzhu
-      - PGBOUNCER_PASSWORD=Xdb73008762
+      - USE_PGBOUNCER=false
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5433
+      - POSTGRES_DATABASE=applestockchecker_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=localpass
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - DJANGO_DEBUG=True
@@ -103,8 +54,6 @@ services:
       - DJANGO_ENV=dev
     depends_on:
       redis:
-        condition: service_healthy
-      pgbouncer:
         condition: service_healthy
     ports:
       - "8000:8000"
@@ -127,16 +76,14 @@ services:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
-      - USE_PGBOUNCER=true
-      - PGBOUNCER_HOST=pgbouncer
-      - PGBOUNCER_PORT=5432
-      - PGBOUNCER_DATABASE=applestockchecker_dev
-      - PGBOUNCER_USER=samuelzhu
-      - PGBOUNCER_PASSWORD=Xdb73008762
+      - USE_PGBOUNCER=false
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5433
+      - POSTGRES_DATABASE=applestockchecker_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=localpass
     depends_on:
       redis:
-        condition: service_healthy
-      pgbouncer:
         condition: service_healthy
     networks:
       - yapp_network_dev
@@ -145,6 +92,118 @@ services:
     restart: unless-stopped
     profiles:
       - celery  # 使用 --profile celery 启动
+
+  # Celery Worker - WebScraper 专用队列 (开发时可选)
+  celery_worker_webscraper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_webscraper_dev
+    command: celery -A YamagotiProjects worker -Q webscraper -l info -c 2 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=false
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5433
+      - POSTGRES_DATABASE=applestockchecker_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=localpass
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - yapp_network_dev
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    profiles:
+      - celery
+
+  # Celery Worker - AutoML Preprocessing 专用队列 (开发时可选)
+  celery_worker_automl_preprocessing:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_automl_preprocessing_dev
+    command: celery -A YamagotiProjects worker -Q automl_preprocessing -l info -c 2 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=false
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5433
+      - POSTGRES_DATABASE=applestockchecker_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=localpass
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - yapp_network_dev
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    profiles:
+      - celery
+
+  # Celery Worker - AutoML Cause and Effect Testing 专用队列 (开发时可选)
+  celery_worker_automl_cause_effect:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_automl_cause_effect_dev
+    command: celery -A YamagotiProjects worker -Q automl_cause_effect -l info -c 2 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=false
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5433
+      - POSTGRES_DATABASE=applestockchecker_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=localpass
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - yapp_network_dev
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    profiles:
+      - celery
+
+  # Celery Worker - AutoML Quantification of Impact 专用队列 (开发时可选)
+  celery_worker_automl_impact:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_automl_impact_dev
+    command: celery -A YamagotiProjects worker -Q automl_impact -l info -c 2 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=false
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5433
+      - POSTGRES_DATABASE=applestockchecker_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=localpass
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - yapp_network_dev
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    profiles:
+      - celery
 
   # Celery Beat (开发时可选)
   celery_beat:
@@ -157,16 +216,14 @@ services:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
-      - USE_PGBOUNCER=true
-      - PGBOUNCER_HOST=pgbouncer
-      - PGBOUNCER_PORT=5432
-      - PGBOUNCER_DATABASE=applestockchecker_dev
-      - PGBOUNCER_USER=samuelzhu
-      - PGBOUNCER_PASSWORD=Xdb73008762
+      - USE_PGBOUNCER=false
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5433
+      - POSTGRES_DATABASE=applestockchecker_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=localpass
     depends_on:
       redis:
-        condition: service_healthy
-      pgbouncer:
         condition: service_healthy
     networks:
       - yapp_network_dev
@@ -200,8 +257,6 @@ services:
       - celery  # 使用 --profile celery 启动
 
 volumes:
-  postgres_data_dev:
-    driver: local
   redis_data_dev:
     driver: local
   static_data_dev:

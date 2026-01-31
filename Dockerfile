@@ -1,5 +1,8 @@
 # Dockerfile for YamagotiProjects (AppleStockChecker)
+# 默认使用 CPU 版依赖；GPU 环境可构建时覆盖: --build-arg REQUIREMENTS=requirements.txt
+ARG REQUIREMENTS=requirements-cpu.txt
 FROM python:3.11-slim
+ARG REQUIREMENTS=requirements-cpu.txt
 
 # 设置工作目录
 WORKDIR /app
@@ -18,13 +21,11 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制依赖文件
+# 复制依赖文件并安装
+COPY requirements-cpu.txt .
 COPY requirements.txt .
-
-# 安装 Python 依赖
 RUN pip install --upgrade pip && \
-    pip install -r requirements.txt && \
-    pip install daphne channels channels-redis whitenoise psycopg2-binary django-filter flower
+    pip install -r $REQUIREMENTS
 
 # 复制项目文件
 COPY . .
