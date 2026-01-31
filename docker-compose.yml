@@ -245,6 +245,49 @@ services:
       - .:/app
     restart: unless-stopped
 
+  # Django Web 服务 (ASGI with Daphne)
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_web
+    command: >
+      sh -c "python manage.py collectstatic --noinput &&
+             python manage.py migrate --noinput &&
+             daphne -b 0.0.0.0 -p 8000 YamagotiProjects.asgi:application"
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DATABASE_URL=postgres://samuelzhu:Xdb73008762@pgbouncer:5432/applestockchecker_dev
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=true
+      - PGBOUNCER_HOST=pgbouncer
+      - PGBOUNCER_PORT=5432
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - DJANGO_DEBUG=True
+      - DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1,web
+    depends_on:
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    networks:
+      - yapp_network
+    volumes:
+      - .:/app
+      - static_data:/app/staticfiles
+      - media_data:/app/media
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/admin/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
   # Flower - Celery 监控工具（可选）
   flower:
     build:
@@ -270,6 +313,10 @@ volumes:
   postgres_data:
     driver: local
   redis_data:
+    driver: local
+  static_data:
+    driver: local
+  media_data:
     driver: local
 
 networks:

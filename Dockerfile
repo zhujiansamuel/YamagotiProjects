@@ -23,7 +23,8 @@ COPY requirements.txt .
 
 # 安装 Python 依赖
 RUN pip install --upgrade pip && \
-    pip install -r requirements.txt
+    pip install -r requirements.txt && \
+    pip install daphne channels channels-redis whitenoise psycopg2-binary django-filter flower
 
 # 复制项目文件
 COPY . .
