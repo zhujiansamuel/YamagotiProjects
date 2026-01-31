@@ -351,7 +351,7 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "Asia/Tokyo"
 CELERY_ENABLE_UTC = False
-CELERY_TASK_ACKS_LATE = False  # 任务跑完才确认，异常能重派
+CELERY_TASK_ACKS_LATE = True  # 任务跑完才确认，异常能重派
 CELERY_TASK_REJECT_ON_WORKER_LOST = True  # WorkerLost 也回到队列
 CELERY_TASK_TRACK_STARTED = True
 
@@ -755,3 +755,45 @@ IPHONE_OFFICIAL_PRICES = {
     43: 229800,  # iPhone Air-1024-スカイブルー
 }
 
+
+# ============================================================================
+# Logging Configuration
+# ============================================================================
+LOG_DIR = BASE_DIR / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '{levelname} {asctime} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'simple',
+        },
+    },
+    'loggers': {
+        'AppleStockChecker.tasks.timestamp_alignment_task': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'AppleStockChecker': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+}

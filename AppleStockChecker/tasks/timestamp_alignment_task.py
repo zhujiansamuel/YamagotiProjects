@@ -691,8 +691,40 @@ def _agg_feature_combos(
 
     try:
         # —— 预取本桶出现过的 shop/iphone —— #
-        shops_seen = sorted({int(r.get("shop_id")) for r in rows if r.get("shop_id")})
-        iphones_seen = sorted({int(r.get("iphone_id")) for r in rows if r.get("iphone_id")})
+        # Bug修复: 窗口模式时应该从窗口内的 PSTA 数据提取 shop/iphone，而不是从 rows（单分钟数据）
+        # 原因: 边界分钟的 rows 可能为空，但窗口内仍有历史数据需要聚合
+        if use_window:
+            # 窗口模式: 从数据库查询窗口内所有的 shop_id 和 iphone_id
+            shops_seen = sorted(set(
+                PurchasingShopTimeAnalysis.objects
+                .filter(
+                    Timestamp_Time__gte=bucket_start,
+                    Timestamp_Time__lt=bucket_end,
+                    New_Product_Price__isnull=False,
+                )
+                .values_list('shop_id', flat=True)
+                .distinct()
+            ))
+            iphones_seen = sorted(set(
+                PurchasingShopTimeAnalysis.objects
+                .filter(
+                    Timestamp_Time__gte=bucket_start,
+                    Timestamp_Time__lt=bucket_end,
+                    New_Product_Price__isnull=False,
+                )
+                .values_list('iphone_id', flat=True)
+                .distinct()
+            ))
+        else:
+            # 单分钟模式: 从 rows 提取（原有逻辑）
+            shops_seen = sorted({int(r.get("shop_id")) for r in rows if r.get("shop_id")})
+            iphones_seen = sorted({int(r.get("iphone_id")) for r in rows if r.get("iphone_id")})
+
+        # 日志输出：数据提取情况
+        logger.info(
+            f"  📊 [数据源] shops: {len(shops_seen)}个, iphones: {len(iphones_seen)}个 | "
+            f"来源: {'窗口PSTA数据' if use_window else 'rows参数'}"
+        )
 
         if use_window:
             base_qs = (
@@ -1003,6 +1035,22 @@ def _agg_feature_combos(
                         })
         else:
             combo_debug["skipped"].append("case4: no ShopWeightProfile defined")
+
+        # 汇总日志输出
+        total_features = (
+            combo_debug["case1_shop_iphone"] +
+            combo_debug["case2_shopcohort_iphone"] +
+            combo_debug["case3_shop_cohortiphone"] +
+            combo_debug["case4_shopcohort_cohortiphone"]
+        )
+        logger.info(
+            f"  ✍️  [特征写入] "
+            f"Case1(shop×iphone): {combo_debug['case1_shop_iphone']}, "
+            f"Case2(shopcohort×iphone): {combo_debug['case2_shopcohort_iphone']}, "
+            f"Case3(shop×cohort): {combo_debug['case3_shop_cohortiphone']}, "
+            f"Case4(shopcohort×cohort): {combo_debug['case4_shopcohort_cohortiphone']} | "
+            f"总计: {total_features} 个组合"
+        )
 
         try:
             notify_progress_all(data={
@@ -1804,6 +1852,10 @@ def _run_aggregation(
     5) Bollinger Bands
     6) Market Log Premium（市场 log 溢价）
     """
+    logger.info(
+        f"🔄 [FeatureSnapshot 聚合] 进入聚合流程 | "
+
+    )
     from django.utils import timezone
     from AppleStockChecker.models import OverallBar
     # FeatureWriter / FeatureRecord 需要在模块顶部 import：
@@ -1817,6 +1869,16 @@ def _run_aggregation(
     bucket_start = _to_aware(agg_start_iso) if (agg_minutes and agg_start_iso) else ts_dt
     bucket_end = bucket_start + timezone.timedelta(minutes=agg_minutes or 1)
     use_window = (agg_minutes or 1) > 1
+
+    # ========== FeatureSnapshot 聚合开始 ==========
+    logger.info(
+        f"🔄 [FeatureSnapshot 聚合] 开始计算 | "
+        f"时间点: {ts_iso} | "
+        f"窗口: {bucket_start.isoformat()} → {bucket_end.isoformat()} | "
+        f"聚合步长: {agg_minutes}分钟 | "
+        f"模式: {'窗口' if use_window else '单分钟'}"
+    )
+    # =============================================
 
     # === 统一锚点：所有 FeatureSnapshot / 派生指标的 bucket，都用 anchor_bucket ===
     anchor_bucket = bucket_start if use_window else ts_dt
@@ -1883,6 +1945,16 @@ def _run_aggregation(
         writer=writer,
     )
 
+    # 查询刚生成的 FeatureSnapshot 数据量
+    from AppleStockChecker.models import FeatureSnapshot
+    feature_count = FeatureSnapshot.objects.filter(bucket=anchor_bucket).count()
+    logger.info(
+        f"✅ [FeatureSnapshot 聚合] 完成 | "
+        f"时间点: {ts_iso} | "
+        f"bucket: {anchor_bucket.isoformat()} | "
+        f"生成记录数: {feature_count} 条"
+    )
+
     # 4) 时间序列（返回 base_now 给 Bollinger 用）
     base_now = _agg_time_series_features(
         ts_iso=ts_iso,
@@ -1939,6 +2011,7 @@ def psta_process_minute_bucket(
         task_ver=task_ver,
         **_compat,
     )
+
 
     normalized, meta = guard_params(
         "psta_process_minute_bucket",
@@ -3515,7 +3588,10 @@ def batch_generate_psta_same_ts(
             do_agg_local = True
             agg_start_iso = _rolling_start(mdt, int(agg_minutes)).isoformat()
         else:  # boundary
-            do_agg_local = bool(force_agg) or is_boundary
+            # 修复：只在边界分钟聚合，不在所有分钟都聚合
+            # force_agg 参数保留用于向后兼容，但不再影响非边界分钟的聚合行为
+            # 原问题：force_agg=True 会让所有15个分钟桶都聚合，产生大量趋近于零的不准确数值
+            do_agg_local = is_boundary
             agg_start_iso = boundary.isoformat()
 
         # 若 minute_rows 空，但 do_agg_local=True（例如边界分钟），仍然下发“仅聚合”的子任务
