@@ -16,6 +16,7 @@ from .models import (
     ShopWeightProfile,
     ShopWeightItem,
     FeatureSpec,
+    DataIngestionLog,
 )
 
 
@@ -213,3 +214,121 @@ class FeatureSpecAdmin(admin.ModelAdmin):
     list_display = ("id","slug","family","base_name","active","version","created_at")
     list_filter = ("family","base_name","active","version")
     search_fields = ("slug","note")
+
+
+@admin.register(DataIngestionLog)
+class DataIngestionLogAdmin(admin.ModelAdmin):
+    list_display = (
+        "batch_id",
+        "task_type",
+        "source_name",
+        "status",
+        "rows_received",
+        "rows_inserted",
+        "rows_skipped",
+        "created_at",
+        "duration_total_display",
+    )
+    list_filter = (
+        "status",
+        "task_type",
+        "source_name",
+        "dry_run",
+        "dedupe",
+        "upsert",
+    )
+    search_fields = (
+        "batch_id",
+        "source_name",
+        "celery_task_id",
+        "cleaning_task_id",
+        "input_filename",
+        "input_job_id",
+    )
+    date_hierarchy = "created_at"
+    ordering = ("-created_at",)
+    readonly_fields = (
+        "batch_id",
+        "celery_task_id",
+        "cleaning_task_id",
+        "created_at",
+        "received_at",
+        "cleaning_started_at",
+        "completed_at",
+        "duration_receiving_display",
+        "duration_cleaning_display",
+        "duration_total_display",
+    )
+    fieldsets = (
+        ("基础信息", {
+            "fields": (
+                "batch_id",
+                "task_type",
+                "source_name",
+                "status",
+                "error_message",
+            )
+        }),
+        ("任务 ID", {
+            "fields": (
+                "celery_task_id",
+                "cleaning_task_id",
+                "cleaning_queue",
+            )
+        }),
+        ("时间节点", {
+            "fields": (
+                "created_at",
+                "received_at",
+                "cleaning_started_at",
+                "completed_at",
+                "duration_receiving_display",
+                "duration_cleaning_display",
+                "duration_total_display",
+            )
+        }),
+        ("输入信息", {
+            "fields": (
+                "input_filename",
+                "input_job_id",
+                "rows_received",
+            )
+        }),
+        ("清洗结果", {
+            "fields": (
+                "rows_after_cleaning",
+                "rows_inserted",
+                "rows_updated",
+                "rows_skipped",
+                "rows_unmatched",
+            )
+        }),
+        ("配置参数", {
+            "fields": (
+                "dry_run",
+                "dedupe",
+                "upsert",
+            )
+        }),
+    )
+
+    @admin.display(description="接收耗时")
+    def duration_receiving_display(self, obj):
+        duration = obj.duration_receiving
+        if duration is not None:
+            return f"{duration:.2f} 秒"
+        return "-"
+
+    @admin.display(description="清洗耗时")
+    def duration_cleaning_display(self, obj):
+        duration = obj.duration_cleaning
+        if duration is not None:
+            return f"{duration:.2f} 秒"
+        return "-"
+
+    @admin.display(description="总耗时")
+    def duration_total_display(self, obj):
+        duration = obj.duration_total
+        if duration is not None:
+            return f"{duration:.2f} 秒"
+        return "-"
