@@ -723,7 +723,7 @@ CHANNEL_LAYERS = {
     }
 }
 
-ASGI_APPLICATION = "config.asgi.application"
+ASGI_APPLICATION = "YamagotiProjects.asgi.application"
 DATA_UPLOAD_MAX_MEMORY_SIZE=10 * 1024 * 1024
 
 EXTERNAL_GOODS_API_URL=os.getenv("EXTERNAL_GOODS_API_URL", "http://localhost:8080")
