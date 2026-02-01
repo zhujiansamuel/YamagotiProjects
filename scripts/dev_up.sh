@@ -1,9 +1,10 @@
 #!/bin/bash
 # 启动开发环境服务
 # 用法:
-#   ./scripts/dev_up.sh          # 仅启动基础服务 + Web
-#   ./scripts/dev_up.sh --celery # 启动基础服务 + Web + Celery workers（含 shop 专用）
-#   ./scripts/dev_up.sh --all    # 启动所有服务（等同于 prod 模式）
+#   ./scripts/dev_up.sh               # 仅启动基础服务 + Web
+#   ./scripts/dev_up.sh --celery      # 启动基础服务 + Web + Celery workers（不含 shop 专用）
+#   ./scripts/dev_up.sh --shop-workers # 启动基础服务 + Web + 19个 Shop 专用 workers
+#   ./scripts/dev_up.sh --all         # 启动所有服务（等同于 prod 模式）
 
 set -e
 
@@ -14,12 +15,17 @@ cd "$PROJECT_DIR"
 
 # 解析参数
 WITH_CELERY=false
+WITH_SHOP_WORKERS=false
 ALL_SERVICES=false
 
 for arg in "$@"; do
     case $arg in
         --celery)
             WITH_CELERY=true
+            shift
+            ;;
+        --shop-workers)
+            WITH_SHOP_WORKERS=true
             shift
             ;;
         --all)
@@ -36,8 +42,19 @@ echo "========================================"
 if [ "$ALL_SERVICES" = true ]; then
     echo "模式: 全服务 (使用 docker-compose.yml)"
     docker compose up -d
+elif [ "$WITH_SHOP_WORKERS" = true ]; then
+    echo "模式: Web + 19个 Shop 专用 Workers (使用 docker-compose.dev.yml)"
+    echo ""
+    echo "启动的 Shop Workers:"
+    echo "  - shop1, shop2, shop3, shop4"
+    echo "  - shop5 (并发 2, 处理 shop5_1~4)"
+    echo "  - shop6 (并发 2, 处理 shop6_1~4)"
+    echo "  - shop7, shop8, shop9, shop10, shop11, shop12"
+    echo "  - shop13, shop14, shop15, shop16, shop17, shop18, shop20"
+    echo ""
+    docker compose -f docker-compose.dev.yml --profile shop-workers up -d
 elif [ "$WITH_CELERY" = true ]; then
-    echo "模式: Web + Celery (使用 docker-compose.dev.yml，含 shop 专用 worker)"
+    echo "模式: Web + Celery (使用 docker-compose.dev.yml，不含 shop 专用 workers)"
     docker compose -f docker-compose.dev.yml --profile celery up -d
 else
     echo "模式: 仅 Web (使用 docker-compose.dev.yml)"
@@ -68,8 +85,14 @@ echo "  - Django Admin:   http://localhost:8000/admin/"
 echo "  - PostgreSQL:     localhost:5433"
 echo "  - PgBouncer:      localhost:6432"
 echo "  - Redis:          localhost:6379"
-if [ "$WITH_CELERY" = true ] || [ "$ALL_SERVICES" = true ]; then
+if [ "$WITH_CELERY" = true ] || [ "$WITH_SHOP_WORKERS" = true ] || [ "$ALL_SERVICES" = true ]; then
 echo "  - Flower:         http://localhost:5555"
+fi
+if [ "$WITH_SHOP_WORKERS" = true ]; then
+echo ""
+echo "Shop Workers (共 19 个):"
+echo "  - shop1~4, shop7~18, shop20: 并发数 1"
+echo "  - shop5, shop6: 并发数 2 (处理多个子店铺)"
 fi
 echo ""
 echo "常用命令:"
