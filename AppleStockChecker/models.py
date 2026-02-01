@@ -743,3 +743,206 @@ class AutomlCausalEdge(models.Model):
 
     def __str__(self):
         return f"{self.cause_shop.name} → {self.effect_shop.name} (weight={self.weight:.3f}, lag={self.main_lag})"
+
+
+# ============================================================================
+# 数据摄入日志模型
+# ============================================================================
+
+class DataIngestionLog(models.Model):
+    """
+    数据摄入日志：记录 task_process_xlsx、task_process_webscraper_job、
+    task_ingest_json_shop1 等任务的完整生命周期
+    """
+
+    class TaskType(models.TextChoices):
+        XLSX = "xlsx", "XLSX/CSV 文件导入"
+        WEBSCRAPER = "webscraper", "WebScraper 数据拉取"
+        JSON_SHOP1 = "json_shop1", "Shop1 JSON 直接摄入"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "待处理"
+        RECEIVING = "receiving", "数据接收中"
+        CLEANING = "cleaning", "清洗中"
+        COMPLETED = "completed", "已完成"
+        FAILED = "failed", "失败"
+
+    # ========== 主键 ==========
+    batch_id = models.UUIDField(
+        "批次ID",
+        primary_key=True,
+        editable=False,
+        help_text="批次唯一标识（uuid4）",
+    )
+
+    # ========== 基础信息 ==========
+    task_type = models.CharField(
+        "任务类型",
+        max_length=20,
+        choices=TaskType.choices,
+        db_index=True,
+    )
+    source_name = models.CharField(
+        "数据源名称",
+        max_length=64,
+        db_index=True,
+        help_text="如 shop1, shop2, shop5_1 等",
+    )
+    celery_task_id = models.CharField(
+        "Celery 接收任务ID",
+        max_length=64,
+        blank=True,
+        default="",
+        db_index=True,
+    )
+    cleaning_task_id = models.CharField(
+        "Celery 清洗任务ID",
+        max_length=64,
+        blank=True,
+        default="",
+        db_index=True,
+    )
+    cleaning_queue = models.CharField(
+        "清洗队列名",
+        max_length=64,
+        blank=True,
+        default="",
+        help_text="实际路由到的队列，如 shop_shop1",
+    )
+
+    # ========== 时间节点 ==========
+    created_at = models.DateTimeField(
+        "任务创建时间",
+        auto_now_add=True,
+        db_index=True,
+    )
+    received_at = models.DateTimeField(
+        "数据接收完成时间",
+        null=True,
+        blank=True,
+        help_text="解析/拉取成功的时间",
+    )
+    cleaning_started_at = models.DateTimeField(
+        "清洗开始时间",
+        null=True,
+        blank=True,
+    )
+    completed_at = models.DateTimeField(
+        "清洗完成时间",
+        null=True,
+        blank=True,
+    )
+
+    # ========== 状态信息 ==========
+    status = models.CharField(
+        "状态",
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+        db_index=True,
+    )
+    error_message = models.TextField(
+        "错误信息",
+        blank=True,
+        default="",
+    )
+
+    # ========== 输入信息 ==========
+    input_filename = models.CharField(
+        "输入文件名",
+        max_length=255,
+        blank=True,
+        default="",
+        help_text="XLSX/CSV 文件名",
+    )
+    input_job_id = models.CharField(
+        "WebScraper Job ID",
+        max_length=64,
+        blank=True,
+        default="",
+        help_text="WebScraper 任务 ID",
+    )
+    rows_received = models.PositiveIntegerField(
+        "接收行数",
+        null=True,
+        blank=True,
+        help_text="原始数据行数",
+    )
+
+    # ========== 清洗结果统计 ==========
+    rows_after_cleaning = models.PositiveIntegerField(
+        "清洗后行数",
+        null=True,
+        blank=True,
+    )
+    rows_inserted = models.PositiveIntegerField(
+        "新插入行数",
+        null=True,
+        blank=True,
+    )
+    rows_updated = models.PositiveIntegerField(
+        "更新行数",
+        null=True,
+        blank=True,
+        help_text="upsert 模式下更新的行数",
+    )
+    rows_skipped = models.PositiveIntegerField(
+        "跳过行数",
+        null=True,
+        blank=True,
+        help_text="去重跳过的行数",
+    )
+    rows_unmatched = models.PositiveIntegerField(
+        "未匹配行数",
+        null=True,
+        blank=True,
+        help_text="未找到对应 iPhone 的行数",
+    )
+
+    # ========== 配置参数 ==========
+    dry_run = models.BooleanField(
+        "仅预览",
+        default=False,
+    )
+    dedupe = models.BooleanField(
+        "启用去重",
+        default=True,
+    )
+    upsert = models.BooleanField(
+        "启用更新",
+        default=False,
+    )
+
+    class Meta:
+        verbose_name = "数据摄入日志"
+        verbose_name_plural = "数据摄入日志"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["task_type", "-created_at"], name="idx_dil_type_time"),
+            models.Index(fields=["source_name", "-created_at"], name="idx_dil_source_time"),
+            models.Index(fields=["status", "-created_at"], name="idx_dil_status_time"),
+        ]
+
+    def __str__(self):
+        return f"[{self.status}] {self.task_type} - {self.source_name} @ {self.created_at:%Y-%m-%d %H:%M}"
+
+    @property
+    def duration_receiving(self):
+        """数据接收耗时（秒）"""
+        if self.received_at and self.created_at:
+            return (self.received_at - self.created_at).total_seconds()
+        return None
+
+    @property
+    def duration_cleaning(self):
+        """清洗耗时（秒）"""
+        if self.completed_at and self.cleaning_started_at:
+            return (self.completed_at - self.cleaning_started_at).total_seconds()
+        return None
+
+    @property
+    def duration_total(self):
+        """总耗时（秒）"""
+        if self.completed_at and self.created_at:
+            return (self.completed_at - self.created_at).total_seconds()
+        return None

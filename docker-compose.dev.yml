@@ -120,6 +120,7 @@ services:
     restart: unless-stopped
     profiles:
       - celery
+      - shop-workers
 
   # Celery Worker - Shop1 数据清洗专用队列 (开发时可选)
   celery_worker_shop1:
@@ -148,6 +149,511 @@ services:
     restart: unless-stopped
     profiles:
       - celery
+      - shop-workers
+
+  # Celery Worker - Shop2 数据清洗专用队列 (开发时可选)
+  celery_worker_shop2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_shop2_dev
+    command: celery -A YamagotiProjects worker -Q shop_shop2 -l info -c 1 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=false
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5433
+      - POSTGRES_DATABASE=applestockchecker_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=localpass
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - yapp_network_dev
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    profiles:
+      - shop-workers
+
+  # Celery Worker - Shop3 数据清洗专用队列 (开发时可选)
+  celery_worker_shop3:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_shop3_dev
+    command: celery -A YamagotiProjects worker -Q shop_shop3 -l info -c 1 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=false
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5433
+      - POSTGRES_DATABASE=applestockchecker_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=localpass
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - yapp_network_dev
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    profiles:
+      - shop-workers
+
+  # Celery Worker - Shop4 数据清洗专用队列 (开发时可选)
+  celery_worker_shop4:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_shop4_dev
+    command: celery -A YamagotiProjects worker -Q shop_shop4 -l info -c 1 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=false
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5433
+      - POSTGRES_DATABASE=applestockchecker_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=localpass
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - yapp_network_dev
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    profiles:
+      - shop-workers
+
+  # Celery Worker - Shop5 数据清洗专用队列 (处理 shop5_1~4, 并发数 2)
+  celery_worker_shop5:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_shop5_dev
+    command: celery -A YamagotiProjects worker -Q shop_shop5 -l info -c 2 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=false
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5433
+      - POSTGRES_DATABASE=applestockchecker_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=localpass
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - yapp_network_dev
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    profiles:
+      - shop-workers
+
+  # Celery Worker - Shop6 数据清洗专用队列 (处理 shop6_1~4, 并发数 2)
+  celery_worker_shop6:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_shop6_dev
+    command: celery -A YamagotiProjects worker -Q shop_shop6 -l info -c 2 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=false
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5433
+      - POSTGRES_DATABASE=applestockchecker_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=localpass
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - yapp_network_dev
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    profiles:
+      - shop-workers
+
+  # Celery Worker - Shop7 数据清洗专用队列 (开发时可选)
+  celery_worker_shop7:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_shop7_dev
+    command: celery -A YamagotiProjects worker -Q shop_shop7 -l info -c 1 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=false
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5433
+      - POSTGRES_DATABASE=applestockchecker_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=localpass
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - yapp_network_dev
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    profiles:
+      - shop-workers
+
+  # Celery Worker - Shop8 数据清洗专用队列 (开发时可选)
+  celery_worker_shop8:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_shop8_dev
+    command: celery -A YamagotiProjects worker -Q shop_shop8 -l info -c 1 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=false
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5433
+      - POSTGRES_DATABASE=applestockchecker_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=localpass
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - yapp_network_dev
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    profiles:
+      - shop-workers
+
+  # Celery Worker - Shop9 数据清洗专用队列 (开发时可选)
+  celery_worker_shop9:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_shop9_dev
+    command: celery -A YamagotiProjects worker -Q shop_shop9 -l info -c 1 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=false
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5433
+      - POSTGRES_DATABASE=applestockchecker_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=localpass
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - yapp_network_dev
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    profiles:
+      - shop-workers
+
+  # Celery Worker - Shop10 数据清洗专用队列 (开发时可选)
+  celery_worker_shop10:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_shop10_dev
+    command: celery -A YamagotiProjects worker -Q shop_shop10 -l info -c 1 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=false
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5433
+      - POSTGRES_DATABASE=applestockchecker_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=localpass
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - yapp_network_dev
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    profiles:
+      - shop-workers
+
+  # Celery Worker - Shop11 数据清洗专用队列 (开发时可选)
+  celery_worker_shop11:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_shop11_dev
+    command: celery -A YamagotiProjects worker -Q shop_shop11 -l info -c 1 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=false
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5433
+      - POSTGRES_DATABASE=applestockchecker_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=localpass
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - yapp_network_dev
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    profiles:
+      - shop-workers
+
+  # Celery Worker - Shop12 数据清洗专用队列 (开发时可选)
+  celery_worker_shop12:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_shop12_dev
+    command: celery -A YamagotiProjects worker -Q shop_shop12 -l info -c 1 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=false
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5433
+      - POSTGRES_DATABASE=applestockchecker_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=localpass
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - yapp_network_dev
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    profiles:
+      - shop-workers
+
+  # Celery Worker - Shop13 数据清洗专用队列 (开发时可选)
+  celery_worker_shop13:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_shop13_dev
+    command: celery -A YamagotiProjects worker -Q shop_shop13 -l info -c 1 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=false
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5433
+      - POSTGRES_DATABASE=applestockchecker_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=localpass
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - yapp_network_dev
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    profiles:
+      - shop-workers
+
+  # Celery Worker - Shop14 数据清洗专用队列 (开发时可选)
+  celery_worker_shop14:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_shop14_dev
+    command: celery -A YamagotiProjects worker -Q shop_shop14 -l info -c 1 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=false
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5433
+      - POSTGRES_DATABASE=applestockchecker_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=localpass
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - yapp_network_dev
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    profiles:
+      - shop-workers
+
+  # Celery Worker - Shop15 数据清洗专用队列 (开发时可选)
+  celery_worker_shop15:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_shop15_dev
+    command: celery -A YamagotiProjects worker -Q shop_shop15 -l info -c 1 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=false
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5433
+      - POSTGRES_DATABASE=applestockchecker_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=localpass
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - yapp_network_dev
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    profiles:
+      - shop-workers
+
+  # Celery Worker - Shop16 数据清洗专用队列 (开发时可选)
+  celery_worker_shop16:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_shop16_dev
+    command: celery -A YamagotiProjects worker -Q shop_shop16 -l info -c 1 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=false
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5433
+      - POSTGRES_DATABASE=applestockchecker_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=localpass
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - yapp_network_dev
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    profiles:
+      - shop-workers
+
+  # Celery Worker - Shop17 数据清洗专用队列 (开发时可选)
+  celery_worker_shop17:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_shop17_dev
+    command: celery -A YamagotiProjects worker -Q shop_shop17 -l info -c 1 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=false
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5433
+      - POSTGRES_DATABASE=applestockchecker_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=localpass
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - yapp_network_dev
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    profiles:
+      - shop-workers
+
+  # Celery Worker - Shop18 数据清洗专用队列 (开发时可选)
+  celery_worker_shop18:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_shop18_dev
+    command: celery -A YamagotiProjects worker -Q shop_shop18 -l info -c 1 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=false
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5433
+      - POSTGRES_DATABASE=applestockchecker_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=localpass
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - yapp_network_dev
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    profiles:
+      - shop-workers
+
+  # Celery Worker - Shop20 数据清洗专用队列 (开发时可选)
+  celery_worker_shop20:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yapp_celery_shop20_dev
+    command: celery -A YamagotiProjects worker -Q shop_shop20 -l info -c 1 --max-tasks-per-child=100
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=YamagotiProjects.settings
+      - USE_PGBOUNCER=false
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5433
+      - POSTGRES_DATABASE=applestockchecker_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=localpass
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - yapp_network_dev
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    profiles:
+      - shop-workers
 
   # Celery Worker - AutoML Preprocessing 专用队列 (开发时可选)
   celery_worker_automl_preprocessing:
@@ -282,7 +788,8 @@ services:
       - .:/app
     restart: unless-stopped
     profiles:
-      - celery  # 使用 --profile celery 启动
+      - celery
+      - shop-workers
 
 volumes:
   redis_data_dev:

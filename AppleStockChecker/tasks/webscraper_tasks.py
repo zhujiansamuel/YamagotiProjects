@@ -26,7 +26,7 @@ from django.db import transaction
 from django.db.utils import OperationalError
 from django.utils import timezone
 
-from AppleStockChecker.models import Iphone, SecondHandShop, PurchasingShopPriceRecord
+from AppleStockChecker.models import Iphone, SecondHandShop, PurchasingShopPriceRecord, DataIngestionLog
 from AppleStockChecker.utils.external_ingest.registry import run_cleaner
 from AppleStockChecker.utils.external_ingest.webscraper import fetch_webscraper_export_sync
 from AppleStockChecker.utils.redis_temp_storage import (
@@ -38,6 +38,112 @@ from AppleStockChecker.utils.shop_queue_mapping import (
     get_shop_queue,
     get_cleaner_name,
 )
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# 日志记录辅助函数
+# =============================================================================
+
+def _create_ingestion_log(
+    batch_id: str,
+    task_type: str,
+    source_name: str,
+    celery_task_id: str = "",
+    dry_run: bool = False,
+    dedupe: bool = True,
+    upsert: bool = False,
+    input_filename: str = "",
+    input_job_id: str = "",
+) -> DataIngestionLog:
+    """创建数据摄入日志记录"""
+    try:
+        log = DataIngestionLog.objects.create(
+            batch_id=uuid.UUID(batch_id),
+            task_type=task_type,
+            source_name=source_name,
+            celery_task_id=celery_task_id,
+            status=DataIngestionLog.Status.RECEIVING,
+            dry_run=dry_run,
+            dedupe=dedupe,
+            upsert=upsert,
+            input_filename=input_filename,
+            input_job_id=input_job_id,
+        )
+        return log
+    except Exception as e:
+        logger.warning(f"创建摄入日志失败: {e}")
+        return None
+
+
+def _update_log_received(
+    batch_id: str,
+    rows_received: int,
+    cleaning_task_id: str = "",
+    cleaning_queue: str = "",
+) -> None:
+    """更新日志：数据接收完成"""
+    try:
+        DataIngestionLog.objects.filter(batch_id=batch_id).update(
+            received_at=timezone.now(),
+            rows_received=rows_received,
+            cleaning_task_id=cleaning_task_id,
+            cleaning_queue=cleaning_queue,
+        )
+    except Exception as e:
+        logger.warning(f"更新摄入日志(received)失败: {e}")
+
+
+def _update_log_failed(batch_id: str, error_message: str) -> None:
+    """更新日志：任务失败"""
+    try:
+        DataIngestionLog.objects.filter(batch_id=batch_id).update(
+            status=DataIngestionLog.Status.FAILED,
+            error_message=error_message,
+            completed_at=timezone.now(),
+        )
+    except Exception as e:
+        logger.warning(f"更新摄入日志(failed)失败: {e}")
+
+
+def _update_log_cleaning_started(batch_id: str) -> None:
+    """更新日志：清洗开始"""
+    try:
+        DataIngestionLog.objects.filter(batch_id=batch_id).update(
+            status=DataIngestionLog.Status.CLEANING,
+            cleaning_started_at=timezone.now(),
+        )
+    except Exception as e:
+        logger.warning(f"更新摄入日志(cleaning_started)失败: {e}")
+
+
+def _update_log_completed(
+    batch_id: str,
+    rows_after_cleaning: int,
+    rows_inserted: int,
+    rows_updated: int,
+    rows_skipped: int,
+    rows_unmatched: int,
+    error_message: str = "",
+) -> None:
+    """更新日志：清洗完成"""
+    try:
+        status = DataIngestionLog.Status.COMPLETED if not error_message else DataIngestionLog.Status.FAILED
+        DataIngestionLog.objects.filter(batch_id=batch_id).update(
+            status=status,
+            completed_at=timezone.now(),
+            rows_after_cleaning=rows_after_cleaning,
+            rows_inserted=rows_inserted,
+            rows_updated=rows_updated,
+            rows_skipped=rows_skipped,
+            rows_unmatched=rows_unmatched,
+            error_message=error_message,
+        )
+    except Exception as e:
+        logger.warning(f"更新摄入日志(completed)失败: {e}")
 
 
 # =============================================================================
@@ -307,15 +413,29 @@ def task_process_xlsx(
     if not batch_id:
         batch_id = str(uuid.uuid4())
 
+    # 创建摄入日志
+    _create_ingestion_log(
+        batch_id=batch_id,
+        task_type=DataIngestionLog.TaskType.XLSX,
+        source_name=source_name,
+        celery_task_id=self.request.id or "",
+        dry_run=dry_run,
+        dedupe=dedupe,
+        upsert=upsert,
+        input_filename=filename,
+    )
+
     # 1. 解析文件
     try:
         df = _read_tabular(filename, file_bytes)
     except Exception as e:
+        error_msg = f"读取表格失败: {e}"
+        _update_log_failed(batch_id, error_msg)
         return {
             "accepted": False,
             "file": filename,
             "source": source_name,
-            "error": f"读取表格失败: {e}",
+            "error": error_msg,
             "hint": _ENGINE_HINT.get(_suffix(filename), (None, None))[1],
             "batch_id": batch_id,
         }
@@ -324,18 +444,19 @@ def task_process_xlsx(
     try:
         redis_key = store_dataframe(batch_id, source_name, df)
     except Exception as e:
+        error_msg = f"存储到 Redis 失败: {e}"
+        _update_log_failed(batch_id, error_msg)
         return {
             "accepted": False,
             "file": filename,
             "source": source_name,
-            "error": f"存储到 Redis 失败: {e}",
+            "error": error_msg,
             "batch_id": batch_id,
         }
 
     # 3. 触发清洗任务（动态路由到对应店铺队列）
     queue_name = get_shop_queue(source_name)
 
-    # 延迟导入避免循环依赖
     cleaning_task = task_clean_shop_data.apply_async(
         kwargs={
             "source_name": source_name,
@@ -346,6 +467,14 @@ def task_process_xlsx(
             "upsert": upsert,
         },
         queue=queue_name,
+    )
+
+    # 更新日志：数据接收完成
+    _update_log_received(
+        batch_id=batch_id,
+        rows_received=len(df),
+        cleaning_task_id=cleaning_task.id,
+        cleaning_queue=queue_name,
     )
 
     return {
@@ -391,16 +520,30 @@ def task_process_webscraper_job(
     if not batch_id:
         batch_id = str(uuid.uuid4())
 
+    # 创建摄入日志
+    _create_ingestion_log(
+        batch_id=batch_id,
+        task_type=DataIngestionLog.TaskType.WEBSCRAPER,
+        source_name=source_name,
+        celery_task_id=self.request.id or "",
+        dry_run=dry_run,
+        dedupe=dedupe,
+        upsert=upsert,
+        input_job_id=str(job_id),
+    )
+
     # 1. 拉取 WebScraper 数据
     try:
         content = fetch_webscraper_export_sync(job_id, format="csv")
         df = pd.read_csv(io.BytesIO(content), encoding="utf-8-sig")
     except Exception as e:
+        error_msg = f"拉取 WebScraper 数据失败: {e}"
+        _update_log_failed(batch_id, error_msg)
         return {
             "accepted": False,
             "job_id": job_id,
             "source": source_name,
-            "error": f"拉取 WebScraper 数据失败: {e}",
+            "error": error_msg,
             "batch_id": batch_id,
         }
 
@@ -408,11 +551,13 @@ def task_process_webscraper_job(
     try:
         redis_key = store_dataframe(batch_id, source_name, df)
     except Exception as e:
+        error_msg = f"存储到 Redis 失败: {e}"
+        _update_log_failed(batch_id, error_msg)
         return {
             "accepted": False,
             "job_id": job_id,
             "source": source_name,
-            "error": f"存储到 Redis 失败: {e}",
+            "error": error_msg,
             "batch_id": batch_id,
         }
 
@@ -429,6 +574,14 @@ def task_process_webscraper_job(
             "upsert": upsert,
         },
         queue=queue_name,
+    )
+
+    # 更新日志：数据接收完成
+    _update_log_received(
+        batch_id=batch_id,
+        rows_received=len(df),
+        cleaning_task_id=cleaning_task.id,
+        cleaning_queue=queue_name,
     )
 
     return {
@@ -464,15 +617,28 @@ def task_ingest_json_shop1(self, records: list, opts: dict):
     batch_id = opts.get("batch_id") or str(uuid.uuid4())
     source = opts.get("source") or "shop1"
 
+    # 创建摄入日志
+    _create_ingestion_log(
+        batch_id=batch_id,
+        task_type=DataIngestionLog.TaskType.JSON_SHOP1,
+        source_name=source,
+        celery_task_id=self.request.id or "",
+        dry_run=dry_run,
+        dedupe=dedupe,
+        upsert=upsert,
+    )
+
     # 1. JSON → DataFrame
     try:
         df = pd.DataFrame(records)
         df.columns = [str(c).strip() for c in df.columns]
     except Exception as e:
+        error_msg = f"JSON 转换失败: {e}"
+        _update_log_failed(batch_id, error_msg)
         return {
             "accepted": False,
             "source": source,
-            "error": f"JSON 转换失败: {e}",
+            "error": error_msg,
             "batch_id": batch_id,
         }
 
@@ -480,10 +646,12 @@ def task_ingest_json_shop1(self, records: list, opts: dict):
     try:
         redis_key = store_dataframe(batch_id, source, df)
     except Exception as e:
+        error_msg = f"存储到 Redis 失败: {e}"
+        _update_log_failed(batch_id, error_msg)
         return {
             "accepted": False,
             "source": source,
-            "error": f"存储到 Redis 失败: {e}",
+            "error": error_msg,
             "batch_id": batch_id,
         }
 
@@ -497,6 +665,14 @@ def task_ingest_json_shop1(self, records: list, opts: dict):
             "upsert": upsert,
         },
         queue="shop_shop1",
+    )
+
+    # 更新日志：数据接收完成
+    _update_log_received(
+        batch_id=batch_id,
+        rows_received=len(records),
+        cleaning_task_id=cleaning_task.id,
+        cleaning_queue="shop_shop1",
     )
 
     return {
@@ -543,13 +719,26 @@ def task_clean_shop_data(
 
     此任务通过 apply_async 动态路由到各店铺专用队列。
     """
+    # 更新日志：清洗开始
+    _update_log_cleaning_started(batch_id)
+
     # 1. 从 Redis 读取原始数据
     df = retrieve_dataframe(redis_key)
     if df is None:
+        error_msg = f"Redis 数据不存在或已过期: {redis_key}"
+        _update_log_completed(
+            batch_id=batch_id,
+            rows_after_cleaning=0,
+            rows_inserted=0,
+            rows_updated=0,
+            rows_skipped=0,
+            rows_unmatched=0,
+            error_message=error_msg,
+        )
         return {
             "source": source_name,
             "batch_id": batch_id,
-            "error": f"Redis 数据不存在或已过期: {redis_key}",
+            "error": error_msg,
             "inserted": 0,
             "rows_total": 0,
         }
@@ -559,19 +748,39 @@ def task_clean_shop_data(
     try:
         df_clean = run_cleaner(cleaner_name, df)
     except Exception as e:
+        error_msg = f"清洗失败: {e}"
+        _update_log_completed(
+            batch_id=batch_id,
+            rows_after_cleaning=0,
+            rows_inserted=0,
+            rows_updated=0,
+            rows_skipped=0,
+            rows_unmatched=0,
+            error_message=error_msg,
+        )
         return {
             "source": source_name,
             "batch_id": batch_id,
-            "error": f"清洗失败: {e}",
+            "error": error_msg,
             "inserted": 0,
             "rows_total": int(df.shape[0]),
         }
 
     if not isinstance(df_clean, pd.DataFrame) or df_clean.empty:
+        error_msg = "清洗后为空"
+        _update_log_completed(
+            batch_id=batch_id,
+            rows_after_cleaning=0,
+            rows_inserted=0,
+            rows_updated=0,
+            rows_skipped=0,
+            rows_unmatched=0,
+            error_message=error_msg,
+        )
         return {
             "source": source_name,
             "batch_id": batch_id,
-            "error": "清洗后为空",
+            "error": error_msg,
             "inserted": 0,
             "rows_total": int(df.shape[0]),
         }
@@ -584,6 +793,16 @@ def task_clean_shop_data(
         dry_run=dry_run,
         dedupe=dedupe,
         upsert=upsert,
+    )
+
+    # 更新日志：清洗完成
+    _update_log_completed(
+        batch_id=batch_id,
+        rows_after_cleaning=result.get("rows_total", 0),
+        rows_inserted=result.get("inserted", 0),
+        rows_updated=result.get("updated", 0),
+        rows_skipped=result.get("dedup_skipped", 0),
+        rows_unmatched=len(result.get("unmatched", [])),
     )
 
     # 注：不删除 Redis 数据，依赖 TTL 自动过期（方便排查问题）
@@ -616,14 +835,27 @@ def task_clean_shop1_json(
     """
     source_name = "shop1"
 
+    # 更新日志：清洗开始
+    _update_log_cleaning_started(batch_id)
+
     # 1. 从 Redis 读取原始数据
     df = retrieve_dataframe(redis_key)
     if df is None:
+        error_msg = f"Redis 数据不存在或已过期: {redis_key}"
+        _update_log_completed(
+            batch_id=batch_id,
+            rows_after_cleaning=0,
+            rows_inserted=0,
+            rows_updated=0,
+            rows_skipped=0,
+            rows_unmatched=0,
+            error_message=error_msg,
+        )
         return {
             "mode": "json",
             "source": source_name,
             "batch_id": batch_id,
-            "error": f"Redis 数据不存在或已过期: {redis_key}",
+            "error": error_msg,
             "inserted": 0,
             "rows_total": 0,
         }
@@ -632,21 +864,41 @@ def task_clean_shop1_json(
     try:
         df_clean = run_cleaner("shop1", df)
     except Exception as e:
+        error_msg = f"清洗失败: {e}"
+        _update_log_completed(
+            batch_id=batch_id,
+            rows_after_cleaning=0,
+            rows_inserted=0,
+            rows_updated=0,
+            rows_skipped=0,
+            rows_unmatched=0,
+            error_message=error_msg,
+        )
         return {
             "mode": "json",
             "source": source_name,
             "batch_id": batch_id,
-            "error": f"清洗失败: {e}",
+            "error": error_msg,
             "inserted": 0,
             "rows_total": int(df.shape[0]),
         }
 
     if not isinstance(df_clean, pd.DataFrame) or df_clean.empty:
+        error_msg = "清洗后为空"
+        _update_log_completed(
+            batch_id=batch_id,
+            rows_after_cleaning=0,
+            rows_inserted=0,
+            rows_updated=0,
+            rows_skipped=0,
+            rows_unmatched=0,
+            error_message=error_msg,
+        )
         return {
             "mode": "json",
             "source": source_name,
             "batch_id": batch_id,
-            "error": "清洗后为空",
+            "error": error_msg,
             "inserted": 0,
             "rows_total": int(df.shape[0]),
         }
@@ -659,6 +911,16 @@ def task_clean_shop1_json(
         dry_run=dry_run,
         dedupe=dedupe,
         upsert=upsert,
+    )
+
+    # 更新日志：清洗完成
+    _update_log_completed(
+        batch_id=batch_id,
+        rows_after_cleaning=result.get("rows_total", 0),
+        rows_inserted=result.get("inserted", 0),
+        rows_updated=result.get("updated", 0),
+        rows_skipped=result.get("dedup_skipped", 0),
+        rows_unmatched=len(result.get("unmatched", [])),
     )
 
     result["mode"] = "json"
