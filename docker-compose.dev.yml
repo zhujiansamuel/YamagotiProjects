@@ -235,7 +235,7 @@ services:
     profiles:
       - shop-workers
 
-  # Celery Worker - Shop3 数据清洗专用队列 (开发时可选)
+  # Celery Worker - Shop3 数据清洗专用队列 (开发时可选) - 使用 LLM
   celery_worker_shop3:
     build:
       context: .
@@ -252,6 +252,14 @@ services:
       - POSTGRES_DATABASE=applestockchecker_dev
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=localpass
+      # Ollama LLM 配置
+      - OLLAMA_URL=http://host.docker.internal:11434
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - OLLAMA_MODEL_ID=qwen2.5:7b
+      - SHOP3_OLLAMA_URL=http://host.docker.internal:11434
+      - SHOP3_OLLAMA_MODEL_ID=qwen2.5:7b
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       redis:
         condition: service_healthy
@@ -263,7 +271,7 @@ services:
     profiles:
       - shop-workers
 
-  # Celery Worker - Shop4 数据清洗专用队列 (开发时可选)
+  # Celery Worker - Shop4 数据清洗专用队列 (开发时可选) - 使用 LLM
   celery_worker_shop4:
     build:
       context: .
@@ -280,6 +288,14 @@ services:
       - POSTGRES_DATABASE=applestockchecker_dev
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=localpass
+      # Ollama LLM 配置
+      - OLLAMA_URL=http://host.docker.internal:11434
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - OLLAMA_MODEL_ID=qwen2.5:7b
+      - SHOP4_OLLAMA_URL=http://host.docker.internal:11434
+      - SHOP4_OLLAMA_MODEL_ID=qwen2.5:7b
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       redis:
         condition: service_healthy
@@ -403,7 +419,7 @@ services:
     profiles:
       - shop-workers
 
-  # Celery Worker - Shop9 数据清洗专用队列 (开发时可选)
+  # Celery Worker - Shop9 数据清洗专用队列 (开发时可选) - 使用 LLM
   celery_worker_shop9:
     build:
       context: .
@@ -420,6 +436,14 @@ services:
       - POSTGRES_DATABASE=applestockchecker_dev
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=localpass
+      # Ollama LLM 配置
+      - OLLAMA_URL=http://host.docker.internal:11434
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - OLLAMA_MODEL_ID=qwen2.5:7b
+      - SHOP9_OLLAMA_HOST=http://host.docker.internal:11434
+      - SHOP9_LX_MODEL_ID=qwen2.5:7b
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       redis:
         condition: service_healthy
@@ -459,7 +483,7 @@ services:
     profiles:
       - shop-workers
 
-  # Celery Worker - Shop11 数据清洗专用队列 (开发时可选)
+  # Celery Worker - Shop11 数据清洗专用队列 (开发时可选) - 使用 LLM
   celery_worker_shop11:
     build:
       context: .
@@ -476,6 +500,13 @@ services:
       - POSTGRES_DATABASE=applestockchecker_dev
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=localpass
+      # Ollama LLM 配置
+      - OLLAMA_URL=http://host.docker.internal:11434
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - OLLAMA_MODEL_ID=qwen2.5:7b
+      - SHOP11_OLLAMA_MODEL_ID=qwen2.5:7b
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       redis:
         condition: service_healthy
@@ -487,7 +518,7 @@ services:
     profiles:
       - shop-workers
 
-  # Celery Worker - Shop12 数据清洗专用队列 (开发时可选)
+  # Celery Worker - Shop12 数据清洗专用队列 (开发时可选) - 使用 LLM
   celery_worker_shop12:
     build:
       context: .
@@ -504,6 +535,14 @@ services:
       - POSTGRES_DATABASE=applestockchecker_dev
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=localpass
+      # Ollama LLM 配置
+      - OLLAMA_URL=http://host.docker.internal:11434
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - OLLAMA_MODEL_ID=qwen2.5:7b
+      - SHOP12_OLLAMA_MODEL_ID=qwen2.5:7b
+      - SHOP12_OLLAMA_HOST=http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       redis:
         condition: service_healthy
@@ -543,7 +582,7 @@ services:
     profiles:
       - shop-workers
 
-  # Celery Worker - Shop14 数据清洗专用队列 (开发时可选)
+  # Celery Worker - Shop14 数据清洗专用队列 (开发时可选) - 使用 LLM
   celery_worker_shop14:
     build:
       context: .
@@ -560,6 +599,14 @@ services:
       - POSTGRES_DATABASE=applestockchecker_dev
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=localpass
+      # Ollama LLM 配置
+      - OLLAMA_URL=http://host.docker.internal:11434
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - OLLAMA_MODEL_ID=qwen2.5:7b
+      - SHOP14_OLLAMA_URL=http://host.docker.internal:11434
+      - SHOP14_LLM_MODEL_ID=qwen2.5:7b
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       redis:
         condition: service_healthy
@@ -571,7 +618,7 @@ services:
     profiles:
       - shop-workers
 
-  # Celery Worker - Shop15 数据清洗专用队列 (开发时可选)
+  # Celery Worker - Shop15 数据清洗专用队列 (开发时可选) - 使用 LLM
   celery_worker_shop15:
     build:
       context: .
@@ -588,6 +635,14 @@ services:
       - POSTGRES_DATABASE=applestockchecker_dev
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=localpass
+      # Ollama LLM 配置
+      - OLLAMA_URL=http://host.docker.internal:11434
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - OLLAMA_MODEL_ID=qwen2.5:7b
+      - SHOP15_OLLAMA_URL=http://host.docker.internal:11434
+      - SHOP15_OLLAMA_MODEL=qwen2.5:7b
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       redis:
         condition: service_healthy
@@ -599,7 +654,7 @@ services:
     profiles:
       - shop-workers
 
-  # Celery Worker - Shop16 数据清洗专用队列 (开发时可选)
+  # Celery Worker - Shop16 数据清洗专用队列 (开发时可选) - 使用 LLM
   celery_worker_shop16:
     build:
       context: .
@@ -616,6 +671,12 @@ services:
       - POSTGRES_DATABASE=applestockchecker_dev
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=localpass
+      # Ollama LLM 配置
+      - OLLAMA_URL=http://host.docker.internal:11434
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - OLLAMA_MODEL_ID=qwen2.5:7b
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       redis:
         condition: service_healthy
