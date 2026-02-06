@@ -41,9 +41,8 @@ echo "========================================"
 
 # =============================================================================
 # 检查 local-pg 容器是否运行 (仅在非 --all 模式下)
-# docker-compose.dev.yml 依赖外部的 local-pg 容器提供 PostgreSQL 服务
+# docker-compose.yml 依赖外部的 local-pg 容器提供 PostgreSQL 服务
 # =============================================================================
-if [ "$ALL_SERVICES" != true ]; then
     echo ""
     echo "[检查] PostgreSQL 容器 (local-pg)..."
 
@@ -57,9 +56,9 @@ if [ "$ALL_SERVICES" != true ]; then
             docker start local-pg
             echo "[OK] local-pg 容器已启动"
         else
-            echo "[警告] local-pg 容器不存在，正在创建..."
-            docker compose -f docker-compose.local-pg.yml up -d
-            echo "[OK] local-pg 容器已创建并启动"
+            echo "[错误] local-pg 容器不存在，请先手动创建："
+            echo "  docker run -d --name local-pg -p 5433:5432 -e POSTGRES_PASSWORD=localpass -v pgdata:/var/lib/postgresql/data --restart unless-stopped postgres:16"
+            exit 1
         fi
 
         # 等待 PostgreSQL 就绪
@@ -77,7 +76,6 @@ if [ "$ALL_SERVICES" != true ]; then
         done
     fi
     echo ""
-fi
 
 # =============================================================================
 # 检查 Ollama 服务 (如果启动 shop-workers)
@@ -100,7 +98,7 @@ if [ "$ALL_SERVICES" = true ]; then
     echo "模式: 全服务 (使用 docker-compose.yml)"
     docker compose up -d
 elif [ "$WITH_SHOP_WORKERS" = true ]; then
-    echo "模式: Web + 19个 Shop 专用 Workers (使用 docker-compose.dev.yml)"
+    echo "模式: Web + 19个 Shop 专用 Workers (使用 docker-compose.yml)"
     echo ""
     echo "启动的 Shop Workers:"
     echo "  - shop1, shop2, shop3*, shop4*"
@@ -110,13 +108,13 @@ elif [ "$WITH_SHOP_WORKERS" = true ]; then
     echo "  - shop13, shop14*, shop15*, shop16*, shop17, shop18, shop20"
     echo "  (* 表示使用 LLM)"
     echo ""
-    docker compose -f docker-compose.dev.yml --profile shop-workers up -d
+    docker compose --profile shop-workers up -d
 elif [ "$WITH_CELERY" = true ]; then
-    echo "模式: Web + Celery (使用 docker-compose.dev.yml，不含 shop 专用 workers)"
-    docker compose -f docker-compose.dev.yml --profile celery up -d
+    echo "模式: Web + Celery (使用 docker-compose.yml，不含 shop 专用 workers)"
+    docker compose --profile celery up -d
 else
-    echo "模式: 仅 Web (使用 docker-compose.dev.yml)"
-    docker compose -f docker-compose.dev.yml up -d
+    echo "模式: 仅 Web (使用 docker-compose.yml)"
+    docker compose up -d
 fi
 
 echo ""
@@ -129,7 +127,7 @@ echo "服务状态:"
 if [ "$ALL_SERVICES" = true ]; then
     docker compose ps
 else
-    docker compose -f docker-compose.dev.yml ps
+    docker compose ps
 fi
 
 echo ""
@@ -155,12 +153,12 @@ echo "  - 使用 LLM: shop3, shop4, shop9, shop11, shop12, shop14, shop15, shop1
 fi
 echo ""
 echo "常用命令:"
-echo "  - 查看日志:        docker compose -f docker-compose.dev.yml logs -f"
-echo "  - 查看 Web 日志:   docker compose -f docker-compose.dev.yml logs -f web"
-echo "  - 查看 Shop 日志:  docker compose -f docker-compose.dev.yml logs -f celery_worker_shop1"
-echo "  - 进入容器:        docker compose -f docker-compose.dev.yml exec web bash"
-echo "  - 运行 migrate:    docker compose -f docker-compose.dev.yml exec web python manage.py migrate"
-echo "  - 创建超级用户:    docker compose -f docker-compose.dev.yml exec web python manage.py createsuperuser"
+echo "  - 查看日志:        docker compose logs -f"
+echo "  - 查看 Web 日志:   docker compose logs -f web"
+echo "  - 查看 Shop 日志:  docker compose logs -f worker_shop1"
+echo "  - 进入容器:        docker compose exec web bash"
+echo "  - 运行 migrate:    docker compose exec web python manage.py migrate"
+echo "  - 创建超级用户:    docker compose exec web python manage.py createsuperuser"
 echo "  - 停止服务:        ./scripts/dev_down.sh"
 echo ""
 echo "数据库恢复命令 (首次启动后执行):"

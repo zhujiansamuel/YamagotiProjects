@@ -41,7 +41,7 @@ docker compose ps
 echo ""
 echo "📊 Celery Workers:"
 if docker compose ps | grep -q "celery"; then
-    docker compose exec celery_worker_default celery -A YamagotiProjects inspect active 2>/dev/null || echo "  ⚠️  无法获取 worker 状态"
+    docker compose exec worker_default celery -A YamagotiProjects inspect active 2>/dev/null || echo "  ⚠️  无法获取 worker 状态"
 else
     echo "  ⚠️  未在 Docker 中运行"
 fi

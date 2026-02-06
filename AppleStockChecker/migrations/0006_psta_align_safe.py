@@ -10,21 +10,21 @@ ALTER TABLE {PSTA} ADD COLUMN IF NOT EXISTS src_max_ts   TIMESTAMPTZ NULL;
 ALTER TABLE {PSTA} ADD COLUMN IF NOT EXISTS is_final     BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- 常用索引（幂等）
-CREATE INDEX IF NOT EXISTS apple_psta_idx_bucket      ON {PSTA} ("Timestamp_Time");
-CREATE INDEX IF NOT EXISTS apple_psta_idx_shop_bucket ON {PSTA} ("shop_id", "Timestamp_Time");
+CREATE INDEX IF NOT EXISTS apple_psta_idx_bucket      ON {PSTA} ("timestamp_time");
+CREATE INDEX IF NOT EXISTS apple_psta_idx_shop_bucket ON {PSTA} ("shop_id", "timestamp_time");
 
--- 如果你希望把“唯一约束”扩展为 (shop_id, iphone_id, "Timestamp_Time")，你已经有：
--- CONSTRAINT uniq_shop_iphone_Timestamp_Time UNIQUE ("shop_id","iphone_id","Timestamp_Time")
+-- 如果你希望把"唯一约束"扩展为 (shop_id, iphone_id, "timestamp_time")，你已经有：
+-- CONSTRAINT uniq_shop_iphone_timestamp_time UNIQUE ("shop_id","iphone_id","timestamp_time")
 -- 若名称不同，可按实际名称做 DROP 再 ADD，示例（请按实际旧名替换 <old_name>，否则保持注释）：
 -- DO $$
 -- BEGIN
 --   IF NOT EXISTS (
 --     SELECT 1 FROM pg_constraint
---     WHERE conrelid = {PSTA}::regclass AND contype='u' AND conname='uniq_shop_iphone_Timestamp_Time'
+--     WHERE conrelid = {PSTA}::regclass AND contype='u' AND conname='uniq_shop_iphone_timestamp_time'
 --   ) THEN
 --     ALTER TABLE {PSTA} DROP CONSTRAINT IF EXISTS "<old_name>";
---     ALTER TABLE {PSTA} ADD CONSTRAINT "uniq_shop_iphone_Timestamp_Time"
---       UNIQUE ("shop_id","iphone_id","Timestamp_Time");
+--     ALTER TABLE {PSTA} ADD CONSTRAINT "uniq_shop_iphone_timestamp_time"
+--       UNIQUE ("shop_id","iphone_id","timestamp_time");
 --   END IF;
 -- END $$;
 """
