@@ -257,7 +257,7 @@ STATICFILES_FINDERS = [
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-_ws_token = WEB_SCRAPER_API_TOKEN
+_ws_token = os.getenv("WEB_SCRAPER_API_TOKEN", "")
 EXTERNAL_TRADEIN_SOURCES = [
     {"name": "shop9",
      "url": f"https://api.webscraper.io/api/v1/scraping-job/34172581/csv?api_token={_ws_token}"},
@@ -275,7 +275,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 EXTERNAL_IPHONE17_INFO_PATH = BASE_DIR / "AppleStockChecker" / "data" / "iphone17_info.csv"
 
 # WebScraper Cloud API 访问令牌
-WEB_SCRAPER_API_TOKEN = os.getenv("WEB_SCRAPER_API_TOKEN", "")
+WEB_SCRAPER_API_TOKEN = _ws_token
 
 # 导出地址模板（如官方变更，可在这里改）
 # WEB_SCRAPER_EXPORT_URL_TEMPLATE = "https://api.webscraper.io/api/v1/scraping-job/{job_id}/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"
