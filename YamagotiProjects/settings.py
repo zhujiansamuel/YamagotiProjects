@@ -21,7 +21,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-3(&zari4^u-6iv$+z_2r2(oviwyj5g#cy*3c$t#x_=-w7cijv1'
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'django-insecure-3(&zari4^u-6iv$+z_2r2(oviwyj5g#cy*3c$t#x_=-w7cijv1')
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
@@ -32,6 +32,7 @@ ALLOWED_HOSTS = [
     ".ngrok-free.app",
     ".ngrok-free.dev",
     "verbless-sadistically-jayceon.ngrok-free.dev",
+    "analysis.yamaguchi.lan",
 ]
 
 # Application definition
@@ -180,17 +181,14 @@ if USE_PGBOUNCER:
             "ENGINE": "django.db.backends.postgresql",
             "NAME": os.getenv("PGBOUNCER_DATABASE", "applestockchecker_dev"),
             "USER": os.getenv("PGBOUNCER_USER", "samuelzhu"),
-            "PASSWORD": os.getenv("PGBOUNCER_PASSWORD", "Xdb73008762"),
+            "PASSWORD": os.getenv("PGBOUNCER_PASSWORD", ""),
             "HOST": os.getenv("PGBOUNCER_HOST", "127.0.0.1"),
             "PORT": os.getenv("PGBOUNCER_PORT", "6432"),
             # PgBouncer 事务池模式下，CONN_MAX_AGE 必须为 0
             # 因为 PgBouncer 会在每个事务结束后回收连接
             "CONN_MAX_AGE": 0,
             "CONN_HEALTH_CHECKS": True,  # Django 4.1+ 健康检查
-            "OPTIONS": {
-                # 禁用服务器端游标，PgBouncer 事务池模式不支持
-                "options": "-c statement_timeout=60000",
-            },
+            "OPTIONS": {},
             "DISABLE_SERVER_SIDE_CURSORS": True,  # 关键：PgBouncer 必须禁用
         }
     }
@@ -259,33 +257,14 @@ STATICFILES_FINDERS = [
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+_ws_token = WEB_SCRAPER_API_TOKEN
 EXTERNAL_TRADEIN_SOURCES = [
-    # {"name": "shop10", "url": "https://api.webscraper.io/api/v1/scraping-job/34172531/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
     {"name": "shop9",
-     "url": "https://api.webscraper.io/api/v1/scraping-job/34172581/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
-    # {"name": "shop8", "url": "https://api.webscraper.io/api/v1/scraping-job/34171950/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
-    # {"name": "shop7", "url": "https://api.webscraper.io/api/v1/scraping-job/34172579/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
-    # {"name": "shop6-1", "url": "https://api.webscraper.io/api/v1/scraping-job/34172574/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
-    # {"name": "shop6-2", "url": "https://api.webscraper.io/api/v1/scraping-job/34172575/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
-    # {"name": "shop6-3", "url": "https://api.webscraper.io/api/v1/scraping-job/34172576/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
-    # {"name": "shop6-4", "url": "https://api.webscraper.io/api/v1/scraping-job/34172578/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
-    # {"name": "shop5-1",
-    #  "url": "https://api.webscraper.io/api/v1/scraping-job/34172561/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
-    # {"name": "shop5-2",
-    #  "url": "https://api.webscraper.io/api/v1/scraping-job/34172563/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
-    # {"name": "shop5-3",
-    #  "url": "https://api.webscraper.io/api/v1/scraping-job/34172572/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
-    # {"name": "shop5-4",
-    #  "url": "https://api.webscraper.io/api/v1/scraping-job/34172573/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
-    # {"name": "shop4",
-    #  "url": "https://api.webscraper.io/api/v1/scraping-job/	34172559/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
+     "url": f"https://api.webscraper.io/api/v1/scraping-job/34172581/csv?api_token={_ws_token}"},
     {"name": "shop3",
-     "url": "https://api.webscraper.io/api/v1/scraping-job/34172550/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
+     "url": f"https://api.webscraper.io/api/v1/scraping-job/34172550/csv?api_token={_ws_token}"},
     {"name": "shop2",
-     "url": "https://api.webscraper.io/api/v1/scraping-job/34478442/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
-
-    # # 样例：B 平台
-    # {"name": "shop10", "url": "https://api.webscraper.io/api/v1/scraping-job/34172531/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"},
+     "url": f"https://api.webscraper.io/api/v1/scraping-job/34478442/csv?api_token={_ws_token}"},
 ]
 
 from pathlib import Path
@@ -295,15 +274,15 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # 优先级：settings > 环境变量 > 项目内默认文件
 EXTERNAL_IPHONE17_INFO_PATH = BASE_DIR / "AppleStockChecker" / "data" / "iphone17_info.csv"
 
-# WebScraper Cloud API 访问令牌（在 Web Scraper Cloud 的 API 页面可见）
-WEB_SCRAPER_API_TOKEN = "vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"
+# WebScraper Cloud API 访问令牌
+WEB_SCRAPER_API_TOKEN = os.getenv("WEB_SCRAPER_API_TOKEN", "")
 
 # 导出地址模板（如官方变更，可在这里改）
 # WEB_SCRAPER_EXPORT_URL_TEMPLATE = "https://api.webscraper.io/api/v1/scraping-job/{job_id}/csv?api_token=vrbBYdfX805GgpQoDfgyPcm45QMoEx6ygvkfHohjo3CJBky7qO0oiFbXUjAp"
 WEB_SCRAPER_EXPORT_URL_TEMPLATE = "https://api.webscraper.io/api/v1/scraping-job/{job_id}/csv"
 
-# Webhook 共享密钥：在 WebScraper Cloud 的 webhook URL 上带 ?token=XXXX，或在 Header 里带 X-Webhook-Token
-WEB_SCRAPER_WEBHOOK_TOKEN = "0BkhVQJQPDe4IPfxfnw9bX8hYzxY29D48uGi8zq8TcjbsMIvXShEzaEJFFAj"
+# Webhook 共享密钥
+WEB_SCRAPER_WEBHOOK_TOKEN = os.getenv("WEB_SCRAPER_WEBHOOK_TOKEN", "")
 
 # 可选：把 WebScraper 的 sitemap 名 或 job 上的 custom_id 映射为清洗器名（shop3/shop4…）
 WEB_SCRAPER_SOURCE_MAP = {
@@ -335,11 +314,7 @@ WEB_SCRAPER_SOURCE_MAP = {
     "shop20": "shop20",
 }
 
-# 部属用
-# WEB_SCRAPER_WEBHOOK_TOKEN = os.getenv("WEB_SCRAPER_WEBHOOK_TOKEN", "")
-
-# 开发用
-WEB_SCRAPER_WEBHOOK_TOKEN = "XNgCZCQN7dvkSP7K17xmK8aq-6_bjvI_"
+# WEB_SCRAPER_WEBHOOK_TOKEN 已在上方通过 os.getenv 读取
 
 # Celery/Redis
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://127.0.0.1:6379/0")
@@ -468,7 +443,7 @@ SIMPLEUI_HOME_INFO = False
 SIMPLEUI_HOME_ACTION = True
 SIMPLEUI_ANALYSIS = False
 
-SIMPLEPRO_SECRET_KEY = '2c4411a795534e0fbc28720051161434'
+SIMPLEPRO_SECRET_KEY = os.getenv('SIMPLEPRO_SECRET_KEY', '')
 SIMPLEPRO_MONIT_DISPLAY = True
 SIMPLEPRO_INFO = True
 SIMPLEPRO_FK_ASYNC_DATA = True
@@ -684,9 +659,9 @@ SHOP_DISPLAY_ORDER = [
 ]
 
 FX_API_KEYS = {
-    "alphavantage": "AlphaVantageKey",
-    "finnhub": "FinnhubKey",
-    "twelvedata": "603d21df9b194d9daeaccd898cee72a3",
+    "alphavantage": os.getenv("FX_ALPHAVANTAGE_KEY", ""),
+    "finnhub": os.getenv("FX_FINNHUB_KEY", ""),
+    "twelvedata": os.getenv("FX_TWELVEDATA_KEY", ""),
 }
 
 TREND_MAX_LOOKBACK_DAYS = 90
@@ -719,16 +694,16 @@ LOGIN_EXEMPT_URLS = [
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
-        "CONFIG": {"hosts": [("127.0.0.1", 6379)]},
+        "CONFIG": {"hosts": [(os.getenv("REDIS_HOST", "127.0.0.1"), int(os.getenv("REDIS_PORT", "6379")))]},
     }
 }
 
 ASGI_APPLICATION = "YamagotiProjects.asgi.application"
 DATA_UPLOAD_MAX_MEMORY_SIZE=10 * 1024 * 1024
 
-EXTERNAL_GOODS_API_URL=os.getenv("EXTERNAL_GOODS_API_URL", "http://localhost:8080")
-EXTERNAL_GOODS_API_TOKEN = os.getenv("EXTERNAL_GOODS_API_TOKEN", "ba9b0465-823e-4399-9689-30e4b7c49859")
-EXTERNAL_GOODS_CATEGORY_FILTER=os.getenv("EXTERNAL_GOODS_CATEGORY_FILTER", "iPhone")
+EXTERNAL_GOODS_API_URL = os.getenv("EXTERNAL_GOODS_API_URL", "http://localhost:8080")
+EXTERNAL_GOODS_API_TOKEN = os.getenv("EXTERNAL_GOODS_API_TOKEN", "")
+EXTERNAL_GOODS_CATEGORY_FILTER = os.getenv("EXTERNAL_GOODS_CATEGORY_FILTER", "iPhone")
 # iPhone 官方发布价格（用于市场 log 溢价计算）
 IPHONE_OFFICIAL_PRICES = {
     1: 129800,  # iPhone 17-256-ブラック
