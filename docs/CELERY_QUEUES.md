@@ -50,7 +50,7 @@ app.conf.task_routes = {
         "queue": "webscraper",
         "routing_key": "webscraper.process_job",
     },
-    "AppleStockChecker.tasks.webscraper_tasks.task_process_xlsx": {
+    "AppleStockChecker.tasks.task_process_xlsx": {
         "queue": "webscraper",
         "routing_key": "webscraper.process_xlsx",
     },
@@ -132,16 +132,19 @@ celery -A YamagotiProjects flower --port=5555
 
 ```bash
 # 启动所有服务（包含所有 Workers）
-./scripts/prod_up.sh
+docker compose up -d
 
 # 查看 Worker 状态
 docker compose ps
 
 # 查看 WebScraper Worker 日志
-docker compose logs -f celery_worker_webscraper
+docker compose logs -f worker_webscraper
 
 # 查看默认 Worker 日志
-docker compose logs -f celery_worker_default
+docker compose logs -f worker_default
+
+# 停止所有服务
+./scripts/prod_down.sh
 ```
 
 ---
