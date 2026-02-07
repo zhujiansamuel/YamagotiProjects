@@ -10,13 +10,14 @@ import csv, re
 import pytz
 import datetime
 # ========= 配置 =========
+_HERE = os.path.dirname(os.path.abspath(__file__))
 BASE = "https://www.kaitorishouten-co.jp"
 CID  = "709"  # ← 改成你的分类ID（例如 iPhone 17 Pro Max = 711）
 CAT_URL = f"{BASE}/category/1/{CID}"
 HEADERS = {"User-Agent": "Mozilla/5.0", "Accept-Language": "ja,en;q=0.9,zh-CN;q=0.8"}
-CACHE_SPRITE2IDXCHAR = "sprite_idxchar_by_md5.json"   # 雪碧图MD5 → {idx:char}
-TEMPLATE_DB = "digit_templates.json"                  # 全局模板库：phash(hex) → {'ch': '0', 'w':10,'h':16}
-TEMPLATE_IMG_DIR = "digit_templates"                  # 可视化保存每个模板的小图
+CACHE_SPRITE2IDXCHAR = os.path.join(_HERE, "sprite_idxchar_by_md5.json")   # 雪碧图MD5 → {idx:char}
+TEMPLATE_DB = os.path.join(_HERE, "digit_templates.json")                  # 全局模板库：phash(hex) → {'ch': '0', 'w':10,'h':16}
+TEMPLATE_IMG_DIR = os.path.join(_HERE, "digit_templates")                  # 可视化保存每个模板的小图
 os.makedirs(TEMPLATE_IMG_DIR, exist_ok=True)
 
 LIST_URL = f"{BASE}/category/1/{CID}"
