@@ -12,6 +12,7 @@ import pandas as pd
 import textwrap
 from functools import lru_cache
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
+from ..cleaner_tools import _parse_capacity_gb
 
 
 # ========== 你的 Ollama 配置 ==========
@@ -150,18 +151,6 @@ def _normalize_model_generic(text: str) -> str:
         return "iPhone Air"
 
     return ""
-
-def _parse_capacity_gb(text: str) -> Optional[int]:
-    if not text:
-        return None
-    t = str(text)
-    m = re.search(r"(\d+(?:\.\d+)?)\s*TB", t, flags=re.I)
-    if m:
-        return int(round(float(m.group(1)) * 1024))
-    m = re.search(r"(\d{2,4})\s*GB", t, flags=re.I)
-    if m:
-        return int(m.group(1))
-    return None
 
 SPLIT_TOKENS_RE = re.compile(r"[／/、，,]|(?:\s*;\s*)")
 
