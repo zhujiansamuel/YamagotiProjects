@@ -1,10 +1,36 @@
 from __future__ import annotations
 import os
+import logging.config
 from celery import Celery
+from celery.signals import setup_logging, worker_process_init
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "YamagotiProjects.settings")
 app = Celery("YamagotiProjects")
 app.config_from_object("django.conf:settings", namespace="CELERY")
+
+
+@setup_logging.connect
+def config_loggers(*args, **kwargs):
+    """
+    阻止 Celery 劫持 Django 的日志配置。
+
+    连接此信号后，Celery 会跳过自身的日志初始化（不劫持 root logger，
+    不重定向 stdout），完全使用 Django settings.LOGGING 中的配置。
+    """
+    from django.conf import settings
+    logging.config.dictConfig(settings.LOGGING)
+
+
+@worker_process_init.connect
+def setup_logging_in_worker(**kwargs):
+    """
+    在每个 Celery worker 子进程中重新初始化日志配置。
+
+    fork 后 TimedRotatingFileHandler 等文件处理器会失去文件描述符，
+    需要重新初始化。
+    """
+    from django.conf import settings
+    logging.config.dictConfig(settings.LOGGING)
 
 # =============================================================================
 # 队列路由配置

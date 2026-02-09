@@ -11,13 +11,16 @@ from datetime import datetime
 import pytz
 import time
 import textwrap
+import logging
+
+# 初始化 logger
+logger = logging.getLogger(__name__)
 
 
 
 
-DEBUG_SHOP17 = str(True)
-DEBUG_SHOP17_MAX_ROWS = int(os.getenv("DEBUG_SHOP17_MAX_ROWS", "20") or 20)
-DEBUG_SHOP17_SHOW_ALL_COLORS = str(os.getenv("DEBUG_SHOP17_SHOW_ALL_COLORS", "")).strip().lower() in {"1", "true", "yes", "on"}
+# DEBUG 功能现在由 logging 级别控制（在 settings.py 的 LOGGING 配置中）
+# 控制台显示 INFO 级别（简洁），文件记录 DEBUG 级别（详细）
 
 _DASH_TRANS_shop17 = str.maketrans({
     "−": "-",  # U+2212
@@ -58,26 +61,15 @@ def _is_plausible_color_label_shop17(label: str) -> bool:
         return False
     return True
 
-def _dbg_short(s: str, n: int = 400) -> str:
+# 调试辅助函数：截断长字符串用于日志显示
+def _truncate_for_log(s: str, n: int = 200) -> str:
+    """截断长字符串，保留前 n 个字符，用于日志显示"""
     if s is None:
         return ""
     t = str(s)
     if len(t) <= n:
         return t
-    return t[:n] + f"... <len={len(t)}>"
-
-def _dbg_print(ctx: str, msg: str, enabled: bool):
-    if enabled:
-        print(f"[shop17 DEBUG] {ctx} {msg}")
-
-def _dbg_block(ctx: str, title: str, body: str, enabled: bool):
-    if not enabled:
-        return
-    print("=" * 90)
-    print(f"[shop17 DEBUG] {ctx} {title}")
-    print("-" * 90)
-    print(body)
-    print("=" * 90)
+    return t[:n] + f"... (truncated, total_length={len(t)})"
 
 # ----------------------------------------------------------------------
 # LangExtract / Ollama 集成配置
@@ -614,7 +606,18 @@ def _extract_color_deltas_shop17_llm(text: str) -> List[Tuple[str, int]]:
             prompt_validation_strict=False,
         )
     except Exception as e:
-        print(f"[shop17][LangExtract] extraction error: {e}")
+        logger.warning(
+            "LangExtract extraction failed",
+            extra={
+                "event_type": "llm_extraction_error",
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "model_id": LX_SHOP17_MODEL_ID,
+                "model_url": LX_SHOP17_MODEL_URL,
+                "text_length": len(s),
+                "text_preview": _truncate_for_log(s, 100),
+            }
+        )
         return []
 
     out: List[Tuple[str, int]] = []
@@ -655,18 +658,34 @@ def _extract_color_deltas_shop17(text: str) -> List[Tuple[str, int]]:
 # 清洗主函数
 # ----------------------------------------------------------------------
 def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
-    print("shop17:ゲストモバイル---------->进入清洗器时间：",
-          time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+    start_time = time.time()
+    _log_seq = 0  # 日志序号：同一次 clean_shop17 调用内单调递增，用于 ELK 排序
+    logger.info(
+        "Starting shop17 cleaner",
+        extra={
+            "event_type": "cleaner_start",
+            "shop_name": "ゲストモバイル",
+            "cleaner_name": "shop17",
+            "input_rows": len(df),
+            "start_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+        }
+    )
 
     for c in ["type", "新未開封品", "色減額", "time-scraped"]:
         if c not in df.columns:
+            logger.error(
+                f"Missing required column: {c}",
+                extra={
+                    "event_type": "validation_error",
+                    "missing_column": c,
+                    "available_columns": list(df.columns),
+                }
+            )
             raise ValueError(f"shop17 清洗器缺少必要列：{c}")
 
     info_df = _load_iphone17_info_df_for_shop2()
     cmap_all = _build_color_map_shop17(info_df)
     rows: List[dict] = []
-
-    dbg_printed = 0
 
     for idx, row in df.iterrows():
         model_text = str(row.get("type") or "").strip()
@@ -692,54 +711,163 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
         raw_color = row.get("色減額")
         raw_color_s = "" if raw_color is None else str(raw_color)
 
-        # 仅对前 N 行开启详细 debug（避免刷屏）
-        dbg_row = DEBUG_SHOP17 and (dbg_printed < DEBUG_SHOP17_MAX_ROWS) and bool(raw_color_s.strip())
-        if dbg_row:
-            dbg_printed += 1
-
-        ctx = f"row={idx} | type={model_text} | norm={model_norm} | cap={cap_gb} | base={base_price}"
-
-        if dbg_row:
-            _dbg_block(
-                ctx, "INPUT 色減額",
-                f"raw:\n{_dbg_short(raw_color_s)}\n\nnormalized:\n{_dbg_short(_normalize_color_text_shop17(raw_color_s))}",
-                dbg_row
-            )
-            _dbg_print(ctx, f"color_map({len(color_map)}): " +
-                       ", ".join([f"{cn}->{pn}" for cn, (pn, cr) in list(color_map.items())]),
-                       dbg_row)
-
+        # 提取颜色差额
         labels_and_deltas = _extract_color_deltas_shop17(raw_color_s)
+
+        # 判断使用的提取方法
+        extraction_method = "none"
+        if labels_and_deltas:
+            # 检查是否来自正则
+            regex_result = _extract_color_deltas_shop17_regex(raw_color_s)
+            if regex_result:
+                extraction_method = "regex"
+            else:
+                extraction_method = "llm"
+
+        # DEBUG: 记录提取结果
+        available_colors_list = [
+            {
+                "color_norm": cn,
+                "part_number": pn,
+                "color_raw": cr
+            }
+            for cn, (pn, cr) in color_map.items()
+        ]
+
+        _log_seq += 1
+        logger.debug(
+            "Extraction result",
+            extra={
+                "event_type": "extraction_result",
+                "log_seq": _log_seq,
+                "row_index": int(idx),
+                "model_text": model_text,
+                "model_norm": model_norm,
+                "capacity_gb": cap_gb,
+                "base_price": base_price,
+                "color_discount_raw": _truncate_for_log(raw_color_s, 200),
+                "color_discount_raw_full": raw_color_s,  # 完整版本
+                "color_discount_normalized": _truncate_for_log(_normalize_color_text_shop17(raw_color_s), 200),
+                "extraction_method": extraction_method,
+                "labels_and_deltas": [
+                    {"label": label, "delta": delta}
+                    for label, delta in labels_and_deltas
+                ],
+                "labels_extracted_count": len(labels_and_deltas),
+                "available_colors": available_colors_list,
+                "colors_in_catalog": len(color_map),
+            }
+        )
 
         # label -> color 命中 & 计算 delta
         color_deltas: Dict[str, int] = {}
+        label_matching_details = []  # 用于记录每个 label 的匹配详情
+
         if labels_and_deltas:
-            for col_norm, (pn, col_raw) in color_map.items():
-                for label_raw, delta in labels_and_deltas:
-                    if _label_matches_color_shop17(label_raw, col_raw, col_norm):
-                        color_deltas[col_norm] = delta
+            for label_raw, delta in labels_and_deltas:
+                matched_colors = []
+                matched_pns = []
 
-        if dbg_row:
-            _dbg_print(ctx, f"labels_and_deltas={labels_and_deltas}", dbg_row)
-            _dbg_print(ctx, f"matched color_deltas={color_deltas}", dbg_row)
-
-            # 展示每个 label 命中了哪些颜色（便于发现误匹配/漏匹配）
-            for label_raw, delta in labels_and_deltas or []:
-                hits = []
                 for col_norm, (pn, col_raw) in color_map.items():
                     if _label_matches_color_shop17(label_raw, col_raw, col_norm):
-                        hits.append(f"{col_norm}(pn={pn})")
-                _dbg_print(ctx, f"label={label_raw!r} delta={delta} hits={hits}", dbg_row)
+                        color_deltas[col_norm] = delta
+                        matched_colors.append(col_norm)
+                        matched_pns.append(pn)
+
+                # 记录此 label 的匹配结果
+                label_matching_details.append({
+                    "label": label_raw,
+                    "delta": delta,
+                    "matched_colors": matched_colors,
+                    "matched_part_numbers": matched_pns,
+                })
+
+                # DEBUG: 详细的 label 匹配日志
+                _log_seq += 1
+                logger.debug(
+                    f"Label matching: {label_raw}",
+                    extra={
+                        "event_type": "label_matching",
+                        "log_seq": _log_seq,
+                        "row_index": int(idx),
+                        "model_norm": model_norm,
+                        "capacity_gb": cap_gb,
+                        "label": label_raw,
+                        "delta": delta,
+                        "matched_colors": matched_colors,
+                        "matched_part_numbers": matched_pns,
+                        "match_count": len(matched_colors),
+                    }
+                )
+
+                # WARNING: 如果 label 没有匹配到任何颜色
+                if not matched_colors:
+                    _log_seq += 1
+                    logger.warning(
+                        f"Label not matched: {label_raw}",
+                        extra={
+                            "event_type": "label_no_match",
+                            "log_seq": _log_seq,
+                            "row_index": int(idx),
+                            "model_norm": model_norm,
+                            "capacity_gb": cap_gb,
+                            "label": label_raw,
+                            "delta": delta,
+                            "available_colors": [cn for cn in color_map.keys()],
+                        }
+                    )
 
         shop_name = SHOP_NAME_OVERRIDE or (urlparse(str(row.get("web-scraper-start-url") or "")).netloc or "shop17")
         rec_at = parse_dt_aware(row.get("time-scraped"))
 
+        # 生成输出记录
+        output_records = []
         for col_norm, (pn, col_raw) in color_map.items():
             delta = color_deltas.get(col_norm, 0)
             price = int(base_price + delta)
 
-            if dbg_row and (DEBUG_SHOP17_SHOW_ALL_COLORS or delta != 0):
-                _dbg_print(ctx, f"OUTPUT color={col_norm} pn={pn} base={base_price} delta={delta} => price={price}", dbg_row)
+            # 判断 delta 来源
+            delta_source = "matched_label" if col_norm in color_deltas else "default_zero"
+            matched_label = None
+            if delta_source == "matched_label":
+                # 找到匹配的 label
+                for label, d in labels_and_deltas:
+                    if color_deltas.get(col_norm) == d:
+                        for test_col_norm, (test_pn, test_col_raw) in color_map.items():
+                            if test_col_norm == col_norm and _label_matches_color_shop17(label, test_col_raw, col_norm):
+                                matched_label = label
+                                break
+                        if matched_label:
+                            break
+
+            # DEBUG: 每条输出记录单独一条日志（扁平化）
+            logger.debug(
+                f"Output record: {pn}",
+                extra={
+                    "event_type": "output_record",
+                    "row_index": int(idx),
+                    "model_text": model_text,
+                    "model_norm": model_norm,
+                    "capacity_gb": cap_gb,
+                    "part_number": pn,
+                    "color_norm": col_norm,
+                    "color_raw": col_raw,
+                    "shop_name": shop_name,
+                    "base_price": base_price,
+                    "delta": delta,
+                    "final_price": price,
+                    "delta_source": delta_source,
+                    "matched_label": matched_label,
+                    "recorded_at": str(rec_at) if rec_at else None,
+                }
+            )
+
+            output_records.append({
+                "part_number": pn,
+                "color_norm": col_norm,
+                "delta": delta,
+                "final_price": price,
+            })
 
             rows.append({
                 "part_number": pn,
@@ -748,9 +876,49 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
                 "recorded_at": rec_at,
             })
 
+        # INFO: 行级概览（汇总信息）
+        colors_matched = len([cn for cn in color_map.keys() if cn in color_deltas])
+        deltas = [d for d in color_deltas.values()]
+
+        logger.info(
+            f"Row {idx}: {model_text} → {len(labels_and_deltas)} labels, {colors_matched} colors matched, {len(output_records)} records output",
+            extra={
+                "event_type": "row_processing_summary",
+                "row_index": int(idx),
+                "model_text": model_text,
+                "model_norm": model_norm,
+                "capacity_gb": cap_gb,
+                "base_price": base_price,
+                "color_discount_raw_preview": _truncate_for_log(raw_color_s, 100),
+                "extraction_method": extraction_method,
+                "labels_extracted_count": len(labels_and_deltas),
+                "colors_in_catalog": len(color_map),
+                "colors_matched_count": colors_matched,
+                "output_records_count": len(output_records),
+                "has_discounted_colors": any(d != 0 for d in deltas),
+                "min_delta": min(deltas) if deltas else 0,
+                "max_delta": max(deltas) if deltas else 0,
+            }
+        )
+
     out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
     if not out.empty:
         out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
         out["part_number"] = out["part_number"].astype(str)
         out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
+
+    elapsed_time = time.time() - start_time
+    logger.info(
+        f"Shop17 cleaner completed",
+        extra={
+            "event_type": "cleaner_complete",
+            "shop_name": "ゲストモバイル",
+            "cleaner_name": "shop17",
+            "input_rows": len(df),
+            "output_records": len(out),
+            "elapsed_seconds": round(elapsed_time, 2),
+            "end_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+        }
+    )
+
     return out

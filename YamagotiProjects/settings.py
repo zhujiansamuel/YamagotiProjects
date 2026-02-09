@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 from pathlib import Path
 from datetime import timedelta
 import os
+import logging
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -745,6 +746,24 @@ IPHONE_OFFICIAL_PRICES = {
 # ============================================================================
 LOG_DIR = BASE_DIR / "logs"
 LOG_DIR.mkdir(exist_ok=True)
+
+# 为 shop cleaners 创建专门的日志目录
+SHOP_CLEANERS_LOG_DIR = LOG_DIR / "shop_cleaners"
+SHOP_CLEANERS_LOG_DIR.mkdir(exist_ok=True)
+
+class _DebugOnlyFilter(logging.Filter):
+    """只允许 DEBUG 级别通过，过滤掉 INFO 及以上。"""
+    def filter(self, record):
+        return record.levelno == logging.DEBUG
+
+
+class _DebugAndWarningFilter(logging.Filter):
+    """允许 DEBUG 和 WARNING 级别通过，过滤掉 INFO/ERROR/CRITICAL。
+    用于 shop17_file_json：DEBUG 记录详细处理过程，WARNING 记录 label 未匹配等异常。"""
+    def filter(self, record):
+        return record.levelno in (logging.DEBUG, logging.WARNING)
+
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -757,11 +776,36 @@ LOGGING = {
             'format': '{levelname} {asctime} {message}',
             'style': '{',
         },
+        'json': {
+            '()': 'pythonjsonlogger.jsonlogger.JsonFormatter',
+            'format': '%(asctime)s %(levelname)s %(name)s %(message)s',
+            'timestamp': True,
+        },
+    },
+    'filters': {
+        'debug_only': {
+            '()': _DebugOnlyFilter,
+        },
+        'debug_and_warning': {
+            '()': _DebugAndWarningFilter,
+        },
     },
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
             'formatter': 'simple',
+            'level': 'INFO',  # 控制台只显示 INFO 及以上
+        },
+        'shop17_file_json': {
+            'class': 'logging.handlers.TimedRotatingFileHandler',
+            'filename': str(SHOP_CLEANERS_LOG_DIR / 'shop17.log'),
+            'when': 'midnight',
+            'interval': 1,
+            'backupCount': 14,
+            'encoding': 'utf-8',
+            'formatter': 'json',
+            'level': 'DEBUG',
+            'filters': ['debug_and_warning'],  # DEBUG + WARNING 写入 JSON 文件，INFO+ 走 console → docker-logs
         },
     },
     'loggers': {
@@ -773,6 +817,12 @@ LOGGING = {
         'AppleStockChecker': {
             'handlers': ['console'],
             'level': 'INFO',
+            'propagate': False,
+        },
+        # shop17 清洗器专用 logger
+        'AppleStockChecker.utils.external_ingest.shop_cleaners_split.shop17_cleaner': {
+            'handlers': ['console', 'shop17_file_json'],
+            'level': os.getenv('SHOP17_LOG_LEVEL', 'DEBUG'),  # 可通过环境变量控制
             'propagate': False,
         },
     },
