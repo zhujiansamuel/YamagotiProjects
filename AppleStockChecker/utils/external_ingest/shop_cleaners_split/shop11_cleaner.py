@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Protocol, Dict, Callable, Optional,List
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -17,9 +17,6 @@ import time
 from dateutil import parser as dateparser
 import textwrap
 from functools import lru_cache
-
-_NUM_MODEL_PAT = re.compile(r"(iPhone)\s*(\d{2})(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
-_AIR_PAT = re.compile(r"(iPhone)\s*(Air)(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
 
 def _norm(s: str) -> str:
     return (s or "").strip()
@@ -75,74 +72,6 @@ def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
         cols.append("jan")
 
     return df[cols]
-
-def _normalize_model_generic(text: str) -> str:
-    """
-    统一型号主体：
-      - iPhone17/16 + 后缀（Pro/Pro Max/Plus/mini）
-      - iPhone Air（含“17 air”→ Air）
-      - 允许紧凑写法：17pro / 17promax / 16Pro / 16Plus ...
-    输出：'iPhone 17 Pro Max' / 'iPhone 17 Pro' / 'iPhone Air' / ...
-    """
-    if not text:
-        return ""
-    t = str(text).replace("\u3000", " ")
-    t = re.sub(r"\s+", " ", t)
-
-    # 日文别名到英文
-    t = (t.replace("プロマックス", "Pro Max")
-           .replace("プロ", "Pro")
-           .replace("プラス", "Plus")
-           .replace("ミニ", "mini")
-           .replace("エアー", "Air")
-           .replace("エア", "Air"))
-
-    # ❗ 在“数字后立即跟英文”的位置补一个空格：17pro -> 17 pro
-    t = re.sub(r"(\d{2})(?=[A-Za-z])", r"\1 ", t)
-
-    # 标准化大小写/形态：pro-max / ProMax / promáx → Pro Max；pro → Pro；plus → Plus；mini → mini
-    t = re.sub(r"(?i)\bpro\s*max\b", "Pro Max", t)
-    t = re.sub(r"(?i)\bpro\b", "Pro", t)
-    t = re.sub(r"(?i)\bplus\b", "Plus", t)
-    t = re.sub(r"(?i)\bmini\b", "mini", t)
-
-    # 若没有 iPhone 前缀但出现纯数字代号，补上
-    if "iPhone" not in t and re.search(r"\b1[0-9]\b", t):
-        t = re.sub(r"\b(1[0-9])\b", r"iPhone \1", t, count=1)
-
-    # 特例：'17 air' → iPhone Air（防止被当成 iPhone 17）
-    t = re.sub(r"(?i)\biPhone\s+17\s+Air\b", "iPhone Air", t)
-
-    # 去容量/SIM/括号噪声
-    t = re.sub(r"(\d+(?:\.\d+)?\s*TB|\d{2,4}\s*GB)", "", t, flags=re.I)
-    t = re.sub(r"SIMフリ[ーｰ–-]?|シムフリ[ーｰ–-]?|sim\s*free", "", t, flags=re.I)
-    t = re.sub(r"[（）\(\)\[\]【】].*?[（）\(\)\[\]【】]", "", t)
-    t = re.sub(r"\s+", " ", t).strip()
-
-    # 1) 数字代号机型
-    m = _NUM_MODEL_PAT.search(t)
-    if m:
-        base = f"{m.group(1)} {m.group(2)}"
-        suf  = (m.group(3) or "").strip()
-        return f"{base} {suf}".strip()
-
-    # 2) Air
-    m2 = _AIR_PAT.search(t)
-    if m2:
-        # 当前返回主体 'iPhone Air'；若以后真有 Air Plus 等可在此扩展
-        return "iPhone Air"
-
-    return ""
-
-_FZ_TO_HZ_TRANS = str.maketrans({
-    '０':'0','１':'1','２':'2','３':'3','４':'4','５':'5','６':'6','７':'7','８':'8','９':'9',
-    '，':',','．':'.','：':':','（':'(','）':')','　':' ','－':'-','＋':'+','¥':'','￥':''
-})
-
-_FZ_TO_HZ_TRANS = str.maketrans({
-    '０':'0','１':'1','２':'2','３':'3','４':'4','５':'5','６':'6','７':'7','８':'8','９':'9',
-    '，':',','．':'.','：':':','（':'(','）':')','　':' ','－':'-','＋':'+','¥':'','￥':''
-})
 
 def to_int_yen_shop11(v) -> Optional[int]:
     """
@@ -372,7 +301,6 @@ except Exception:  # 允许在未安装时仍可跑 fallback
 SHOP11_OLLAMA_URL = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 SHOP11_OLLAMA_MODEL_ID = os.getenv("SHOP11_OLLAMA_MODEL_ID", "gemma3:1b")
 
-
 def _coerce_int(v) -> Optional[int]:
     if v is None:
         return None
@@ -389,7 +317,6 @@ def _coerce_int(v) -> Optional[int]:
         return int(float(s))
     except Exception:
         return None
-
 
 @lru_cache(maxsize=1)
 def _shop11_model_config():
@@ -413,7 +340,6 @@ def _shop11_model_config():
         return lx.factory.ModelConfig(model_id=SHOP11_OLLAMA_MODEL_ID, provider_kwargs=provider_kwargs)
     except Exception:
         return None
-
 
 def _lx_extract_ollama(text: str, prompt: str, examples: list):
     """
@@ -454,7 +380,6 @@ def _lx_extract_ollama(text: str, prompt: str, examples: list):
         )
     except Exception:
         return None
-
 
 @lru_cache(maxsize=8)
 def _shop11_lx_storage_materials(valid_models: Tuple[str, ...]):
@@ -533,7 +458,6 @@ def _shop11_lx_storage_materials(valid_models: Tuple[str, ...]):
     ]
     return prompt, examples
 
-
 @lru_cache(maxsize=1)
 def _shop11_lx_color_materials():
     """
@@ -611,7 +535,6 @@ def _shop11_lx_color_materials():
     ]
     return prompt, examples
 
-
 @lru_cache(maxsize=4096)
 def _lx_parse_storage_shop11(storage: str, valid_models: Tuple[str, ...]) -> Tuple[str, Optional[int], Tuple[Tuple[str, str, Tuple[Tuple[str, str], ...]], ...]]:
     """
@@ -647,7 +570,6 @@ def _lx_parse_storage_shop11(storage: str, valid_models: Tuple[str, ...]) -> Tup
             cap_gb = _coerce_int(attrs.get("capacity_gb"))
 
     return model_norm, cap_gb, tuple(trace)
-
 
 @lru_cache(maxsize=4096)
 def _lx_parse_color_deltas_shop11(
@@ -696,9 +618,6 @@ def _lx_parse_color_deltas_shop11(
                 tmp[c] = int(delta)
 
     return tuple(tmp.items()), tuple(trace)
-
-
-
 
 def clean_shop11(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> pd.DataFrame:
     print("shop11:モバステ---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))

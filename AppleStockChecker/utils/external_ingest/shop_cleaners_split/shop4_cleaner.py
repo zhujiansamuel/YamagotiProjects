@@ -11,14 +11,12 @@ from typing import Dict, Optional, List, Tuple
 import pandas as pd
 
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic
 
 
 # ----------------------------
 # 原有：机型/容量 normalization
 # ----------------------------
-_NUM_MODEL_PAT = re.compile(r"(iPhone)\s*(\d{2})(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
-_AIR_PAT = re.compile(r"(iPhone)\s*(Air)(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
 
 def _find_base_price(df: pd.DataFrame, idx: int) -> Optional[int]:
     """
@@ -92,49 +90,6 @@ def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
         cols.append("jan")
 
     return df[cols]
-
-
-def _normalize_model_generic(text: str) -> str:
-    if not text:
-        return ""
-    t = str(text).replace("\u3000", " ")
-    t = re.sub(r"\s+", " ", t)
-
-    t = (t.replace("プロマックス", "Pro Max")
-           .replace("プロ", "Pro")
-           .replace("プラス", "Plus")
-           .replace("ミニ", "mini")
-           .replace("エアー", "Air")
-           .replace("エア", "Air"))
-
-    t = re.sub(r"(\d{2})(?=[A-Za-z])", r"\1 ", t)
-
-    t = re.sub(r"(?i)\bpro\s*max\b", "Pro Max", t)
-    t = re.sub(r"(?i)\bpro\b", "Pro", t)
-    t = re.sub(r"(?i)\bplus\b", "Plus", t)
-    t = re.sub(r"(?i)\bmini\b", "mini", t)
-
-    if "iPhone" not in t and re.search(r"\b1[0-9]\b", t):
-        t = re.sub(r"\b(1[0-9])\b", r"iPhone \1", t, count=1)
-
-    t = re.sub(r"(?i)\biPhone\s+17\s+Air\b", "iPhone Air", t)
-
-    t = re.sub(r"(\d+(?:\.\d+)?\s*TB|\d{2,4}\s*GB)", "", t, flags=re.I)
-    t = re.sub(r"SIMフリ[ーｰ–-]?|シムフリ[ーｰ–-]?|sim\s*free", "", t, flags=re.I)
-    t = re.sub(r"[（）\(\)\[\]【】].*?[（）\(\)\[\]【】]", "", t)
-    t = re.sub(r"\s+", " ", t).strip()
-
-    m = _NUM_MODEL_PAT.search(t)
-    if m:
-        base = f"{m.group(1)} {m.group(2)}"
-        suf  = (m.group(3) or "").strip()
-        return f"{base} {suf}".strip()
-
-    m2 = _AIR_PAT.search(t)
-    if m2:
-        return "iPhone Air"
-
-    return ""
 
 # ----------------------------
 # LLM（LangExtract + Ollama）解析：颜色±金额

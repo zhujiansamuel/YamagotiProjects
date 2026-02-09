@@ -12,17 +12,13 @@ import pandas as pd
 import textwrap
 from functools import lru_cache
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb
-
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic
 
 # ========== 你的 Ollama 配置 ==========
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL_ID = os.getenv("OLLAMA_MODEL_ID", "gemma3:1b")
 
-
 # ========== 你原来就有的通用解析（沿用你 shop16 逻辑） ==========
-_NUM_MODEL_PAT = re.compile(r"(iPhone)\s*(\d{2})(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
-_AIR_PAT = re.compile(r"(iPhone)\s*(Air)(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
 
 def _norm(s: str) -> str:
     return (s or "").strip()
@@ -112,112 +108,6 @@ def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
 
     return df[cols]
 
-def _normalize_model_generic(text: str) -> str:
-    if not text:
-        return ""
-    t = str(text).replace("\u3000", " ")
-    t = re.sub(r"\s+", " ", t)
-
-    t = (t.replace("プロマックス", "Pro Max")
-           .replace("プロ", "Pro")
-           .replace("プラス", "Plus")
-           .replace("ミニ", "mini")
-           .replace("エアー", "Air")
-           .replace("エア", "Air"))
-
-    t = re.sub(r"(\d{2})(?=[A-Za-z])", r"\1 ", t)
-    t = re.sub(r"(?i)\bpro\s*max\b", "Pro Max", t)
-    t = re.sub(r"(?i)\bpro\b", "Pro", t)
-    t = re.sub(r"(?i)\bplus\b", "Plus", t)
-    t = re.sub(r"(?i)\bmini\b", "mini", t)
-
-    if "iPhone" not in t and re.search(r"\b1[0-9]\b", t):
-        t = re.sub(r"\b(1[0-9])\b", r"iPhone \1", t, count=1)
-
-    t = re.sub(r"(?i)\biPhone\s+17\s+Air\b", "iPhone Air", t)
-    t = re.sub(r"(\d+(?:\.\d+)?\s*TB|\d{2,4}\s*GB)", "", t, flags=re.I)
-    t = re.sub(r"SIMフリ[ーｰ–-]?|シムフリ[ーｰ–-]?|sim\s*free", "", t, flags=re.I)
-    t = re.sub(r"[（）\(\)\[\]【】].*?[（）\(\)\[\]【】]", "", t)
-    t = re.sub(r"\s+", " ", t).strip()
-
-    m = _NUM_MODEL_PAT.search(t)
-    if m:
-        base = f"{m.group(1)} {m.group(2)}"
-        suf  = (m.group(3) or "").strip()
-        return f"{base} {suf}".strip()
-
-    m2 = _AIR_PAT.search(t)
-    if m2:
-        return "iPhone Air"
-
-    return ""
-
-SPLIT_TOKENS_RE = re.compile(r"[／/、，,]|(?:\s*;\s*)")
-
-# ========== 颜色家族匹配（沿用你 shop16 的宽松逻辑；可按 shop15 特性扩展） ==========
-FAMILY_SYNONYMS = {
-    "blue": ["ブルー", "青", "マリン"], "ブルー": ["ブルー", "青", "マリン"], "青": ["ブルー", "青", "マリン"], "マリン": ["ブルー", "青", "マリン"],
-    "black": ["ブラック", "黒"], "ブラック": ["ブラック", "黒"], "黒": ["ブラック", "黒"],
-    "white": ["ホワイト", "白"], "ホワイト": ["ホワイト", "白"], "白": ["ホワイト", "白"],
-    "green": ["グリーン", "緑"], "グリーン": ["グリーン", "緑"], "緑": ["グリーン", "緑"],
-    "red": ["レッド", "赤"], "レッド": ["レッド", "赤"], "赤": ["レッド", "赤"],
-    "yellow": ["イエロー", "黄"], "イエロー": ["イエロー", "黄"], "黄": ["イエロー", "黄"],
-    "orange": ["オレンジ", "橙"], "オレンジ": ["オレンジ", "橙"], "橙": ["オレンジ", "橙"],
-    "silver": ["シルバー", "銀"], "シルバー": ["シルバー", "銀"], "銀": ["シルバー", "銀"],
-    "gold": ["ゴールド", "金"], "ゴールド": ["ゴールド", "金"], "金": ["ゴールド", "金"],
-    "gray": ["グレー", "グレイ", "灰"], "グレー": ["グレー", "グレイ", "灰"], "グレイ": ["グレー", "グレイ", "灰"], "灰": ["グレー", "グレイ", "灰"],
-    "natural": ["ナチュラル"], "ナチュラル": ["ナチュラル"],
-}
-
-FAMILY_SYNONYMS_shop16 = {
-    # blue
-    "blue": ["ブルー", "青", "マリン"],
-    "ブルー": ["ブルー", "青", "マリン"],
-    "青": ["ブルー", "青", "マリン"],
-    "マリン": ["ブルー", "青", "マリン"],
-    # black
-    "black": ["ブラック", "黒"],
-    "ブラック": ["ブラック", "黒"],
-    "黒": ["ブラック", "黒"],
-    # white
-    "white": ["ホワイト", "白"],
-    "ホワイト": ["ホワイト", "白"],
-    "白": ["ホワイト", "白"],
-    # green
-    "green": ["グリーン", "緑"],
-    "グリーン": ["グリーン", "緑"],
-    "緑": ["グリーン", "緑"],
-    # red
-    "red": ["レッド", "赤"],
-    "レッド": ["レッド", "赤"],
-    "赤": ["レッド", "赤"],
-    # yellow
-    "yellow": ["イエロー", "黄"],
-    "イエロー": ["イエロー", "黄"],
-    "黄": ["イエロー", "黄"],
-    # orange
-    "orange": ["オレンジ", "橙"],
-    "オレンジ": ["オレンジ", "橙"],
-    "橙": ["オレンジ", "橙"],
-    # silver
-    "silver": ["シルバー", "銀"],
-    "シルバー": ["シルバー", "銀"],
-    "銀": ["シルバー", "銀"],
-    # gold
-    "gold": ["ゴールド", "金"],
-    "ゴールド": ["ゴールド", "金"],
-    "金": ["ゴールド", "金"],
-    # gray
-    "gray": ["グレー", "グレイ", "灰"],
-    "グレー": ["グレー", "グレイ", "灰"],
-    "グレイ": ["グレー", "グレイ", "灰"],
-    "灰": ["グレー", "グレイ", "灰"],
-    # natural
-    "natural": ["ナチュラル"],
-    "ナチュラル": ["ナチュラル"],
-}
-
-
 def _label_matches_color(label_raw: str, color_raw: str, color_norm: str) -> bool:
     label_norm = _norm(label_raw)
     if label_norm == color_norm:
@@ -256,7 +146,6 @@ def _build_color_map(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict[str, T
         cmap.setdefault(key, {})
         cmap[key][_norm(str(r["color"]))] = (str(r["part_number"]), str(r["color"]))
     return cmap
-
 
 def _extract_color_deltas_shop16(text: str) -> List[Tuple[str, int]]:
     """从价格串中抽取多段“颜色±金额”，支持 '青/オレンジ -5000' 这类多标签共用金额。"""
@@ -350,8 +239,6 @@ def _extract_shared_delta_map_shop16(price_text_norm: str) -> Dict[str, int]:
                 out[lb] = delta
     return out
 
-
-
 def _normalize_price_text_shop16(s: object) -> str:
     s = "" if s is None else str(s)
     s = s.replace("\u3000", " ").replace("\xa0", " ").replace("\t", " ")
@@ -362,7 +249,6 @@ def _normalize_price_text_shop16(s: object) -> str:
     # 多个分隔合并
     s = re.sub(r"(?:\s*/\s*){2,}", " / ", s).strip()
     return s
-
 
 _BASE_ONLY_RE = re.compile(r"^\s*(?:￥|\¥)?\s*\d[\d,]*\s*(?:円)?\s*$")
 
@@ -418,7 +304,6 @@ def _extract_base_price_shop16(text: str) -> Optional[int]:
     if not m:
         return to_int_yen(text)  # 兜底
     return to_int_yen(m.group(1))
-
 
 SHOP16_PRICE_PROMPT = textwrap.dedent("""\
 You extract pricing information from Japanese iPhone buyback price strings (買取価格).
@@ -682,7 +567,6 @@ def _extract_color_abs_prices_shop16(text: str) -> List[Tuple[str, int]]:
 MODEL_COL = "iPhone 17 Pro Max"
 DESC_COL  = "説明1"
 PRICE_COL = "買取価格"
-
 
 def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
     # print("shop16:携帯空間---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))

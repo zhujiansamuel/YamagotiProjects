@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Protocol, Dict, Callable, Optional,List
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -25,10 +25,6 @@ SHOP15_OLLAMA_URL_DEFAULT = os.getenv("SHOP15_OLLAMA_URL", "http://localhost:114
 SHOP15_OLLAMA_MODEL_DEFAULT = os.getenv("SHOP15_OLLAMA_MODEL", "gemma3:1b")
 # 基准价只从开头抓（避免把“ブルー229,000円”的229,000误当 base）
 _BASE_YEN_AT_START_RE = re.compile(r"^\s*(?:￥|¥|\u00a5)?\s*(\d[\d,]*)\s*円?")
-
-
-_NUM_MODEL_PAT = re.compile(r"(iPhone)\s*(\d{2})(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
-_AIR_PAT = re.compile(r"(iPhone)\s*(Air)(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
 
 FAMILY_SYNONYMS = {
     "blue": ["ブルー"],
@@ -57,8 +53,6 @@ COLOR_DELTA_IN_PRICE_RE_shop15 = re.compile(
     """,
     re.UNICODE | re.VERBOSE,
 )
-
-
 
 def _parse_signed_int_yen(s: object) -> Optional[int]:
     """
@@ -284,7 +278,6 @@ def _extract_signed_amount_after_label_shop15(price_text: str, label: str) -> Op
         amt = -amt
     return amt
 
-
 def _coerce_specs_shop15(price_text: str, base_price: Optional[int], specs: List[Tuple[str, str, int]], debug: bool = False):
     """
     纠错策略（针对小模型不稳定输出）：
@@ -397,7 +390,6 @@ def _augment_multi_label_block_specs_shop15(
 
     return new_specs
 
-
 @lru_cache(maxsize=4096)
 def _parse_shop15_price_via_langextract_cached(
     price_text: str,
@@ -480,7 +472,6 @@ def _parse_shop15_price_via_langextract_cached(
 
     return base_price, specs
 
-
 def _parse_shop15_price_via_langextract(
     price_text: object,
     model_id: str = SHOP15_OLLAMA_MODEL_DEFAULT,
@@ -514,7 +505,6 @@ def _parse_shop15_price_via_langextract(
         print(f"[shop15][lx]    specs      = {specs}")
 
     return base_price, specs
-
 
 def _build_color_prices_from_specs_shop15(
     color_map: Dict[str, Tuple[str, str]],
@@ -571,7 +561,6 @@ def _shop15_debug_enabled(debug: bool = False) -> bool:
     v = os.getenv("SHOP15_DEBUG", "")
     return str(v).strip().lower() in {"1", "true", "yes", "y", "on"}
 
-
 def _norm(s: str) -> str:
     return (s or "").strip()
 
@@ -626,64 +615,6 @@ def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
         cols.append("jan")
 
     return df[cols]
-
-def _normalize_model_generic(text: str) -> str:
-    """
-    统一型号主体：
-      - iPhone17/16 + 后缀（Pro/Pro Max/Plus/mini）
-      - iPhone Air（含“17 air”→ Air）
-      - 允许紧凑写法：17pro / 17promax / 16Pro / 16Plus ...
-    输出：'iPhone 17 Pro Max' / 'iPhone 17 Pro' / 'iPhone Air' / ...
-    """
-    if not text:
-        return ""
-    t = str(text).replace("\u3000", " ")
-    t = re.sub(r"\s+", " ", t)
-
-    # 日文别名到英文
-    t = (t.replace("プロマックス", "Pro Max")
-           .replace("プロ", "Pro")
-           .replace("プラス", "Plus")
-           .replace("ミニ", "mini")
-           .replace("エアー", "Air")
-           .replace("エア", "Air"))
-
-    # ❗ 在“数字后立即跟英文”的位置补一个空格：17pro -> 17 pro
-    t = re.sub(r"(\d{2})(?=[A-Za-z])", r"\1 ", t)
-
-    # 标准化大小写/形态：pro-max / ProMax / promáx → Pro Max；pro → Pro；plus → Plus；mini → mini
-    t = re.sub(r"(?i)\bpro\s*max\b", "Pro Max", t)
-    t = re.sub(r"(?i)\bpro\b", "Pro", t)
-    t = re.sub(r"(?i)\bplus\b", "Plus", t)
-    t = re.sub(r"(?i)\bmini\b", "mini", t)
-
-    # 若没有 iPhone 前缀但出现纯数字代号，补上
-    if "iPhone" not in t and re.search(r"\b1[0-9]\b", t):
-        t = re.sub(r"\b(1[0-9])\b", r"iPhone \1", t, count=1)
-
-    # 特例：'17 air' → iPhone Air（防止被当成 iPhone 17）
-    t = re.sub(r"(?i)\biPhone\s+17\s+Air\b", "iPhone Air", t)
-
-    # 去容量/SIM/括号噪声
-    t = re.sub(r"(\d+(?:\.\d+)?\s*TB|\d{2,4}\s*GB)", "", t, flags=re.I)
-    t = re.sub(r"SIMフリ[ーｰ–-]?|シムフリ[ーｰ–-]?|sim\s*free", "", t, flags=re.I)
-    t = re.sub(r"[（）\(\)\[\]【】].*?[（）\(\)\[\]【】]", "", t)
-    t = re.sub(r"\s+", " ", t).strip()
-
-    # 1) 数字代号机型
-    m = _NUM_MODEL_PAT.search(t)
-    if m:
-        base = f"{m.group(1)} {m.group(2)}"
-        suf  = (m.group(3) or "").strip()
-        return f"{base} {suf}".strip()
-
-    # 2) Air
-    m2 = _AIR_PAT.search(t)
-    if m2:
-        # 当前返回主体 'iPhone Air'；若以后真有 Air Plus 等可在此扩展
-        return "iPhone Air"
-
-    return ""
 
 def _label_matches_color(label_raw: str, color_raw: str, color_norm: str) -> bool:
     """
@@ -878,8 +809,6 @@ def _extract_color_specs_from_price_shop15(text: str, debug: bool = False) -> Li
         print(f"[shop15][spec] extracted specs={out}")
     return out
 
-
-
 def _build_color_deltas_shop15(
     color_map: Dict[str, Tuple[str, str]],
     labels_and_deltas: List[Tuple[str, int]],
@@ -969,7 +898,6 @@ def _build_color_prices_shop15(
                     break
 
     return color_prices, hit_log, unmatched
-
 
 def clean_shop15(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
     debug = _shop15_debug_enabled(debug)

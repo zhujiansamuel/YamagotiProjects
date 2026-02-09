@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Protocol, Dict, Callable, Optional,List
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -21,11 +21,6 @@ from typing import Dict, List, Optional, Tuple, Union
 SHOP14_DEBUG = str(True)
 SHOP14_OLLAMA_URL = os.getenv("SHOP14_OLLAMA_URL", "http://localhost:11434")
 SHOP14_LLM_MODEL_ID = os.getenv("SHOP14_LLM_MODEL_ID", "gemma3:1b")
-
-
-
-_NUM_MODEL_PAT = re.compile(r"(iPhone)\s*(\d{2})(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
-_AIR_PAT = re.compile(r"(iPhone)\s*(Air)(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
 
 # 统一用“家族->tokens”，同时包含英文（小写）+ 日文/汉字
 _FAMILY_TOKENS = {
@@ -89,7 +84,6 @@ def _label_matches_color_shop14(label_raw: str, color_raw: str, color_norm: str)
 
     return any(str(tok).lower() in color_raw_l for tok in candidates)
 
-
 def _is_truthy(v) -> bool:
     return str(v or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
@@ -151,64 +145,6 @@ def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
         cols.append("jan")
 
     return df[cols]
-
-def _normalize_model_generic(text: str) -> str:
-    """
-    统一型号主体：
-      - iPhone17/16 + 后缀（Pro/Pro Max/Plus/mini）
-      - iPhone Air（含“17 air”→ Air）
-      - 允许紧凑写法：17pro / 17promax / 16Pro / 16Plus ...
-    输出：'iPhone 17 Pro Max' / 'iPhone 17 Pro' / 'iPhone Air' / ...
-    """
-    if not text:
-        return ""
-    t = str(text).replace("\u3000", " ")
-    t = re.sub(r"\s+", " ", t)
-
-    # 日文别名到英文
-    t = (t.replace("プロマックス", "Pro Max")
-           .replace("プロ", "Pro")
-           .replace("プラス", "Plus")
-           .replace("ミニ", "mini")
-           .replace("エアー", "Air")
-           .replace("エア", "Air"))
-
-    # ❗ 在“数字后立即跟英文”的位置补一个空格：17pro -> 17 pro
-    t = re.sub(r"(\d{2})(?=[A-Za-z])", r"\1 ", t)
-
-    # 标准化大小写/形态：pro-max / ProMax / promáx → Pro Max；pro → Pro；plus → Plus；mini → mini
-    t = re.sub(r"(?i)\bpro\s*max\b", "Pro Max", t)
-    t = re.sub(r"(?i)\bpro\b", "Pro", t)
-    t = re.sub(r"(?i)\bplus\b", "Plus", t)
-    t = re.sub(r"(?i)\bmini\b", "mini", t)
-
-    # 若没有 iPhone 前缀但出现纯数字代号，补上
-    if "iPhone" not in t and re.search(r"\b1[0-9]\b", t):
-        t = re.sub(r"\b(1[0-9])\b", r"iPhone \1", t, count=1)
-
-    # 特例：'17 air' → iPhone Air（防止被当成 iPhone 17）
-    t = re.sub(r"(?i)\biPhone\s+17\s+Air\b", "iPhone Air", t)
-
-    # 去容量/SIM/括号噪声
-    t = re.sub(r"(\d+(?:\.\d+)?\s*TB|\d{2,4}\s*GB)", "", t, flags=re.I)
-    t = re.sub(r"SIMフリ[ーｰ–-]?|シムフリ[ーｰ–-]?|sim\s*free", "", t, flags=re.I)
-    t = re.sub(r"[（）\(\)\[\]【】].*?[（）\(\)\[\]【】]", "", t)
-    t = re.sub(r"\s+", " ", t).strip()
-
-    # 1) 数字代号机型
-    m = _NUM_MODEL_PAT.search(t)
-    if m:
-        base = f"{m.group(1)} {m.group(2)}"
-        suf  = (m.group(3) or "").strip()
-        return f"{base} {suf}".strip()
-
-    # 2) Air
-    m2 = _AIR_PAT.search(t)
-    if m2:
-        # 当前返回主体 'iPhone Air'；若以后真有 Air Plus 等可在此扩展
-        return "iPhone Air"
-
-    return ""
 
 def _has_all_colors(text: str) -> Optional[int]:
     """
@@ -303,8 +239,6 @@ FAMILY_SYNONYMS_shop14 = {
     "natural": ["ナチュラル"],
     "ナチュラル": ["ナチュラル"],
 }
-
-
 
 _SPLIT_TOKENS_SAFE_RE = re.compile(
     r"""
@@ -468,7 +402,6 @@ def _split_labels(labels: str) -> List[str]:
     parts = re.split(r"[／/、，,;；\s]+", s)
     return [p.strip() for p in parts if p and p.strip()]
 
-
 def _coerce_amount_yen(v) -> Optional[int]:
     """
     把 amount_yen 从 LLM attributes / 文本里转成 int（支持：-2500、-2,500円、229,500 等）
@@ -541,7 +474,6 @@ def _split_color_amount_pairs_multi(txt: str) -> List[Tuple[str, int]]:
     if len(out) >= 2:
         return out
     return []
-
 
 def _labels_from_text_fallback(extraction_text: str) -> str:
     """
@@ -653,7 +585,6 @@ def _resolve_remark_cols(df: "pd.DataFrame") -> Dict[str, Optional[str]]:
                 resolved[w] = ac
                 break
     return resolved
-
 
 @lru_cache(maxsize=1)
 def _shop14_lx_prompt_and_examples():
@@ -824,7 +755,6 @@ def _repair_abs_delta_from_compound_text(text: str) -> Tuple[List[Tuple[str, int
 
     return abs_list, delta_list
 
-
 @lru_cache(maxsize=4096)
 def _shop14_extract_rules_with_langextract(
     text: str,
@@ -966,7 +896,6 @@ def _shop14_extract_rules_with_langextract(
     out["abs"] = abs_list
     out["delta"] = delta_list
     return out
-
 
 def clean_shop14(df: "pd.DataFrame") -> "pd.DataFrame":
     now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())

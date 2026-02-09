@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Protocol, Dict, Callable, Optional, List, Tuple
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _load_iphone17_info_df_from_db, _parse_capacity_gb
+from ..cleaner_tools import _load_iphone17_info_df_from_db, _parse_capacity_gb, _normalize_model_generic
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -16,9 +16,6 @@ import logging
 
 # 初始化 logger
 logger = logging.getLogger(__name__)
-
-
-
 
 # DEBUG 功能现在由 logging 级别控制（在 settings.py 的 LOGGING 配置中）
 # 控制台显示 INFO 级别（简洁），文件记录 DEBUG 级别（详细）
@@ -107,135 +104,6 @@ LX_SHOP17_MODEL_ID = os.getenv("SHOP17_LX_MODEL_ID", "gemma3:1b")
 LX_SHOP17_MODEL_URL = os.getenv("SHOP17_LX_MODEL_URL", "http://localhost:11434")
 USE_LLM_FOR_SHOP17 = str(os.getenv("SHOP17_USE_LLM", "1")).strip().lower() not in {"0", "false", "no"}
 
-_NUM_MODEL_PAT = re.compile(r"(iPhone)\s*(\d{2})(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
-_AIR_PAT = re.compile(r"(iPhone)\s*(Air)(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
-
-def _normalize_model_generic(text: str) -> str:
-    """
-    统一型号主体：
-      - iPhone17/16 + 后缀（Pro/Pro Max/Plus/mini）
-      - iPhone Air（含“17 air”→ Air）
-      - 允许紧凑写法：17pro / 17promax / 16Pro / 16Plus ...
-    输出：'iPhone 17 Pro Max' / 'iPhone 17 Pro' / 'iPhone Air' / ...
-    """
-    if not text:
-        return ""
-    t = str(text).replace("\u3000", " ")
-    t = re.sub(r"\s+", " ", t)
-
-    # 日文别名到英文
-    t = (t.replace("プロマックス", "Pro Max")
-           .replace("プロ", "Pro")
-           .replace("プラス", "Plus")
-           .replace("ミニ", "mini")
-           .replace("エアー", "Air")
-           .replace("エア", "Air"))
-
-    # 数字后紧跟英文：17pro -> 17 pro
-    t = re.sub(r"(\d{2})(?=[A-Za-z])", r"\1 ", t)
-
-    # 标准化后缀大小写
-    t = re.sub(r"(?i)\bpro\s*max\b", "Pro Max", t)
-    t = re.sub(r"(?i)\bpro\b", "Pro", t)
-    t = re.sub(r"(?i)\bplus\b", "Plus", t)
-    t = re.sub(r"(?i)\bmini\b", "mini", t)
-
-    # 若没有 iPhone 前缀但出现纯数字代号，补上
-    if "iPhone" not in t and re.search(r"\b1[0-9]\b", t):
-        t = re.sub(r"\b(1[0-9])\b", r"iPhone \1", t, count=1)
-
-    # 特例：'17 air' → iPhone Air（防止被当成 iPhone 17）
-    t = re.sub(r"(?i)\biPhone\s+17\s+Air\b", "iPhone Air", t)
-
-    # 去容量/SIM/括号噪声
-    t = re.sub(r"(\d+(?:\.\d+)?\s*TB|\d{2,4}\s*GB)", "", t, flags=re.I)
-    t = re.sub(r"SIMフリ[ーｰ–-]?|シムフリ[ーｰ–-]?|sim\s*free", "", t, flags=re.I)
-    t = re.sub(r"[（）\(\)\[\]【】].*?[（）\(\)\[\]【】]", "", t)
-    t = re.sub(r"\s+", " ", t).strip()
-
-    # 1) 数字代号机型
-    m = _NUM_MODEL_PAT.search(t)
-    if m:
-        base = f"{m.group(1)} {m.group(2)}"
-        suf  = (m.group(3) or "").strip()
-        return f"{base} {suf}".strip()
-
-    # 2) Air
-    m2 = _AIR_PAT.search(t)
-    if m2:
-        return "iPhone Air"
-
-    return ""
-
-
-
-SHOP_NAME_OVERRIDE: Optional[str] = "ゲストモバイル"  # 例如 "ゲストモバイル"
-
-FAMILY_SYNONYMS_shop17 = {
-    # blue 家族
-    "blue": ["ブルー", "青", "ミッドナイト", "マリン", "ミストブルー"],
-    "ブルー": ["ブルー", "青", "ミッドナイト", "マリン", "ミストブルー"],
-    "青": ["ブルー", "青", "ミッドナイト", "マリン", "ミストブルー"],
-    "ミッドナイト": ["ブルー", "青", "ミッドナイト", "マリン", "ミストブルー"],
-    "マリン": ["ブルー", "青", "ミッドナイト", "マリン", "ミストブルー"],
-
-    # black
-    "black": ["ブラック", "黒"],
-    "ブラック": ["ブラック", "黒"],
-    "黒": ["ブラック", "黒"],
-
-    # white / starlight
-    "white": ["ホワイト", "白", "スターライト", "Starlight", "starlight"],
-    "ホワイト": ["ホワイト", "白", "スターライト"],
-    "白": ["ホワイト", "白", "スターライト"],
-    "スターライト": ["ホワイト", "白", "スターライト"],
-    "starlight": ["ホワイト", "白", "スターライト"],
-
-    # silver
-    "silver": ["シルバー", "銀"],
-    "シルバー": ["シルバー", "銀"],
-    "銀": ["シルバー", "銀"],
-
-    # gold / light gold
-    "gold": ["ゴールド", "金", "ライトゴールド"],
-    "ゴールド": ["ゴールド", "金", "ライトゴールド"],
-    "ライトゴールド": ["ゴールド", "金", "ライトゴールド"],
-
-    # orange
-    "orange": ["オレンジ", "橙"],
-    "オレンジ": ["オレンジ", "橙"],
-    "橙": ["オレンジ", "橙"],
-
-    # green / セージ
-    "green": ["グリーン", "緑", "セージ"],
-    "グリーン": ["グリーン", "緑", "セージ"],
-    "緑": ["グリーン", "緑", "セージ"],
-    "セージ": ["グリーン", "緑", "セージ"],
-
-    # pink
-    "pink": ["ピンク"],
-    "ピンク": ["ピンク"],
-
-    # yellow
-    "yellow": ["イエロー", "黄", "黄色"],
-    "イエロー": ["イエロー", "黄", "黄色"],
-    "黄": ["イエロー", "黄", "黄色"],
-    "黄色": ["イエロー", "黄", "黄色"],
-
-    # purple / lavender
-    "purple": ["パープル", "紫", "ラベンダー"],
-    "パープル": ["パープル", "紫", "ラベンダー"],
-    "紫": ["パープル", "紫", "ラベンダー"],
-    "ラベンダー": ["パープル", "紫", "ラベンダー"],
-
-    # natural
-    "natural": ["ナチュラル"],
-    "ナチュラル": ["ナチュラル"],
-
-    # space black
-    "spaceblack": ["スペースブラック"],
-    "スペースブラック": ["スペースブラック"],
-}
 def _norm(s: str) -> str:
     return (s or "").strip()
 
@@ -464,7 +332,6 @@ def _parse_delta_attr_to_int(val) -> Optional[int]:
         return int(s)
     except Exception:
         return None
-
 
 def _extract_color_deltas_shop17_llm(
     text: str,
