@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Protocol, Dict, Callable, Optional, List, Tuple
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _load_iphone17_info_df_from_db
+from ..cleaner_tools import _load_iphone17_info_df_from_db, _parse_capacity_gb
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -167,17 +167,7 @@ def _normalize_model_generic(text: str) -> str:
 
     return ""
 
-def _parse_capacity_gb(text: str) -> Optional[int]:
-    if not text:
-        return None
-    t = str(text)
-    m = re.search(r"(\d+(?:\.\d+)?)\s*TB", t, flags=re.I)
-    if m:
-        return int(round(float(m.group(1)) * 1024))
-    m = re.search(r"(\d{2,4})\s*GB", t, flags=re.I)
-    if m:
-        return int(m.group(1))
-    return None
+
 
 SHOP_NAME_OVERRIDE: Optional[str] = "ゲストモバイル"  # 例如 "ゲストモバイル"
 

@@ -4,8 +4,9 @@
 提供数据库访问、数据转换等通用功能
 """
 from __future__ import annotations
-from typing import List
+from typing import List, Optional
 import pandas as pd
+import re
 
 
 def _load_iphone17_info_df_from_db() -> pd.DataFrame:
@@ -51,3 +52,16 @@ def _load_iphone17_info_df_from_db() -> pd.DataFrame:
         cols = ["part_number", "model_name", "capacity_gb", "color", "jan"]
 
     return df[cols].reset_index(drop=True)
+
+
+def _parse_capacity_gb(text: str) -> Optional[int]:
+    if not text:
+        return None
+    t = str(text)
+    m = re.search(r"(\d+(?:\.\d+)?)\s*TB", t, flags=re.I)
+    if m:
+        return int(round(float(m.group(1)) * 1024))
+    m = re.search(r"(\d{2,4})\s*GB", t, flags=re.I)
+    if m:
+        return int(m.group(1))
+    return None
