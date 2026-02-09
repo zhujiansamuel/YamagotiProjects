@@ -110,99 +110,6 @@ USE_LLM_FOR_SHOP17 = str(os.getenv("SHOP17_USE_LLM", "1")).strip().lower() not i
 _NUM_MODEL_PAT = re.compile(r"(iPhone)\s*(\d{2})(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
 _AIR_PAT = re.compile(r"(iPhone)\s*(Air)(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
 
-
-_DASH_TRANS_shop17 = str.maketrans({
-    "−": "-",  # U+2212
-    "－": "-",  # U+FF0D
-    "‐": "-",  # U+2010
-    "‑": "-",  # U+2011
-    "‒": "-",  # U+2012
-    "–": "-",  # U+2013
-    "—": "-",  # U+2014
-})
-_FW_DIGITS_TRANS_shop17 = str.maketrans("０１２３４５６７８９", "0123456789")
-
-_BAD_LABEL_WORDS_shop17 = ("利用制限", "保証", "郵送", "持ち込み", "開始", "未満", "減額", "SIM", "制限")
-
-def _normalize_color_text_shop17(s: str) -> str:
-    s = "" if s is None else str(s)
-    s = s.replace("\r\n", "\n").replace("\r", "\n")
-    s = s.translate(_FW_DIGITS_TRANS_shop17)
-    s = s.replace("，", ",").replace("／", "/")
-    s = s.translate(_DASH_TRANS_shop17)
-    s = re.sub(r"[ \t\u3000\xa0]+", " ", s)
-    return s.strip()
-
-def _is_plausible_color_label_shop17(label: str) -> bool:
-    # 依赖你已有的 _normalize_label_shop17
-    label = _normalize_label_shop17(label)
-    if not label:
-        return False
-    if label.startswith(("△", "▲")):
-        return False
-    if re.search(r"\d", label):
-        return False
-    if len(label) > 16:
-        return False
-    if any(w in label for w in _BAD_LABEL_WORDS_shop17):
-        return False
-    return True
-
-
-def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
-    """
-    读取 iphone17_info，并尽量保留 jan 列以供 shop1 做 JAN→PN 映射。
-    输出列至少包含：part_number, model_name, capacity_gb, color，
-    若检测到任何 jan 列，则额外返回标准化列 'jan'。
-    """
-    try:
-        from django.conf import settings
-        p = getattr(settings, "EXTERNAL_IPHONE17_INFO_PATH", None)
-        if p:
-            path = str(p)
-        else:
-            raise AttributeError
-    except Exception:
-        path = os.getenv("IPHONE17_INFO_CSV") or str(
-            Path(__file__).resolve().parents[2] / "data" / "iphone17_info.csv"
-        )
-
-    pth = Path(path)
-    if not pth.exists():
-        raise FileNotFoundError(f"未找到 iphone17_info：{pth}")
-
-    if re.search(r"\.(xlsx|xlsm|xls|ods)$", str(pth), re.I):
-        df = pd.read_excel(pth)
-    else:
-        df = pd.read_csv(pth, encoding="utf-8-sig")
-
-    need = {"part_number", "model_name", "capacity_gb", "color"}
-    missing = need - set(df.columns)
-    if missing:
-        raise ValueError(f"iphone17_info 缺少必要列：{missing}")
-
-    df = df.copy()
-    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
-    df = df.dropna(subset=["model_name", "capacity_gb", "part_number", "color"])
-
-    # ★ 检测并标准化 jan 列（尽最大可能适配命名）
-    jan_candidates = []
-    for c in df.columns:
-        cl = str(c).strip().lower()
-        if cl in {"jan", "jancode", "jan_code", "jan13", "jan14"}:
-            jan_candidates.append(c)
-        elif "jan" in cl or "jan" in str(c):  # 兼容 'JANコード' 等
-            jan_candidates.append(c)
-    jan_candidates = list(dict.fromkeys(jan_candidates))  # 去重保序
-
-    cols = ["part_number", "model_name", "capacity_gb", "color"]
-    if jan_candidates:
-        src = jan_candidates[0]
-        df["jan"] = df[src]
-        cols.append("jan")
-
-    return df[cols]
-
 def _normalize_model_generic(text: str) -> str:
     """
     统一型号主体：
@@ -389,15 +296,6 @@ def _pick_unopened_section(text: str) -> str:
 # ----------------------------------------------------------------------
 # 原来的 正则解析器（保留为 fallback）
 # ----------------------------------------------------------------------
-COLOR_NONE_RE_shop17 = re.compile(
-    r"""(?P<label>[^：:\-\s/、／，,\n]+(?:\([^)]*\))?)\s*
-        (?:(?P<sep>[：:\-])\s*)?
-        (?:減額)?なし
-    """,
-    re.UNICODE | re.VERBOSE,
-)
-
-
 SPLIT_TOKENS_RE_shop17 = re.compile(r"[／/、]|(?:\s*;\s*)|\n")
 
 def _normalize_label_shop17(lbl: str) -> str:
@@ -483,7 +381,6 @@ COLOR_DELTA_PROMPT_SHOP17 = textwrap.dedent("""
 - 文章内の改行や空行は無視して構いません。
 """).strip()
 
-@lru_cache()
 @lru_cache()
 def _get_color_delta_examples_shop17() -> List[ExampleData]:
     if not _HAS_LANGEXTRACT:
@@ -804,7 +701,6 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
 
         # label -> color 命中 & 计算 delta
         color_deltas: Dict[str, int] = {}
-        label_matching_details = []  # 用于记录每个 label 的匹配详情
 
         if labels_and_deltas:
             for label_raw, delta in labels_and_deltas:
@@ -816,14 +712,6 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
                         color_deltas[col_norm] = delta
                         matched_colors.append(col_norm)
                         matched_pns.append(pn)
-
-                # 记录此 label 的匹配结果
-                label_matching_details.append({
-                    "label": label_raw,
-                    "delta": delta,
-                    "matched_colors": matched_colors,
-                    "matched_part_numbers": matched_pns,
-                })
 
                 # DEBUG: 详细的 label 匹配日志
                 _log_seq += 1
