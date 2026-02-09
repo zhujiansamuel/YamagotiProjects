@@ -261,14 +261,6 @@ STATICFILES_FINDERS = [
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 _ws_token = os.getenv("WEB_SCRAPER_API_TOKEN", "")
-EXTERNAL_TRADEIN_SOURCES = [
-    {"name": "shop9",
-     "url": f"https://api.webscraper.io/api/v1/scraping-job/34172581/csv?api_token={_ws_token}"},
-    {"name": "shop3",
-     "url": f"https://api.webscraper.io/api/v1/scraping-job/34172550/csv?api_token={_ws_token}"},
-    {"name": "shop2",
-     "url": f"https://api.webscraper.io/api/v1/scraping-job/34478442/csv?api_token={_ws_token}"},
-]
 
 from pathlib import Path
 
