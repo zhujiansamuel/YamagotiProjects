@@ -503,16 +503,6 @@ def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
     return df[cols]
 
 
-    t = str(text)
-    m = re.search(r"(\d+(?:\.\d+)?)\s*TB", t, flags=re.I)
-    if m:
-        return int(round(float(m.group(1)) * 1024))
-    m = re.search(r"(\d{2,4})\s*GB", t, flags=re.I)
-    if m:
-        return int(m.group(1))
-    return None
-
-
 # ---------------------- 主入口：clean_shop2 ----------------------
 
 
