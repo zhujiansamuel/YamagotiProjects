@@ -578,7 +578,12 @@ def _parse_delta_attr_to_int(val) -> Optional[int]:
         return None
 
 
-def _extract_color_deltas_shop17_llm(text: str) -> List[Tuple[str, int]]:
+def _extract_color_deltas_shop17_llm(
+    text: str,
+    shop_name: Optional[str] = None,
+    cleaner_name: Optional[str] = None,
+    row_context: Optional[Dict] = None
+) -> List[Tuple[str, int]]:
     if not _HAS_LANGEXTRACT or not USE_LLM_FOR_SHOP17:
         return []
     if not text or not str(text).strip():
@@ -606,17 +611,26 @@ def _extract_color_deltas_shop17_llm(text: str) -> List[Tuple[str, int]]:
             prompt_validation_strict=False,
         )
     except Exception as e:
+        log_extra = {
+            "event_type": "llm_extraction_error",
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "model_id": LX_SHOP17_MODEL_ID,
+            "model_url": LX_SHOP17_MODEL_URL,
+            "text_length": len(s),
+            "text_preview": _truncate_for_log(s, 100),
+        }
+        # 添加上下文信息（如果提供）
+        if shop_name:
+            log_extra["shop_name"] = shop_name
+        if cleaner_name:
+            log_extra["cleaner_name"] = cleaner_name
+        if row_context:
+            log_extra.update(row_context)
+
         logger.warning(
             "LangExtract extraction failed",
-            extra={
-                "event_type": "llm_extraction_error",
-                "error": str(e),
-                "error_type": type(e).__name__,
-                "model_id": LX_SHOP17_MODEL_ID,
-                "model_url": LX_SHOP17_MODEL_URL,
-                "text_length": len(s),
-                "text_preview": _truncate_for_log(s, 100),
-            }
+            extra=log_extra
         )
         return []
 
@@ -645,7 +659,12 @@ def _extract_color_deltas_shop17_llm(text: str) -> List[Tuple[str, int]]:
 
     return out
 
-def _extract_color_deltas_shop17(text: str) -> List[Tuple[str, int]]:
+def _extract_color_deltas_shop17(
+    text: str,
+    shop_name: Optional[str] = None,
+    cleaner_name: Optional[str] = None,
+    row_context: Optional[Dict] = None
+) -> List[Tuple[str, int]]:
     """
     优先使用正则（对像「シルバーなし/ブルー-1000」这种结构非常稳定），
     当正则完全解析不到任何颜色差额时，再让 LangExtract + Ollama 兜底。
@@ -653,19 +672,24 @@ def _extract_color_deltas_shop17(text: str) -> List[Tuple[str, int]]:
     regex_res = _extract_color_deltas_shop17_regex(text)
     if regex_res:
         return regex_res
-    return _extract_color_deltas_shop17_llm(text)
+    return _extract_color_deltas_shop17_llm(text, shop_name, cleaner_name, row_context)
 # ----------------------------------------------------------------------
 # 清洗主函数
 # ----------------------------------------------------------------------
 def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
     start_time = time.time()
     _log_seq = 0  # 日志序号：同一次 clean_shop17 调用内单调递增，用于 ELK 排序
+
+    # 定义清洗器级别的上下文信息，将被所有下级日志继承
+    CLEANER_NAME = "shop17"
+    SHOP_NAME = "ゲストモバイル"
+
     logger.info(
         "Starting shop17 cleaner",
         extra={
             "event_type": "cleaner_start",
-            "shop_name": "ゲストモバイル",
-            "cleaner_name": "shop17",
+            "shop_name": SHOP_NAME,
+            "cleaner_name": CLEANER_NAME,
             "input_rows": len(df),
             "start_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
         }
@@ -677,6 +701,8 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
                 f"Missing required column: {c}",
                 extra={
                     "event_type": "validation_error",
+                    "shop_name": SHOP_NAME,
+                    "cleaner_name": CLEANER_NAME,
                     "missing_column": c,
                     "available_columns": list(df.columns),
                 }
@@ -711,8 +737,22 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
         raw_color = row.get("色減額")
         raw_color_s = "" if raw_color is None else str(raw_color)
 
+        # 构建行级上下文，用于传递给下级函数和日志
+        row_context = {
+            "row_index": int(idx),
+            "model_text": model_text,
+            "model_norm": model_norm,
+            "capacity_gb": cap_gb,
+            "base_price": base_price,
+        }
+
         # 提取颜色差额
-        labels_and_deltas = _extract_color_deltas_shop17(raw_color_s)
+        labels_and_deltas = _extract_color_deltas_shop17(
+            raw_color_s,
+            shop_name=SHOP_NAME,
+            cleaner_name=CLEANER_NAME,
+            row_context=row_context
+        )
 
         # 判断使用的提取方法
         extraction_method = "none"
@@ -740,6 +780,8 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
             extra={
                 "event_type": "extraction_result",
                 "log_seq": _log_seq,
+                "shop_name": SHOP_NAME,
+                "cleaner_name": CLEANER_NAME,
                 "row_index": int(idx),
                 "model_text": model_text,
                 "model_norm": model_norm,
@@ -789,9 +831,13 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
                     extra={
                         "event_type": "label_matching",
                         "log_seq": _log_seq,
+                        "shop_name": SHOP_NAME,
+                        "cleaner_name": CLEANER_NAME,
                         "row_index": int(idx),
+                        "model_text": model_text,
                         "model_norm": model_norm,
                         "capacity_gb": cap_gb,
+                        "base_price": base_price,
                         "label": label_raw,
                         "delta": delta,
                         "matched_colors": matched_colors,
@@ -808,9 +854,13 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
                         extra={
                             "event_type": "label_no_match",
                             "log_seq": _log_seq,
+                            "shop_name": SHOP_NAME,
+                            "cleaner_name": CLEANER_NAME,
                             "row_index": int(idx),
+                            "model_text": model_text,
                             "model_norm": model_norm,
                             "capacity_gb": cap_gb,
+                            "base_price": base_price,
                             "label": label_raw,
                             "delta": delta,
                             "available_colors": [cn for cn in color_map.keys()],
@@ -841,10 +891,14 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
                             break
 
             # DEBUG: 每条输出记录单独一条日志（扁平化）
+            _log_seq += 1
             logger.debug(
                 f"Output record: {pn}",
                 extra={
                     "event_type": "output_record",
+                    "log_seq": _log_seq,
+                    "shop_name": shop_name,
+                    "cleaner_name": CLEANER_NAME,
                     "row_index": int(idx),
                     "model_text": model_text,
                     "model_norm": model_norm,
@@ -852,7 +906,6 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
                     "part_number": pn,
                     "color_norm": col_norm,
                     "color_raw": col_raw,
-                    "shop_name": shop_name,
                     "base_price": base_price,
                     "delta": delta,
                     "final_price": price,
@@ -880,10 +933,14 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
         colors_matched = len([cn for cn in color_map.keys() if cn in color_deltas])
         deltas = [d for d in color_deltas.values()]
 
+        _log_seq += 1
         logger.info(
             f"Row {idx}: {model_text} → {len(labels_and_deltas)} labels, {colors_matched} colors matched, {len(output_records)} records output",
             extra={
                 "event_type": "row_processing_summary",
+                "log_seq": _log_seq,
+                "shop_name": SHOP_NAME,
+                "cleaner_name": CLEANER_NAME,
                 "row_index": int(idx),
                 "model_text": model_text,
                 "model_norm": model_norm,
@@ -912,8 +969,8 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
         f"Shop17 cleaner completed",
         extra={
             "event_type": "cleaner_complete",
-            "shop_name": "ゲストモバイル",
-            "cleaner_name": "shop17",
+            "shop_name": SHOP_NAME,
+            "cleaner_name": CLEANER_NAME,
             "input_rows": len(df),
             "output_records": len(out),
             "elapsed_seconds": round(elapsed_time, 2),
