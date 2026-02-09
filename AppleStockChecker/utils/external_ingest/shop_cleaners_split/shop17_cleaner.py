@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Protocol, Dict, Callable, Optional, List, Tuple
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
+from ..cleaner_tools import _load_iphone17_info_df_from_db
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -709,7 +710,7 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
             )
             raise ValueError(f"shop17 清洗器缺少必要列：{c}")
 
-    info_df = _load_iphone17_info_df_for_shop2()
+    info_df = _load_iphone17_info_df_from_db()
     cmap_all = _build_color_map_shop17(info_df)
     rows: List[dict] = []
 
