@@ -69,7 +69,6 @@ MIDDLEWARE = [
 
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
-    # "YamagotiProjects.middleware.login_required.LoginRequiredMiddleware",
     'django.middleware.common.CommonMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
@@ -132,15 +131,18 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:8000",
-    "https://verbless-sadistically-jayceon.ngrok-free.dev"
-
+    "https://verbless-sadistically-jayceon.ngrok-free.dev",
+    "https://analysis.yamaguchi.lan",
 ]
+
 # 若你在本地调试 CSRF：
 CSRF_TRUSTED_ORIGINS = ["http://localhost:3000",
                         "http://127.0.0.1:3000",
                         "http://127.0.0.1:8000",
-                        "https://verbless-sadistically-jayceon.ngrok-free.dev"
+                        "https://verbless-sadistically-jayceon.ngrok-free.dev",
+                        "https://analysis.yamaguchi.lan",
                         ]
+
 
 TEMPLATES = [
     {
@@ -158,6 +160,7 @@ TEMPLATES = [
         },
     },
 ]
+
 
 WHITENOISE_MAX_AGE = 60 * 60 * 24 * 7
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
@@ -682,13 +685,6 @@ LIST_ORDER = [
     "iphone-Air-1024",
     "iphone-17-256",
     "iphone-17-512"
-]
-
-LOGIN_EXEMPT_URLS = [
-    r'^AppleStockChecker/purchasing-price-records/ingest-json/?$',  # ← 新接口
-    # 如还有 path-token 版/webhook 版，也一并加上
-    r'^AppleStockChecker/purchasing-price-records/ingest-webscraper/?$',
-    r'^AppleStockChecker/purchasing-price-records/ingest-webscraper/[-A-Za-z0-9_]+/?$',
 ]
 
 CHANNEL_LAYERS = {
