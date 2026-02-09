@@ -11,6 +11,7 @@ from typing import Dict, Optional, List, Tuple
 import pandas as pd
 
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
+from ..cleaner_tools import _parse_capacity_gb
 
 
 # ----------------------------
@@ -136,9 +137,6 @@ def _normalize_model_generic(text: str) -> str:
     return ""
 
 
-def _parse_capacity_gb(text: str) -> Optional[int]:
-    if not text:
-        return None
     t = str(text)
     m = re.search(r"(\d+(?:\.\d+)?)\s*TB", t, flags=re.I)
     if m:

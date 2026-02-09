@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
+from ..cleaner_tools import _parse_capacity_gb
 
 # ====== 你原先已有的：机型/容量/颜色映射相关（保持不动即可） ======
 _NUM_MODEL_PAT = re.compile(r"(iPhone)\s*(\d{2})(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
@@ -60,9 +61,6 @@ def _normalize_model_generic(text: str) -> str:
 
     return ""
 
-def _parse_capacity_gb(text: str) -> Optional[int]:
-    if not text:
-        return None
     t = str(text)
     m = re.search(r"(\d+(?:\.\d+)?)\s*TB", t, flags=re.I)
     if m:

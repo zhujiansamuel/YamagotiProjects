@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Protocol, Dict, Callable, Optional, List, Tuple, Iterable, Union
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
+from ..cleaner_tools import _parse_capacity_gb
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -502,9 +503,6 @@ def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
     return df[cols]
 
 
-def _parse_capacity_gb(text: str) -> Optional[int]:
-    if not text:
-        return None
     t = str(text)
     m = re.search(r"(\d+(?:\.\d+)?)\s*TB", t, flags=re.I)
     if m:
