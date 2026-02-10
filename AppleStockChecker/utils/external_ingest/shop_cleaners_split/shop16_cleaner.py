@@ -18,6 +18,8 @@ from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL_ID = os.getenv("OLLAMA_MODEL_ID", "gemma3:1b")
 
+SHOP16_EXTRACTION_MODE = "auto"  # "regex" | "llm" | "auto"
+
 # ========== 你原来就有的通用解析（沿用你 shop16 逻辑） ==========
 
 def _norm(s: str) -> str:
@@ -543,6 +545,131 @@ def _extract_color_abs_prices_shop16(text: str) -> List[Tuple[str, int]]:
             out.append((label, int(amt)))
     return out
 
+def _extract_price_parts_shop16_regex(
+    price_text: str,
+) -> Tuple[Optional[int], List[Tuple[str, int]], List[Tuple[str, int]]]:
+    """
+    纯正则版：从 price_text 中提取 (base_price, deltas, abs_prices)。
+    """
+    base_price = _extract_base_price_shop16(price_text)
+    deltas = _extract_color_deltas_shop16(price_text)
+    absps = _extract_color_abs_prices_shop16(price_text)
+    return base_price, deltas, absps
+
+
+def _extract_price_parts_shop16_dispatch(
+    price_text: str, debug: bool = False, idx: object = None,
+) -> Tuple[Optional[int], List[Tuple[str, int]], List[Tuple[str, int]], str]:
+    """
+    根据 SHOP16_EXTRACTION_MODE 决定提取方式：
+      - "regex": 只用正则
+      - "llm":   只用 LLM + Guardrail A/B/C
+      - "auto":  正则优先，正则无颜色结果时 LLM + Guardrail 兜底
+
+    返回 (base_price, deltas, abs_prices, extraction_method)
+    """
+    mode = SHOP16_EXTRACTION_MODE
+
+    if mode == "regex":
+        bp, deltas, absps = _extract_price_parts_shop16_regex(price_text)
+        return bp, deltas, absps, "regex"
+
+    if mode == "llm":
+        bp, deltas, absps = _extract_price_parts_shop16_llm_with_guardrails(
+            price_text, debug=debug, idx=idx,
+        )
+        return bp, deltas, absps, "llm"
+
+    # ---- auto: 正则优先，正则无颜色结果时 LLM 兜底 ----
+    bp_re, deltas_re, absps_re = _extract_price_parts_shop16_regex(price_text)
+    if deltas_re or absps_re:
+        return bp_re, deltas_re, absps_re, "regex"
+
+    bp_llm, deltas_llm, absps_llm = _extract_price_parts_shop16_llm_with_guardrails(
+        price_text, debug=debug, idx=idx,
+    )
+    # LLM 的 base_price 优先，其次正则的
+    bp_final = bp_llm if bp_llm is not None else bp_re
+    return bp_final, deltas_llm, absps_llm, "llm"
+
+
+def _extract_price_parts_shop16_llm_with_guardrails(
+    price_text: str, debug: bool = False, idx: object = None,
+) -> Tuple[Optional[int], List[Tuple[str, int]], List[Tuple[str, int]]]:
+    """
+    LLM 提取 + Guardrail A/B/C（仅 LLM 路径使用）。
+    """
+    base_llm = None
+    deltas: List[Tuple[str, int]] = []
+    absps: List[Tuple[str, int]] = []
+    llm_ok = False
+
+    try:
+        base_llm, deltas, absps, _dbg = _lx_extract_price_parts_shop16(price_text)
+        llm_ok = True
+    except Exception as e:
+        llm_ok = False
+        if debug:
+            print(f"\n[shop16][llm] LangExtract/Ollama 解析失败，row={idx} err={repr(e)}")
+
+    base_price = base_llm
+    if base_price is None:
+        base_price = _extract_base_price_shop16(price_text)
+    base_price = int(base_price) if base_price is not None else None
+
+    # Guardrail A: 只有基础价 -> 丢弃所有 color_delta/color_abs（防幻觉）
+    if _is_base_only_price_text(price_text):
+        deltas = []
+        absps = []
+
+    # Guardrail B: 共享差价纠错
+    shared_delta_map = _extract_shared_delta_map_shop16(price_text)
+    if shared_delta_map and deltas:
+        corrected: List[Tuple[str, int]] = []
+        for label_raw, delta in deltas:
+            lb = _normalize_label_shop16(label_raw)
+            if not lb:
+                continue
+            if lb in shared_delta_map:
+                corrected.append((lb, int(shared_delta_map[lb])))
+            else:
+                corrected.append((lb, int(delta)))
+        deltas = corrected
+
+    # Guardrail C: 逐条证据过滤 —— label/金额必须在原文出现
+    text_no_commas = price_text.replace(",", "")
+    filtered_deltas: List[Tuple[str, int]] = []
+    for label_raw, delta in deltas:
+        lb = _normalize_label_shop16(label_raw)
+        if not lb:
+            continue
+        if lb not in price_text:
+            continue
+        if str(abs(int(delta))) not in text_no_commas:
+            continue
+        filtered_deltas.append((lb, int(delta)))
+    deltas = filtered_deltas
+
+    filtered_absps: List[Tuple[str, int]] = []
+    for label_raw, amt in absps:
+        lb = _normalize_label_shop16(label_raw)
+        if not lb:
+            continue
+        if lb not in price_text:
+            continue
+        if str(int(amt)) not in text_no_commas:
+            continue
+        filtered_absps.append((lb, int(amt)))
+    absps = filtered_absps
+
+    # LLM 完全失败且无颜色信息时，回退到正则
+    if (not llm_ok) and (not deltas) and (not absps):
+        deltas = _extract_color_deltas_shop16(price_text)
+        absps = _extract_color_abs_prices_shop16(price_text)
+
+    return base_price, deltas, absps
+
+
 MODEL_COL = "iPhone 17 Pro Max"
 DESC_COL  = "説明1"
 PRICE_COL = "買取価格"
@@ -593,96 +720,12 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
         price_raw = "" if price_cell is None else str(price_cell)
         price_text = _normalize_price_text_shop16(price_raw)
 
-        # 1) 先走 LangExtract + Ollama 抽取
-        base_llm = None
-        deltas: List[Tuple[str, int]] = []
-        absps: List[Tuple[str, int]] = []
-        dbg_extractions: List[dict] = []
-        llm_ok = False
+        # 1) 根据 SHOP16_EXTRACTION_MODE 提取价格信息（regex / llm / auto）
+        base_price, deltas, absps, extraction_method = _extract_price_parts_shop16_dispatch(
+            price_text, debug=debug, idx=idx,
+        )
 
-        try:
-            base_llm, deltas, absps, dbg_extractions = _lx_extract_price_parts_shop16(price_text)
-            llm_ok = True
-        except Exception as e:
-            # LangExtract/Ollama 失败时，不让整批崩掉；回退到旧逻辑（保持可用性）
-            llm_ok = False
-            if debug:
-                print("\n[shop16][llm] LangExtract/Ollama 解析失败，回退旧逻辑。row=", idx, "err=", repr(e))
-
-        # LangExtract + Ollama 抽取
-
-        base_price = base_llm
-        if base_price is None:
-            base_price = _extract_base_price_shop16(price_text)
-        base_price = int(base_price) if base_price is not None else None
-
-        # -----------------------------
-        # Guardrail A: 只有基础价 -> 丢弃所有 color_delta/color_abs（防幻觉）
-        # -----------------------------
-        if _is_base_only_price_text(price_text):
-            deltas = []
-            absps = []
-
-        # -----------------------------
-        # Guardrail B: 共享差价纠错（修正 “青” 被抽成 +1500）
-        # -----------------------------
-        shared_delta_map = _extract_shared_delta_map_shop16(price_text)
-        if shared_delta_map and deltas:
-            corrected: List[Tuple[str, int]] = []
-            for label_raw, delta in deltas:
-                lb = _normalize_label_shop16(label_raw)
-                if not lb:
-                    continue
-                if lb in shared_delta_map:
-                    corrected.append((lb, int(shared_delta_map[lb])))
-                else:
-                    corrected.append((lb, int(delta)))
-            deltas = corrected
-
-        # -----------------------------
-        # Guardrail C: 逐条证据过滤 —— label/金额必须在原文出现（进一步防幻觉）
-        # -----------------------------
-        text_no_commas = price_text.replace(",", "")
-        filtered_deltas: List[Tuple[str, int]] = []
-        for label_raw, delta in deltas:
-            lb = _normalize_label_shop16(label_raw)
-            if not lb:
-                continue
-            # label 必须出现
-            if lb not in price_text:
-                continue
-            # 金额数字必须出现（忽略符号，只校验绝对值数字）
-            if str(abs(int(delta))) not in text_no_commas:
-                continue
-            filtered_deltas.append((lb, int(delta)))
-        deltas = filtered_deltas
-
-        filtered_absps: List[Tuple[str, int]] = []
-        for label_raw, amt in absps:
-            lb = _normalize_label_shop16(label_raw)
-            if not lb:
-                continue
-            if lb not in price_text:
-                continue
-            if str(int(amt)) not in text_no_commas:
-                continue
-            filtered_absps.append((lb, int(amt)))
-        absps = filtered_absps
-
-        # # 2) base_price：优先 LLM，其次旧 base 提取
-        # base_price = base_llm
-        # if base_price is None:
-        #     base_price = _extract_base_price_shop16(price_text)  # 仅做数值兜底（旧逻辑）
-        # if base_price is not None:
-        #     base_price = int(base_price)
-
-        # 3) 若 LLM 没抽到任何颜色信息且它失败了，可选回退旧的颜色解析（避免漏数据）
-        if (not llm_ok) and (not deltas) and (not absps):
-            # 这里仍用你原来的正则函数做容错回退
-            deltas = _extract_color_deltas_shop16(price_text)
-            absps  = _extract_color_abs_prices_shop16(price_text)
-
-        # 4) 没 base 且没 abs：没法落库
+        # 2) 没 base 且没 abs：没法落库
         if base_price is None and not absps:
             continue
 
@@ -707,7 +750,7 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
         # 6) debug：只在“确实疑似有颜色信息”时打印
         if debug and (_looks_like_has_color_info(price_text) or deltas or absps):
             print("\n" + "-" * 120)
-            print(f"[shop16 debug] row_index={idx} llm_ok={llm_ok}")
+            print(f"[shop16 debug] row_index={idx} extraction_method={extraction_method}")
             # print(f"  model_text: {model_text!r}")
             print(f"  model_norm/cap: {model_norm!r} / {cap_gb}")
             print(f"  price_raw               : {price_text!r}")
