@@ -1,5 +1,30 @@
 from __future__ import annotations
 
+"""
+shop12 清洗器 — トゥインクル
+
+  原始文本（備考1 + 買取価格）
+    │
+    ├─ _normalize_remark_for_llm()              ← Step 1: 去除開封行，预处理備考1
+    │
+    ├─ _norm_amount_to_int()                    ← Step 2: 统一全角数字→int
+    │
+    ├─ _extract_price_parts_shop12_dispatch()   ← Step 5: 模式调度
+    │   │
+    │   ├─ regex 路径:
+    │   │   └─ _extract_price_parts_shop12_regex()    ← Step 3: 正则提取 (abs + delta)
+    │   │       └─ _fallback_parse_rules()            ← 核心正则: _FALLBACK_ABS_RE / _FALLBACK_DELTA_RE
+    │   │
+    │   └─ llm 路径:
+    │       └─ _extract_price_parts_shop12_llm_with_guardrails()  ← Step 4: LLM 提取 + 防幻觉
+    │           └─ _parse_rules_with_langextract()    ← LLM 核心: effective_class 修正 + 去重
+    │
+    ├─ _label_matches_color()                   ← Step 6: 标签→颜色匹配 (EN_TO_JP)
+    │
+    └─ clean_shop12()                           ← Step 7: 主函数，生成输出行
+"""
+
+import logging
 import os
 import re
 import time
@@ -13,51 +38,66 @@ import pandas as pd
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
 from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic
 
-# ====== 你原先已有的：机型/容量/颜色映射相关（保持不动即可） ======
+# ----------------------------------------------------------------------
+# 初始化 logger
+# ----------------------------------------------------------------------
+
+logger = logging.getLogger(__name__)
+
+# DEBUG 功能现在由 logging 级别控制（在 settings.py 的 LOGGING 配置中）
+# 控制台显示 INFO 级别（简洁），文件记录 DEBUG 级别（详细）
+
+# ----------------------------------------------------------------------
+# 配置
+# ----------------------------------------------------------------------
+
+SHOP12_EXTRACTION_MODE = "auto"  # "regex" | "llm" | "auto"
+
+# ----------------------------------------------------------------------
+# 辅助工具函数
+# ----------------------------------------------------------------------
+
+def _truncate_for_log(s: str, n: int = 200) -> str:
+    """截断长字符串，保留前 n 个字符，用于日志显示"""
+    if s is None:
+        return ""
+    t = str(s)
+    if len(t) <= n:
+        return t
+    return t[:n] + f"... (truncated, total_length={len(t)})"
 
 def _norm(s: str) -> str:
     return (s or "").strip()
 
-def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
-    try:
-        from django.conf import settings
-        p = getattr(settings, "EXTERNAL_IPHONE17_INFO_PATH", None)
-        if p:
-            path = str(p)
-        else:
-            raise AttributeError
-    except Exception:
-        path = os.getenv("IPHONE17_INFO_CSV") or str(Path(__file__).resolve().parents[2] / "data" / "iphone17_info.csv")
+# ----------------------------------------------------------------------
+# Step 1: 備考1 文本预处理
+# ----------------------------------------------------------------------
 
-    pth = Path(path)
-    if not pth.exists():
-        raise FileNotFoundError(f"未找到 iphone17_info：{pth}")
+def _normalize_remark_for_llm(remark_raw: str) -> str:
+    """
+    - 把与"開封/開封品/※開封/開封済"粘在同一行的内容拆行；
+    - 去掉所有"開封"行，只保留可用于新品价规则的行；
+    - 最终返回喂给 LLM 的文本（可能是多行）。
+    """
+    if not remark_raw:
+        return ""
+    s = str(remark_raw)
 
-    if re.search(r"\.(xlsx|xlsm|xls|ods)$", str(pth), re.I):
-        df = pd.read_excel(pth)
-    else:
-        df = pd.read_csv(pth, encoding="utf-8-sig")
+    # 关键：把"※開封品"等前面强行插入换行（解决: Orange-2000円※開封品...）
+    s = re.sub(r"(※\s*開封品|※\s*開封|開封品|開封済|開封)", r"\n\1", s)
 
-    need = {"part_number", "model_name", "capacity_gb", "color"}
-    missing = need - set(df.columns)
-    if missing:
-        raise ValueError(f"iphone17_info 缺少必要列：{missing}")
+    lines = [ln.strip() for ln in re.split(r"[\r\n]+", s) if ln is not None and ln.strip()]
+    keep: List[str] = []
+    for ln in lines:
+        if ("開封" in ln) or ("開封品" in ln) or ("※開封" in ln) or ("開封済" in ln):
+            continue
+        keep.append(ln)
+    return "\n".join(keep).strip()
 
-    df = df.copy()
-    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
-    df = df.dropna(subset=["model_name", "capacity_gb", "part_number", "color"])
+# ----------------------------------------------------------------------
+# Step 2: 数字归一化（含全角）
+# ----------------------------------------------------------------------
 
-    cols = ["part_number", "model_name", "capacity_gb", "color"]
-    return df[cols]
-
-# ====== 新增：LangExtract / Ollama 抽取 “備考1” 规则（带 debug）======
-
-SHOP12_DEBUG = os.getenv("SHOP12_DEBUG", "1") == "1"
-def _dprint(*args, **kwargs):
-    if SHOP12_DEBUG:
-        print(*args, **kwargs)
-
-# 统一数字（含全角）
 def _norm_amount_to_int(s: str) -> Optional[int]:
     if s is None:
         return None
@@ -74,28 +114,10 @@ def _norm_amount_to_int(s: str) -> Optional[int]:
     except Exception:
         return None
 
-def _normalize_remark_for_llm(remark_raw: str) -> str:
-    """
-    - 把与“開封/開封品/※開封/開封済”粘在同一行的内容拆行；
-    - 去掉所有“開封”行，只保留可用于新品价规则的行；
-    - 最终返回喂给 LLM 的文本（可能是多行）。
-    """
-    if not remark_raw:
-        return ""
-    s = str(remark_raw)
+# ----------------------------------------------------------------------
+# Step 3: 正则提取函数
+# ----------------------------------------------------------------------
 
-    # 关键：把“※開封品”等前面强行插入换行（解决: Orange-2000円※開封品...）
-    s = re.sub(r"(※\s*開封品|※\s*開封|開封品|開封済|開封)", r"\n\1", s)
-
-    lines = [ln.strip() for ln in re.split(r"[\r\n]+", s) if ln is not None and ln.strip()]
-    keep: List[str] = []
-    for ln in lines:
-        if ("開封" in ln) or ("開封品" in ln) or ("※開封" in ln) or ("開封済" in ln):
-            continue
-        keep.append(ln)
-    return "\n".join(keep).strip()
-
-# fallback regex（仅在 LLM 抽空时触发）
 _FALLBACK_ABS_RE = re.compile(
     r"""(?P<labels>[^\d¥￥円:：/、，,;；※]+?)\s*(?:[:：]?\s*)?(?:¥|￥)?\s*(?P<amount>[０-９0-9][０-９0-9,，]*)\s*(?:円)?""",
     re.UNICODE | re.VERBOSE,
@@ -152,9 +174,20 @@ def _fallback_parse_rules(text: str) -> Tuple[List[Tuple[str, int]], List[Tuple[
 
     return abs_list, delta_list
 
-# LangExtract prompt + examples（关键：包含小写 orange-1000円）
+def _extract_price_parts_shop12_regex(
+    remark_for_llm: str,
+) -> Tuple[List[Tuple[str, int]], List[Tuple[str, int]]]:
+    """
+    纯正则版：从预处理后的備考1文本中提取 (abs_list, delta_list)。
+    """
+    return _fallback_parse_rules(remark_for_llm)
+
+# ----------------------------------------------------------------------
+# Step 4: LLM 配置 & 核心提取函数
+# ----------------------------------------------------------------------
+
 _LX_PROMPT = textwrap.dedent(r"""
-你要从输入文本（備考1）中抽取“颜色对应的价格规则”。只抽取以下两类：
+你要从输入文本（備考1）中抽取"颜色对应的价格规则"。只抽取以下两类：
 
 1) delta（差额）
 - 形式：<颜色标签><+或-><金额>円
@@ -163,13 +196,13 @@ _LX_PROMPT = textwrap.dedent(r"""
 - 例：全色-2000円     => delta_yen=-2000, color_label="全色"
 
 2) abs_price（绝对价）
-- 形式：<颜色标签> ¥<金额> 或 <颜色标签> <金额>円
+- 形式：<颜色标签> ¥<金額> 或 <颜色标签> <金額>円
 - 例：Silver ¥230,500 => price_yen=230500, color_label="Silver"
 
 规则：
-- extraction_text 必须是输入里的“原文片段”，不要改写/不要翻译。
+- extraction_text 必须是输入里的"原文片段"，不要改写/不要翻译。
 - 如果一行里有多种颜色分别给价或给差额，要分别输出多条 extraction。
-- 如果文本里出现“開封/開封品/※開封/開封済”，这些内容不参与抽取（可以忽略）。
+- 如果文本里出现"開封/開封品/※開封/開封済"，这些内容不参与抽取（可以忽略）。
 - 就算文本非常短（例如仅有 'orange-1000円'），只要存在规则也必须抽取出来。
 """).strip()
 
@@ -236,7 +269,7 @@ def _parse_rules_with_langextract(remark_for_llm: str) -> Tuple[List[Tuple[str, 
       abs_list  = [(label_raw, absolute_price_yen), ...]
       delta_list= [(label_raw, delta_yen), ...]
       llm_dbg   = [(effective_class, extraction_text, attrs), ...]
-    这里的 effective_class 是经过“带货币符号/有正负号”的规则修正后的结果，
+    这里的 effective_class 是经过"带货币符号/有正负号"的规则修正后的结果，
     不再完全相信 LLM 的 extraction_class。
     """
     remark_for_llm = (remark_for_llm or "").strip()
@@ -338,7 +371,7 @@ def _parse_rules_with_langextract(remark_for_llm: str) -> Tuple[List[Tuple[str, 
                     if raw_delta is not None:
                         delta_i = _norm_amount_to_int(raw_delta)
 
-                # 属性里拿不到，再从文本里按 “符号 + 金额” 模式解析
+                # 属性里拿不到，再从文本里按 "符号 + 金额" 模式解析
                 if delta_i is None:
                     m = re.search(r"([+\-−－])\s*([０-９0-9][０-９0-9,，]*)", txt)
                     if m:
@@ -367,10 +400,90 @@ def _parse_rules_with_langextract(remark_for_llm: str) -> Tuple[List[Tuple[str, 
         return abs_list, delta_list, llm_dbg
 
     except Exception as e:
-        _dprint(f"[WARN] LangExtract failed: {e!r}")
+        logger.warning(
+            "LangExtract extraction failed",
+            extra={
+                "event_type": "llm_extraction_error",
+                "shop_name": "トゥインクル",
+                "cleaner_name": "shop12",
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "text_length": len(remark_for_llm),
+                "text_preview": _truncate_for_log(remark_for_llm, 100),
+            }
+        )
         return [], [], []
 
-# ====== 你的颜色匹配（保留你原来的实现；这里给一个必要的 EN 映射示例） ======
+def _extract_price_parts_shop12_llm_with_guardrails(
+    remark_for_llm: str,
+    idx: object = None,
+) -> Tuple[List[Tuple[str, int]], List[Tuple[str, int]]]:
+    """
+    LLM 提取 + Guardrails（仅 LLM 路径使用）。
+    Guardrail: effective_class 修正 + 去重（内置于 _parse_rules_with_langextract）。
+    LLM 失败时回退到正则。
+    """
+    abs_list, delta_list, _llm_dbg = _parse_rules_with_langextract(remark_for_llm)
+
+    # Guardrail: LLM 完全失败（空结果）时，回退到正则
+    if not abs_list and not delta_list and remark_for_llm:
+        logger.debug(
+            "LLM returned empty, falling back to regex",
+            extra={
+                "event_type": "llm_extraction_error",
+                "shop_name": "トゥインクル",
+                "cleaner_name": "shop12",
+                "row_index": idx,
+                "remark_preview": _truncate_for_log(remark_for_llm, 100),
+            }
+        )
+        f_abs, f_delta = _fallback_parse_rules(remark_for_llm)
+        if f_abs or f_delta:
+            abs_list, delta_list = f_abs, f_delta
+
+    return abs_list, delta_list
+
+# ----------------------------------------------------------------------
+# Step 5: 提取模式调度
+# ----------------------------------------------------------------------
+
+def _extract_price_parts_shop12_dispatch(
+    remark_for_llm: str, idx: object = None,
+) -> Tuple[List[Tuple[str, int]], List[Tuple[str, int]], str]:
+    """
+    根据 SHOP12_EXTRACTION_MODE 决定提取方式：
+      - "regex": 只用正则
+      - "llm":   只用 LLM + Guardrails
+      - "auto":  正则优先，正则无颜色结果时 LLM + Guardrails 兜底
+
+    返回 (abs_list, delta_list, extraction_method)
+    """
+    mode = SHOP12_EXTRACTION_MODE
+
+    if mode == "regex":
+        abs_list, delta_list = _extract_price_parts_shop12_regex(remark_for_llm)
+        return abs_list, delta_list, "regex"
+
+    if mode == "llm":
+        abs_list, delta_list = _extract_price_parts_shop12_llm_with_guardrails(
+            remark_for_llm, idx=idx,
+        )
+        return abs_list, delta_list, "llm"
+
+    # ---- auto: 正则优先，正则无颜色结果时 LLM 兜底 ----
+    abs_re, delta_re = _extract_price_parts_shop12_regex(remark_for_llm)
+    if abs_re or delta_re:
+        return abs_re, delta_re, "regex"
+
+    abs_llm, delta_llm = _extract_price_parts_shop12_llm_with_guardrails(
+        remark_for_llm, idx=idx,
+    )
+    return abs_llm, delta_llm, "llm"
+
+# ----------------------------------------------------------------------
+# Step 6: 颜色匹配
+# ----------------------------------------------------------------------
+
 EN_TO_JP = {
     "silver": ["シルバー", "銀"],
     "blue":   ["ブルー", "青", "ディープブルー"],
@@ -413,14 +526,77 @@ def _label_matches_color(label_raw: str, color_raw: str, color_norm: str) -> boo
     cn_short = re.sub(r"[\s\u3000]+", "", cn)
     return bool(ln_short and (ln_short in cn_short or cn_short in ln_short))
 
-def clean_shop12(df: pd.DataFrame) -> pd.DataFrame:
-    now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-    print(f"shop12:トゥインクル---------->进入清洗器时间: {now}")
+# ----------------------------------------------------------------------
+# info 表加载
+# ----------------------------------------------------------------------
 
-    # _dprint("shop12:トゥインクル---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
+    try:
+        from django.conf import settings
+        p = getattr(settings, "EXTERNAL_IPHONE17_INFO_PATH", None)
+        if p:
+            path = str(p)
+        else:
+            raise AttributeError
+    except Exception:
+        path = os.getenv("IPHONE17_INFO_CSV") or str(Path(__file__).resolve().parents[2] / "data" / "iphone17_info.csv")
+
+    pth = Path(path)
+    if not pth.exists():
+        raise FileNotFoundError(f"未找到 iphone17_info：{pth}")
+
+    if re.search(r"\.(xlsx|xlsm|xls|ods)$", str(pth), re.I):
+        df = pd.read_excel(pth)
+    else:
+        df = pd.read_csv(pth, encoding="utf-8-sig")
+
+    need = {"part_number", "model_name", "capacity_gb", "color"}
+    missing = need - set(df.columns)
+    if missing:
+        raise ValueError(f"iphone17_info 缺少必要列：{missing}")
+
+    df = df.copy()
+    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
+    df = df.dropna(subset=["model_name", "capacity_gb", "part_number", "color"])
+
+    cols = ["part_number", "model_name", "capacity_gb", "color"]
+    return df[cols]
+
+# ----------------------------------------------------------------------
+# Step 7: 清洗主函数
+# ----------------------------------------------------------------------
+
+def clean_shop12(df: pd.DataFrame, debug: bool = False) -> pd.DataFrame:
+    start_time = time.time()
+    _log_seq = 0  # 日志序号：同一次 clean_shop12 调用内单调递增，用于 ELK 排序
+
+    # 定义清洗器级别的上下文信息，将被所有下级日志继承
+    CLEANER_NAME = "shop12"
+    SHOP_NAME = "トゥインクル"
+
+    logger.info(
+        "Starting shop12 cleaner",
+        extra={
+            "event_type": "cleaner_start",
+            "shop_name": SHOP_NAME,
+            "cleaner_name": CLEANER_NAME,
+            "input_rows": len(df),
+            "start_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+        }
+    )
 
     for c in ["モデルナンバー", "備考1", "買取価格", "time-scraped"]:
         if c not in df.columns:
+            logger.error(
+                f"Missing required column: {c}",
+                extra={
+                    "event_type": "validation_error",
+                    "shop_name": SHOP_NAME,
+                    "cleaner_name": CLEANER_NAME,
+                    "missing_column": c,
+                    "available_columns": list(df.columns),
+                }
+            )
             raise ValueError(f"shop12 清洗器缺少必要列：{c}")
 
     # 载入 info 表并构建 (model_norm, cap)-> {color_norm: (pn, color_raw)}
@@ -443,6 +619,7 @@ def clean_shop12(df: pd.DataFrame) -> pd.DataFrame:
     rows: List[dict] = []
 
     for idx, row in df.iterrows():
+        current_row_records: List[dict] = []
         price_base = to_int_yen(row.get("買取価格"))
         if price_base is None:
             continue
@@ -454,34 +631,94 @@ def clean_shop12(df: pd.DataFrame) -> pd.DataFrame:
         model_norm = _normalize_model_generic(model_text)
         cap_gb = _parse_capacity_gb(model_text)
         if not model_norm or cap_gb is None or pd.isna(cap_gb):
-            _dprint(f"[ROW {idx}] skip: model/cap parse failed: {model_text!r}")
+            _log_seq += 1
+            logger.debug(
+                f"Skip row: model/cap parse failed: {model_text!r}",
+                extra={
+                    "event_type": "row_processing_summary",
+                    "log_seq": _log_seq,
+                    "shop_name": SHOP_NAME,
+                    "cleaner_name": CLEANER_NAME,
+                    "row_index": int(idx),
+                    "model_text": model_text,
+                }
+            )
             continue
         cap_gb = int(cap_gb)
 
         key = (model_norm, cap_gb)
         color_map = cmap_all.get(key)
         if not color_map:
-            _dprint(f"[ROW {idx}] skip: info no key={key}")
+            _log_seq += 1
+            logger.debug(
+                f"Skip row: info no key={key}",
+                extra={
+                    "event_type": "row_processing_summary",
+                    "log_seq": _log_seq,
+                    "shop_name": SHOP_NAME,
+                    "cleaner_name": CLEANER_NAME,
+                    "row_index": int(idx),
+                    "model_text": model_text,
+                    "model_norm": model_norm,
+                    "capacity_gb": cap_gb,
+                }
+            )
             continue
 
         remark_raw = row.get("備考1") or ""
         remark_for_llm = _normalize_remark_for_llm(remark_raw)
 
-        abs_list, delta_list, llm_dbg = _parse_rules_with_langextract(remark_for_llm)
+        # 根据 SHOP12_EXTRACTION_MODE 提取价格信息（regex / llm / auto）
+        abs_list, delta_list, extraction_method = _extract_price_parts_shop12_dispatch(
+            remark_for_llm, idx=idx,
+        )
 
-        # LLM 抽空时 fallback（并打印）
-        if not abs_list and not delta_list and remark_for_llm:
-            f_abs, f_delta = _fallback_parse_rules(remark_for_llm)
-            if f_abs or f_delta:
-                _dprint(f"[ROW {idx}] LLM empty -> fallback_regex used.")
-                abs_list, delta_list = f_abs, f_delta
+        # 构建行级上下文
+        row_context = {
+            "row_index": int(idx),
+            "model_text": model_text,
+            "model_norm": model_norm,
+            "capacity_gb": cap_gb,
+            "base_price": int(price_base),
+        }
 
-        _dprint(f"[ROW {idx}]     model              =  {model_text!r}      base  =  {price_base}")
-        _dprint(f"[ROW {idx}]     remark_raw         =  {remark_raw!r}")
-        _dprint(f"[ROW {idx}]     remark_for_llm     =  {remark_for_llm!r}")
-        _dprint(f"[ROW {idx}]     llm_extractions    =  {llm_dbg}")
-        _dprint(f"[ROW {idx}]     abs_list           =  {abs_list}")
-        _dprint(f"[ROW {idx}]     delta_list         =  {delta_list}")
+        # DEBUG: 记录提取结果
+        available_colors_list = [
+            {"color_norm": cn, "part_number": pn, "color_raw": cr}
+            for cn, (pn, cr) in color_map.items()
+        ]
+
+        _log_seq += 1
+        logger.debug(
+            "Extraction result",
+            extra={
+                "event_type": "extraction_result",
+                "log_seq": _log_seq,
+                "shop_name": SHOP_NAME,
+                "cleaner_name": CLEANER_NAME,
+                "row_index": int(idx),
+                "model_text": model_text,
+                "model_norm": model_norm,
+                "capacity_gb": cap_gb,
+                "base_price": int(price_base),
+                "remark_raw": _truncate_for_log(str(remark_raw), 200),
+                "remark_raw_full": str(remark_raw),
+                "remark_for_llm": _truncate_for_log(remark_for_llm, 200),
+                "extraction_method": extraction_method,
+                "abs_list": [
+                    {"label": label, "amount": amt}
+                    for label, amt in abs_list
+                ],
+                "delta_list": [
+                    {"label": label, "delta": delta}
+                    for label, delta in delta_list
+                ],
+                "abs_count": len(abs_list),
+                "delta_count": len(delta_list),
+                "available_colors": available_colors_list,
+                "colors_in_catalog": len(color_map),
+            }
+        )
 
         # label -> color_norm
         color_abs_map: Dict[str, int] = {}
@@ -489,64 +726,349 @@ def clean_shop12(df: pd.DataFrame) -> pd.DataFrame:
 
         for label_raw, amt in abs_list:
             matched = None
+            matched_pn = None
             for col_norm, (pn, col_raw) in color_map.items():
                 if _label_matches_color(label_raw, col_raw, col_norm):
                     matched = col_norm
+                    matched_pn = pn
                     break
+
+            _log_seq += 1
             if matched:
                 color_abs_map[matched] = int(amt)
-                _dprint(f"[ROW {idx}]     ABS match          : {label_raw!r} -> {matched!r} price={amt}")
+                logger.debug(
+                    f"Label matching (abs): {label_raw}",
+                    extra={
+                        "event_type": "label_matching",
+                        "log_seq": _log_seq,
+                        "shop_name": SHOP_NAME,
+                        "cleaner_name": CLEANER_NAME,
+                        "row_index": int(idx),
+                        "model_norm": model_norm,
+                        "capacity_gb": cap_gb,
+                        "label": label_raw,
+                        "abs_price": amt,
+                        "match_type": "abs",
+                        "matched_colors": [matched],
+                        "matched_part_numbers": [matched_pn],
+                        "match_count": 1,
+                        "remark_raw_full": str(remark_raw),
+                    }
+                )
             else:
-                _dprint(f"[ROW {idx}]     ABS NO-match       : {label_raw!r}")
+                logger.warning(
+                    f"Label not matched (abs): {label_raw}",
+                    extra={
+                        "event_type": "label_no_match",
+                        "log_seq": _log_seq,
+                        "shop_name": SHOP_NAME,
+                        "cleaner_name": CLEANER_NAME,
+                        "row_index": int(idx),
+                        "model_norm": model_norm,
+                        "capacity_gb": cap_gb,
+                        "label": label_raw,
+                        "abs_price": amt,
+                        "match_type": "abs",
+                        "available_colors": [cn for cn in color_map.keys()],
+                        "remark_raw_full": str(remark_raw),
+                    }
+                )
 
         for label_raw, delta in delta_list:
             if str(label_raw).strip() in {"全色", "ALL"}:
                 color_delta_map["ALL"] = int(delta)
-                _dprint(f"[ROW {idx}]     DELTA ALL          = {delta}")
+                _log_seq += 1
+                logger.debug(
+                    f"Label matching (delta): ALL = {delta}",
+                    extra={
+                        "event_type": "label_matching",
+                        "log_seq": _log_seq,
+                        "shop_name": SHOP_NAME,
+                        "cleaner_name": CLEANER_NAME,
+                        "row_index": int(idx),
+                        "model_norm": model_norm,
+                        "capacity_gb": cap_gb,
+                        "label": "ALL",
+                        "delta": delta,
+                        "match_type": "delta",
+                        "matched_colors": ["ALL"],
+                        "match_count": 1,
+                    }
+                )
                 continue
             matched = None
+            matched_pn = None
             for col_norm, (pn, col_raw) in color_map.items():
                 if _label_matches_color(label_raw, col_raw, col_norm):
                     matched = col_norm
+                    matched_pn = pn
                     break
+
+            _log_seq += 1
             if matched:
                 color_delta_map[matched] = int(delta)
-                _dprint(f"[ROW {idx}]     DELTA match        : {label_raw!r} -> {matched!r} delta={delta}")
+                logger.debug(
+                    f"Label matching (delta): {label_raw}",
+                    extra={
+                        "event_type": "label_matching",
+                        "log_seq": _log_seq,
+                        "shop_name": SHOP_NAME,
+                        "cleaner_name": CLEANER_NAME,
+                        "row_index": int(idx),
+                        "model_norm": model_norm,
+                        "capacity_gb": cap_gb,
+                        "label": label_raw,
+                        "delta": delta,
+                        "match_type": "delta",
+                        "matched_colors": [matched],
+                        "matched_part_numbers": [matched_pn],
+                        "match_count": 1,
+                        "remark_raw_full": str(remark_raw),
+                    }
+                )
             else:
-                _dprint(f"[ROW {idx}]     DELTA NO-match     : {label_raw!r}")
+                logger.warning(
+                    f"Label not matched (delta): {label_raw}",
+                    extra={
+                        "event_type": "label_no_match",
+                        "log_seq": _log_seq,
+                        "shop_name": SHOP_NAME,
+                        "cleaner_name": CLEANER_NAME,
+                        "row_index": int(idx),
+                        "model_norm": model_norm,
+                        "capacity_gb": cap_gb,
+                        "label": label_raw,
+                        "delta": delta,
+                        "match_type": "delta",
+                        "available_colors": [cn for cn in color_map.keys()],
+                        "remark_raw_full": str(remark_raw),
+                    }
+                )
 
         recorded_at = parse_dt_aware(row.get("time-scraped"))
+
+        # 生成输出记录
+        output_records = []
 
         # 输出：ALL 差额优先
         if "ALL" in color_delta_map:
             final_price = int(price_base + color_delta_map["ALL"])
             for col_norm, (pn, _) in color_map.items():
-                rows.append({"part_number": pn, "shop_name": "トゥインクル", "price_new": final_price, "recorded_at": recorded_at})
-                _dprint(f"[ROW {idx}] OUT pn={pn} color  =  {col_norm!r:<10} price={final_price:<7} reason=ALL")
-            continue
+                _log_seq += 1
+                logger.debug(
+                    f"Output record: {pn}",
+                    extra={
+                        "event_type": "output_record",
+                        "log_seq": _log_seq,
+                        "shop_name": SHOP_NAME,
+                        "cleaner_name": CLEANER_NAME,
+                        "row_index": int(idx),
+                        "model_text": model_text,
+                        "model_norm": model_norm,
+                        "capacity_gb": cap_gb,
+                        "part_number": pn,
+                        "color_norm": col_norm,
+                        "base_price": int(price_base),
+                        "delta": color_delta_map["ALL"],
+                        "final_price": final_price,
+                        "delta_source": "ALL",
+                        "recorded_at": str(recorded_at) if recorded_at else None,
+                        "remark_raw_full": str(remark_raw),
+                    }
+                )
+
+                output_records.append({
+                    "part_number": pn,
+                    "color_norm": col_norm,
+                    "delta": color_delta_map["ALL"],
+                    "final_price": final_price,
+                    "delta_source": "ALL",
+                })
+
+                rows.append({"part_number": pn, "shop_name": SHOP_NAME, "price_new": final_price, "recorded_at": recorded_at})
+
+                current_row_records.append({
+                    "part_number": pn,
+                    "color_norm": col_norm,
+                    "delta": color_delta_map["ALL"],
+                    "final_price": final_price,
+                    "recorded_at": recorded_at,
+                    "delta_source": "ALL",
+                })
 
         # 绝对价覆盖
-        if color_abs_map:
+        elif color_abs_map:
             for col_norm, (pn, _) in color_map.items():
                 if col_norm in color_abs_map:
                     val = int(color_abs_map[col_norm])
-                    rows.append({"part_number": pn, "shop_name": "トゥインクル", "price_new": val, "recorded_at": recorded_at})
-                    _dprint(f"[ROW {idx}] OUT pn={pn} color  =  {col_norm!r:<10} price={val:<7} reason=ABS")
+                    delta_source = "abs_price"
+                    delta = 0
                 else:
-                    rows.append({"part_number": pn, "shop_name": "トゥインクル", "price_new": int(price_base), "recorded_at": recorded_at})
-                    _dprint(f"[ROW {idx}] OUT pn={pn} color  =  {col_norm!r:<10} price={price_base:<7} reason=BASE-FALLBACK")
-            continue
+                    val = int(price_base)
+                    delta_source = "base_fallback"
+                    delta = 0
+
+                _log_seq += 1
+                logger.debug(
+                    f"Output record: {pn}",
+                    extra={
+                        "event_type": "output_record",
+                        "log_seq": _log_seq,
+                        "shop_name": SHOP_NAME,
+                        "cleaner_name": CLEANER_NAME,
+                        "row_index": int(idx),
+                        "model_text": model_text,
+                        "model_norm": model_norm,
+                        "capacity_gb": cap_gb,
+                        "part_number": pn,
+                        "color_norm": col_norm,
+                        "base_price": int(price_base),
+                        "delta": delta,
+                        "final_price": val,
+                        "delta_source": delta_source,
+                        "recorded_at": str(recorded_at) if recorded_at else None,
+                        "remark_raw_full": str(remark_raw),
+                    }
+                )
+
+                output_records.append({
+                    "part_number": pn,
+                    "color_norm": col_norm,
+                    "delta": delta,
+                    "final_price": val,
+                    "delta_source": delta_source,
+                })
+
+                rows.append({"part_number": pn, "shop_name": SHOP_NAME, "price_new": val, "recorded_at": recorded_at})
+
+                current_row_records.append({
+                    "part_number": pn,
+                    "color_norm": col_norm,
+                    "delta": delta,
+                    "final_price": val,
+                    "recorded_at": recorded_at,
+                    "delta_source": delta_source,
+                })
 
         # 普通差额
-        for col_norm, (pn, _) in color_map.items():
-            delta = color_delta_map.get(col_norm, 0)
-            val = int(price_base + delta)
-            rows.append({"part_number": pn, "shop_name": "トゥインクル", "price_new": val, "recorded_at": recorded_at})
-            _dprint(f"[ROW {idx}] OUT pn={pn} color  =  {col_norm!r:<10} price={val:<7} reason={'BASE+DELTA' if delta else 'BASE'}")
+        else:
+            for col_norm, (pn, _) in color_map.items():
+                delta = color_delta_map.get(col_norm, 0)
+                val = int(price_base + delta)
+                delta_source = "matched_label" if col_norm in color_delta_map else "default_zero"
+
+                _log_seq += 1
+                logger.debug(
+                    f"Output record: {pn}",
+                    extra={
+                        "event_type": "output_record",
+                        "log_seq": _log_seq,
+                        "shop_name": SHOP_NAME,
+                        "cleaner_name": CLEANER_NAME,
+                        "row_index": int(idx),
+                        "model_text": model_text,
+                        "model_norm": model_norm,
+                        "capacity_gb": cap_gb,
+                        "part_number": pn,
+                        "color_norm": col_norm,
+                        "base_price": int(price_base),
+                        "delta": delta,
+                        "final_price": val,
+                        "delta_source": delta_source,
+                        "recorded_at": str(recorded_at) if recorded_at else None,
+                        "remark_raw_full": str(remark_raw),
+                    }
+                )
+
+                output_records.append({
+                    "part_number": pn,
+                    "color_norm": col_norm,
+                    "delta": delta,
+                    "final_price": val,
+                    "delta_source": delta_source,
+                })
+
+                rows.append({"part_number": pn, "shop_name": SHOP_NAME, "price_new": val, "recorded_at": recorded_at})
+
+                current_row_records.append({
+                    "part_number": pn,
+                    "color_norm": col_norm,
+                    "delta": delta,
+                    "final_price": val,
+                    "recorded_at": recorded_at,
+                    "delta_source": delta_source,
+                })
+
+        # DEBUG: 行级详细汇总
+        all_deltas_values = list(color_delta_map.values())
+        colors_matched = len(color_delta_map) + len(color_abs_map)
+
+        _log_seq += 1
+        logger.debug(
+            "Row summary",
+            extra={
+                "event_type": "row_processing_summary",
+                "log_seq": _log_seq,
+                "shop_name": SHOP_NAME,
+                "cleaner_name": CLEANER_NAME,
+                "row_index": int(idx),
+                "model_text": model_text,
+                "model_norm": model_norm,
+                "capacity_gb": cap_gb,
+                "base_price": int(price_base),
+                "remark_raw_full": str(remark_raw),
+                "current_row_records": [
+                    {"pn": r["part_number"], "color": r["color_norm"], "delta": r["delta"], "final_price": r["final_price"], "src": r["delta_source"]}
+                    for r in current_row_records
+                ],
+            }
+        )
+
+        # INFO: 行级概览（简洁）
+        _log_seq += 1
+        logger.info(
+            f"Row {idx:<3d} | {model_text:<28s} | deltas: {len(delta_list):<2d} | abs: {len(abs_list):<2d} | matched: {colors_matched:<2d} | records: {len(output_records):<2d} | method: {extraction_method}",
+            extra={
+                "event_type": "row_processing_summary",
+                "log_seq": _log_seq,
+                "shop_name": SHOP_NAME,
+                "cleaner_name": CLEANER_NAME,
+                "row_index": int(idx),
+                "model_text": model_text,
+                "model_norm": model_norm,
+                "capacity_gb": cap_gb,
+                "base_price": int(price_base),
+                "remark_raw_preview": _truncate_for_log(str(remark_raw), 100),
+                "extraction_method": extraction_method,
+                "deltas_extracted_count": len(delta_list),
+                "abs_prices_extracted_count": len(abs_list),
+                "colors_in_catalog": len(color_map),
+                "colors_matched_count": colors_matched,
+                "output_records_count": len(output_records),
+                "has_discounted_colors": any(d != 0 for d in all_deltas_values),
+                "min_delta": min(all_deltas_values) if all_deltas_values else 0,
+                "max_delta": max(all_deltas_values) if all_deltas_values else 0,
+            }
+        )
 
     out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
     if not out.empty:
         out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
         out["part_number"] = out["part_number"].astype(str)
         out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
+
+    elapsed_time = time.time() - start_time
+    logger.info(
+        "Shop12 cleaner completed",
+        extra={
+            "event_type": "cleaner_complete",
+            "shop_name": SHOP_NAME,
+            "cleaner_name": CLEANER_NAME,
+            "input_rows": len(df),
+            "output_records": len(out),
+            "elapsed_seconds": round(elapsed_time, 2),
+            "end_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+        }
+    )
+
     return out
