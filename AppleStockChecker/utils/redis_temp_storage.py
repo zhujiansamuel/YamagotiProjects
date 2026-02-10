@@ -11,6 +11,7 @@ from typing import Optional
 import pandas as pd
 import redis
 from django.conf import settings
+from io import StringIO
 
 
 # 默认 TTL: 1 小时
@@ -77,7 +78,7 @@ def retrieve_dataframe(redis_key: str) -> Optional[pd.DataFrame]:
         return None
 
     # 反序列化为 DataFrame
-    return pd.read_json(data, orient="records")
+    return pd.read_json(StringIO(data), orient="records")
 
 
 def delete_key(redis_key: str) -> bool:

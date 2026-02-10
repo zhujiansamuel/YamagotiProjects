@@ -773,7 +773,7 @@ LOGGING = {
             'style': '{',
         },
         'simple': {
-            'format': '{levelname} {asctime} {message}',
+            'format': '{levelname:<7s} {asctime} {message}',
             'style': '{',
         },
         'json': {

@@ -7,8 +7,6 @@
 # - 代码热重载
 # - 本地开发更轻量
 
-version: '3.8'
-
 services:
   # Redis
   redis:

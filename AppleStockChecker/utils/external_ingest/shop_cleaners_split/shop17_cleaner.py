@@ -33,6 +33,75 @@ _FW_DIGITS_TRANS_shop17 = str.maketrans("０１２３４５６７８９", "01234
 
 _BAD_LABEL_WORDS_shop17 = ("利用制限", "保証", "郵送", "持ち込み", "開始", "未満", "減額", "SIM", "制限")
 
+SHOP_NAME_OVERRIDE: Optional[str] = "ゲストモバイル"
+
+FAMILY_SYNONYMS_shop17 = {
+    # blue 家族
+    "blue": ["ブルー", "青", "ミッドナイト", "マリン", "ミストブルー"],
+    "ブルー": ["ブルー", "青", "ミッドナイト", "マリン", "ミストブルー"],
+    "青": ["ブルー", "青", "ミッドナイト", "マリン", "ミストブルー"],
+    "ミッドナイト": ["ブルー", "青", "ミッドナイト", "マリン", "ミストブルー"],
+    "マリン": ["ブルー", "青", "ミッドナイト", "マリン", "ミストブルー"],
+
+    # black
+    "black": ["ブラック", "黒"],
+    "ブラック": ["ブラック", "黒"],
+    "黒": ["ブラック", "黒"],
+
+    # white / starlight
+    "white": ["ホワイト", "白", "スターライト", "Starlight", "starlight"],
+    "ホワイト": ["ホワイト", "白", "スターライト"],
+    "白": ["ホワイト", "白", "スターライト"],
+    "スターライト": ["ホワイト", "白", "スターライト"],
+    "starlight": ["ホワイト", "白", "スターライト"],
+
+    # silver
+    "silver": ["シルバー", "銀"],
+    "シルバー": ["シルバー", "銀"],
+    "銀": ["シルバー", "銀"],
+
+    # gold / light gold
+    "gold": ["ゴールド", "金", "ライトゴールド"],
+    "ゴールド": ["ゴールド", "金", "ライトゴールド"],
+    "ライトゴールド": ["ゴールド", "金", "ライトゴールド"],
+
+    # orange
+    "orange": ["オレンジ", "橙"],
+    "オレンジ": ["オレンジ", "橙"],
+    "橙": ["オレンジ", "橙"],
+
+    # green / セージ
+    "green": ["グリーン", "緑", "セージ"],
+    "グリーン": ["グリーン", "緑", "セージ"],
+    "緑": ["グリーン", "緑", "セージ"],
+    "セージ": ["グリーン", "緑", "セージ"],
+
+    # pink
+    "pink": ["ピンク"],
+    "ピンク": ["ピンク"],
+
+    # yellow
+    "yellow": ["イエロー", "黄", "黄色"],
+    "イエロー": ["イエロー", "黄", "黄色"],
+    "黄": ["イエロー", "黄", "黄色"],
+    "黄色": ["イエロー", "黄", "黄色"],
+
+    # purple / lavender
+    "purple": ["パープル", "紫", "ラベンダー"],
+    "パープル": ["パープル", "紫", "ラベンダー"],
+    "紫": ["パープル", "紫", "ラベンダー"],
+    "ラベンダー": ["パープル", "紫", "ラベンダー"],
+
+    # natural
+    "natural": ["ナチュラル"],
+    "ナチュラル": ["ナチュラル"],
+
+    # space black
+    "spaceblack": ["スペースブラック"],
+    "スペースブラック": ["スペースブラック"],
+}
+
+
 def _normalize_color_text_shop17(s: str) -> str:
     """统一色減額文本里的全角数字/逗号/各种 dash，顺便清理空白。"""
     s = "" if s is None else str(s)
@@ -469,6 +538,7 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
     rows: List[dict] = []
 
     for idx, row in df.iterrows():
+        current_row_records: List[dict] = []
         model_text = str(row.get("type") or "").strip()
         if not model_text:
             continue
@@ -589,6 +659,12 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
                         "matched_colors": matched_colors,
                         "matched_part_numbers": matched_pns,
                         "match_count": len(matched_colors),
+
+                        "color_discount_raw_full": raw_color_s,  # 完整版本
+                        "labels_and_deltas": [
+                            {"label": label, "delta": delta}
+                            for label, delta in labels_and_deltas
+                        ],
                     }
                 )
 
@@ -610,6 +686,13 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
                             "label": label_raw,
                             "delta": delta,
                             "available_colors": [cn for cn in color_map.keys()],
+
+                            "color_discount_raw_full": raw_color_s,  # 完整版本
+                            "labels_and_deltas": [
+                                {"label": label, "delta": delta}
+                                for label, delta in labels_and_deltas
+                            ],
+
                         }
                     )
 
@@ -658,6 +741,14 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
                     "delta_source": delta_source,
                     "matched_label": matched_label,
                     "recorded_at": str(rec_at) if rec_at else None,
+
+                    "color_discount_raw_full": raw_color_s,  # 完整版本
+                    
+                    "labels_and_deltas": [
+                        {"label": label, "delta": delta}
+                        for label, delta in labels_and_deltas
+                    ],
+
                 }
             )
 
@@ -666,13 +757,26 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
                 "color_norm": col_norm,
                 "delta": delta,
                 "final_price": price,
+                "delta_source": delta_source,
             })
 
             rows.append({
                 "part_number": pn,
                 "shop_name": shop_name,
+                "color_norm": col_norm,
+                "delta": delta,
                 "price_new": price,
+                "final_price": price,
                 "recorded_at": rec_at,
+            })
+
+            current_row_records.append({
+                "part_number": pn,
+                "color_norm": col_norm,
+                "delta": delta,
+                "final_price": price,
+                "recorded_at": rec_at,
+                "delta_source": delta_source,
             })
 
         # INFO: 行级概览（汇总信息）
@@ -680,8 +784,33 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
         deltas = [d for d in color_deltas.values()]
 
         _log_seq += 1
+        logger.debug(
+            f"Row summary",
+            extra={
+                "event_type": "row_processing_summary",
+                "log_seq": _log_seq,
+                "shop_name": SHOP_NAME,
+                "model_text": model_text,
+                "model_norm": model_norm,
+                "base_price": base_price,
+                "capacity_gb": cap_gb,
+                "cleaner_name": CLEANER_NAME,
+                "row_index": int(idx),
+                "color_discount_raw_full": raw_color_s,
+                "current_row_records": [
+                    {"pn": r["part_number"], "color": r["color_norm"], "delta": r["delta"], "final_price": r["final_price"], "src": r["delta_source"]}
+                    for r in current_row_records
+                ],
+                # "rows": [
+                #     {"pn": r["part_number"], "shop": r["shop_name"], "color": r["color_norm"], "delta": r["delta"], "price": r["price_new"]}
+                #     for r in rows
+                # ],
+            }
+        )
+
+        _log_seq += 1
         logger.info(
-            f"Row {idx}: {model_text} → {len(labels_and_deltas)} labels, {colors_matched} colors matched, {len(output_records)} records output",
+            f"Row {idx:<3d} | {model_text:<28s} | labels: {len(labels_and_deltas):<2d} | matched: {colors_matched:<2d} | records: {len(output_records):<2d}",
             extra={
                 "event_type": "row_processing_summary",
                 "log_seq": _log_seq,

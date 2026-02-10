@@ -51,6 +51,14 @@ docker compose build
 docker compose up -d web nginx
 
 Y9Rs5xPkZQjcYHJ
+
+---------------------------------------------------------------------
+docker compose --profile shop-workers restart worker_shop17
+---------------------------------------------------------------------
+
+docker compose --profile celery --profile shop-workers restart
+
+---------------------------------------------------------------------
 ---------------------------------------------------------------------
 cd /opt/apple/src            # 换成你实际路径
 
