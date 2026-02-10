@@ -310,36 +310,6 @@ def _iter_extractions_from_langextract_result(result) -> List[object]:
         return out
     return list(getattr(result, "extractions", []) or [])
 
-def _parse_delta_int(x: object) -> Optional[int]:
-    """
-    支持 int / "+2000" / "−3,000" / "－３,０００" 等，返回 int。
-    """
-    if x is None:
-        return None
-    if isinstance(x, bool):
-        return None
-    if isinstance(x, int):
-        return int(x)
-    if isinstance(x, float):
-        return int(round(x))
-
-    s = str(x).strip().translate(_FZ_TO_HZ_TRANS).strip()
-    if not s:
-        return None
-
-    sign = 1
-    if s[0] == "-":
-        sign = -1
-        s = s[1:].strip()
-    elif s[0] == "+":
-        sign = 1
-        s = s[1:].strip()
-
-    amt = _normalize_amount_text(s)
-    if amt is None:
-        return None
-    return int(sign * amt)
-
 @lru_cache(maxsize=4096)
 def _extract_color_deltas_shop3_llm_cached(text: str) -> Tuple[Tuple[str, int], ...]:
     s = (text or "").strip()

@@ -134,15 +134,6 @@ def _match_color_group(group: str, color_name: str) -> tuple[bool, str]:
 
     return False, ""
 
-def _apply_adjust_for_colorname(color_name: str, rules: dict) -> int:
-    """根据规则返回针对该“颜色名”的价格修正（给业务逻辑使用的简版）"""
-    adjust = 0
-    for group, delta in (rules or {}).items():
-        ok, _ = _match_color_group(group, color_name)
-        if ok:
-            adjust += int(delta)
-    return adjust
-
 def _apply_adjust_with_trace(color_name: str, rules: dict) -> tuple[int, list[dict]]:
     """
     返回：(adjust_sum, trace)

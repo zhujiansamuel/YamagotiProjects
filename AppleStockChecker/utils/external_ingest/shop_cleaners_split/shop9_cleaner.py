@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Protocol, Dict, Callable, Optional,List
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db, _build_color_map
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -559,23 +559,8 @@ def clean_shop9(
             out.append(("全色", 0))
         return out
 
-    # =============== 构建 pn_map（原逻辑） ===============
-    info_df = info_df.copy()
-    info_df["model_name_norm"] = info_df["model_name"].map(_normalize_model_generic)
-    info_df["capacity_gb"] = pd.to_numeric(info_df["capacity_gb"], errors="coerce").astype("Int64")
-    info_df = info_df.dropna(subset=["model_name_norm", "capacity_gb", "part_number", "color"])
-
-    pn_map: Dict[Tuple[str, int], Dict[str, str]] = {}
-    for _, r in info_df.iterrows():
-        m = r["model_name_norm"]
-        cap = r["capacity_gb"]
-        pn = str(r["part_number"]).strip()
-        col = _norm(r["color"])
-        if pd.isna(cap) or not m or not col:
-            continue
-        key = (m, int(cap))
-        pn_map.setdefault(key, {})
-        pn_map[key][col] = pn
+    # =============== 构建 pn_map ===============
+    pn_map = _build_color_map(info_df)
 
     # =============== process rows ===============
     model_norm = df[col_model].map(_normalize_model_generic)
@@ -690,18 +675,18 @@ def clean_shop9(
                 _dprint(i, f"[DEBUG row={i}] ALL delta present but base missing -> skip")
                 continue
             final = int(base_price + delta_map["ALL"])
-            for col_norm, pn in color_to_pn.items():
+            for col_norm, (pn, _) in color_to_pn.items():
                 rows.append({"part_number": pn, "shop_name": "アキモバ", "price_new": int(final), "recorded_at": t})
             continue
 
         if "ALL" in abs_map:
             final = int(abs_map["ALL"])
-            for col_norm, pn in color_to_pn.items():
+            for col_norm, (pn, _) in color_to_pn.items():
                 rows.append({"part_number": pn, "shop_name": "アキモバ", "price_new": final, "recorded_at": t})
             continue
 
         if abs_map:
-            for col_norm, pn in color_to_pn.items():
+            for col_norm, (pn, _) in color_to_pn.items():
                 if col_norm in abs_map:
                     rows.append({"part_number": pn, "shop_name": "アキモバ", "price_new": int(abs_map[col_norm]), "recorded_at": t})
                 else:
@@ -713,7 +698,7 @@ def clean_shop9(
             _dprint(i, f"[DEBUG row={i}] no base/abs -> skip")
             continue
 
-        for col_norm, pn in color_to_pn.items():
+        for col_norm, (pn, _) in color_to_pn.items():
             delta = int(delta_map.get(col_norm, 0))
             rows.append({"part_number": pn, "shop_name": "アキモバ", "price_new": int(base_price + delta), "recorded_at": t})
 
@@ -723,367 +708,3 @@ def clean_shop9(
         out["part_number"] = out["part_number"].astype(str)
         out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
     return out
-
-#
-# def clean_shop9(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> pd.DataFrame:
-#     import time
-#     print("shop9:アキモバ---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
-#
-#     info_df = _load_iphone17_info_df_from_db()
-#
-#     col_model = "機種名"
-#     col_price = "買取価格"
-#     col_color = "色・詳細等"
-#     col_time  = "time-scraped"
-#
-#     for need in (col_model, col_price, col_color, col_time):
-#         if need not in df.columns:
-#             raise ValueError(f"shop9 清洗器缺少必要列：{need}")
-#
-#     # DEBUG: 仅打印“疑似包含颜色/减价/分颜色报价”的行，便于对比原文与抽取结果
-#     debug_pos_set = set()
-#     if debug:
-#         COLOR_PAT = re.compile(
-#             r"(ブラック|ホワイト|ブルー|グリーン|ピンク|レッド|イエロー|パープル|オレンジ|"
-#             r"シルバー|ゴールド|グラファイト|ミッドナイト|スターライト|ナチュラル|"
-#             r"チタニウム|チタン|黒|白|青|緑|赤|黄|紫|橙|銀|金|"
-#             r"Black|White|Blue|Green|Pink|Red|Yellow|Purple|Orange|Silver|Gold|Titanium)",
-#             re.I,
-#         )
-#         DISCOUNT_PAT = re.compile(r"(値下げ|値引|割引|円引|OFF|オフ|[+＋\-−–－]\s*[０-９0-9])", re.I)
-#         ABS_PRICE_PAT = re.compile(r"(?:¥|￥)?\s*[０-９0-9]{2,3}(?:[０-９0-9,，]{3,})\s*(?:円)?")
-#
-#         s_color_ser = df[col_color].fillna("").astype(str)
-#         s_price_ser = df[col_price].fillna("").astype(str)
-#         has_color = s_color_ser.str.contains(COLOR_PAT, na=False) | s_price_ser.str.contains(COLOR_PAT, na=False)
-#         has_discount = s_color_ser.str.contains(DISCOUNT_PAT, na=False) | s_price_ser.str.contains(DISCOUNT_PAT, na=False)
-#         has_abs_price = s_color_ser.str.contains(ABS_PRICE_PAT, na=False) | s_price_ser.str.contains(ABS_PRICE_PAT, na=False)
-#         mask = has_color & (has_discount | has_abs_price)
-#
-#         hit_cnt = 0
-#         for pos, hit in enumerate(mask.to_numpy()):
-#             if hit:
-#                 debug_pos_set.add(pos)
-#                 hit_cnt += 1
-#                 if hit_cnt >= int(debug_limit):
-#                     break
-#         if not debug_pos_set:
-#             # 没有命中时，退化为打印前 debug_limit 行
-#             debug_pos_set = set(range(min(int(debug_limit), len(df))))
-#         print(f"[shop9 debug] total_rows={len(df)}, hit_rows={int(mask.sum())}, print_rows={len(debug_pos_set)}")
-#
-#     def _dbg_on(row_pos: int) -> bool:
-#         return bool(debug) and (row_pos in debug_pos_set)
-#
-#     def _dprint(row_pos: int, *args, **kwargs):
-#         if _dbg_on(row_pos):
-#             print(*args, **kwargs)
-#
-#     # 同义表（可扩充）
-#     FAMILY_SYNONYMS_SHOP9 = {
-#         "blue": ["ブルー", "青", "ディープブルー", "ディープ ブルー"],
-#         "ブルー": ["ブルー", "青", "ディープブルー"],
-#         "青": ["ブルー", "青", "ディープブルー"],
-#         "ディープブルー": ["ディープブルー", "ブルー", "青"],
-#         "silver": ["シルバー", "銀"],
-#         "シルバー": ["シルバー", "銀"],
-#         "銀": ["シルバー", "銀"],
-#         "black": ["ブラック", "黒"],
-#         "ブラック": ["ブラック", "黒"],
-#         "黒": ["ブラック", "黒"],
-#         "orange": ["オレンジ", "橙", "コズミックオレンジ"],
-#         "オレンジ": ["オレンジ", "橙"],
-#         "橙": ["オレンジ", "橙"],
-#         "white": ["ホワイト", "白"],
-#         "ホワイト": ["ホワイト", "白"],
-#     }
-#     SYNONYM_LOOKUP = {}
-#     for k, vs in FAMILY_SYNONYMS_SHOP9.items():
-#         SYNONYM_LOOKUP[k] = list(dict.fromkeys(vs))
-#         for v in vs:
-#             SYNONYM_LOOKUP.setdefault(v, [])
-#             SYNONYM_LOOKUP[v] = list(dict.fromkeys(SYNONYM_LOOKUP[v] + vs + [k]))
-#
-#     def _norm(s: str) -> str:
-#         if s is None:
-#             return ""
-#         t = str(s).strip().lower()
-#         t = t.replace("　", " ")
-#         t = re.sub(r"\s+", " ", t)
-#         # 全角数字转半角
-#         t = t.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
-#         return t
-#
-#     def _is_pure_number_token(tok: str) -> bool:
-#         if not tok:
-#             return False
-#         t = _norm(tok)
-#         t = t.replace(",", "").replace("，", "")
-#         return bool(re.fullmatch(r"[0-9]+", t))
-#
-#     SPLIT_SEPS = r"[/／、，,;；:：\s]+"
-#
-#     # 绝对价：例如 "青 229,000円" / "ブルー：229000" 等
-#     ABS_PRICE_RE = re.compile(
-#         # labels 允许包含 '/', ',' 等分隔符；只要不包含数字/货币符号/円
-#      r"(?P<labels>[^0-9０-９¥￥円]+?)\s*(?:¥|￥)?\s*(?P<amount>[０-９0-9][０-９0-9,，]*)\s*(?:円)?",
-#         re.I,
-#     )
-#     # 颜色加减：例如 "黒 -2,000円" / "青:+1000" / "全色 -500"
-#     DELTA_RE = re.compile(
-#         r"(?P<labels>[^0-9０-９¥￥円]+?)\s*[：:\-]?\s*(?P<sign>[+\-−－])\s*(?:¥|￥)?\s*(?P<amount>[０-９0-9][０-９0-9,，]*)\s*(?:円)?",
-#         re.I,
-#     )
-#
-#     def _norm_amount_to_int(x: str) -> Optional[int]:
-#         if not x:
-#             return None
-#         s = str(x).strip()
-#         s = s.translate(str.maketrans("０１２３４５６７８９，", "0123456789,"))
-#         s = s.replace(",", "")
-#         if not s.isdigit():
-#             return None
-#         return int(s)
-#
-#     def _extract_abs_prices(text: str) -> List[Tuple[str, int]]:
-#         out: List[Tuple[str, int]] = []
-#         if not text:
-#             return out
-#         s = str(text)
-#         for m in ABS_PRICE_RE.finditer(s):
-#             labels_part = (m.group("labels") or "").strip()
-#             amt = _norm_amount_to_int(m.group("amount"))
-#             if amt is None:
-#                 continue
-#             toks = [t.strip() for t in re.split(SPLIT_SEPS, labels_part) if t.strip()]
-#             for tok in toks:
-#                 if _is_pure_number_token(tok):
-#                     continue
-#                 out.append((tok, int(amt)))
-#         # fallback: '青 229,000' 等
-#         if not out:
-#             m2 = re.finditer(
-#                 r"(?P<label>[^\d¥￥円/、，,;；]+?)\s*(?:¥|￥)?\s*(?P<amount>[０-９0-9][０-９0-9,，]*)",
-#                 s,
-#             )
-#             for m in m2:
-#                 label = m.group("label").strip()
-#                 amt = _norm_amount_to_int(m.group("amount"))
-#                 if label and amt is not None and not _is_pure_number_token(label):
-#                     out.append((label, int(amt)))
-#         return out
-#
-#     def _extract_deltas(text: str) -> List[Tuple[str, int]]:
-#         out: List[Tuple[str, int]] = []
-#         if not text:
-#             return out
-#         s = str(text)
-#         for m in DELTA_RE.finditer(s):
-#             labels_part = m.group("labels") or ""
-#             sign = m.group("sign") or "+"
-#             amt_txt = m.group("amount")
-#             amt = _norm_amount_to_int(amt_txt)
-#             if amt is None:
-#                 continue
-#             delta = -int(amt) if sign in ("-", "−", "－") else int(amt)
-#             toks = [t.strip() for t in re.split(SPLIT_SEPS, labels_part) if t.strip()]
-#             for tok in toks:
-#                 if _is_pure_number_token(tok):
-#                     continue
-#                 out.append((tok, delta))
-#         # 全色 fallback
-#         if not out and "全色" in s:
-#             m = re.search(r"全色\s*[：:\-]?\s*([+\-−－])?\s*([０-９0-9][０-９0-9,，]*)", s)
-#             if m:
-#                 sign = m.group(1) or "+"
-#                 amt = _norm_amount_to_int(m.group(2))
-#                 if amt is None:
-#                     amt = 0
-#                 out.append(("全色", -amt if sign in ("-", "−", "－") else amt))
-#             else:
-#                 out.append(("全色", 0))
-#         return out
-#
-#     # 构建 pn_map: (model_norm, cap_gb) -> {color_norm: part_number}
-#     info_df = info_df.copy()
-#     info_df["model_name_norm"] = info_df["model_name"].map(_normalize_model_generic)
-#     info_df["capacity_gb"] = pd.to_numeric(info_df["capacity_gb"], errors="coerce").astype("Int64")
-#     info_df = info_df.dropna(subset=["model_name_norm", "capacity_gb", "part_number", "color"])
-#
-#     pn_map: Dict[Tuple[str, int], Dict[str, str]] = {}
-#     for _, r in info_df.iterrows():
-#         m = r["model_name_norm"]
-#         cap = r["capacity_gb"]
-#         pn = str(r["part_number"]).strip()
-#         col = _norm(r["color"])
-#         if pd.isna(cap) or not m or not col:
-#             continue
-#         key = (m, int(cap))
-#         pn_map.setdefault(key, {})
-#         pn_map[key][col] = pn
-#
-#     # process rows
-#     model_norm = df[col_model].map(_normalize_model_generic)
-#     cap_gb     = df[col_model].map(_parse_capacity_gb)
-#     recorded_at = df[col_time].map(lambda x: parse_dt_aware(x))
-#
-#     rows = []
-#     for i in range(len(df)):
-#         raw_model = df[col_model].iat[i]
-#         m = model_norm.iat[i]
-#         c = cap_gb.iat[i]
-#         t = recorded_at.iat[i]
-#         raw_price_cell = df[col_price].iat[i]
-#         raw_color_cell = df[col_color].iat[i]
-#
-#         _dprint(i, f"[DEBUG row={i}] raw_model={raw_model!r} -> norm={m!r}, cap={c!r}, raw_price={raw_price_cell!r}, raw_color={raw_color_cell!r}")
-#
-#         if not m or pd.isna(c):
-#             _dprint(i, f"[DEBUG row={i}] skip: model/cap missing")
-#             continue
-#         c = int(c)
-#
-#         key = (m, c)
-#         color_to_pn = pn_map.get(key)
-#         if not color_to_pn:
-#             _dprint(i, f"[DEBUG row={i}] skip: no pn_map for key={key}")
-#             continue
-#
-#         s_color = str(raw_color_cell) if raw_color_cell is not None else ""
-#         s_price = str(raw_price_cell) if raw_price_cell is not None else ""
-#         # parse from color-col first (优先)
-#         abs_list = _extract_abs_prices(s_color)
-#         deltas = _extract_deltas(s_color)
-#         base_price = to_int_yen(s_price) or to_int_yen(s_color)
-#
-#         # if not found in color-col, try price-col
-#         if not abs_list and not deltas:
-#             abs_list = _extract_abs_prices(s_price)
-#             deltas = _extract_deltas(s_price)
-#             if base_price is None:
-#                 base_price = to_int_yen(s_price)
-#
-#         # final fallback: whole row
-#         if not abs_list and not deltas:
-#             full_row_parts = []
-#             for col in df.columns:
-#                 try:
-#                     v = df[col].iat[i]
-#                 except Exception:
-#                     v = df.iloc[i].get(col)
-#                 if v is None:
-#                     continue
-#                 sv = str(v).strip()
-#                 if sv and sv.lower() != "nan":
-#                     full_row_parts.append(sv)
-#             s_full = " ".join(full_row_parts)
-#             if s_full and s_full != s_color and s_full != s_price:
-#                 _dprint(i, f"[DEBUG row={i}] fallback parsing from full row: {s_full!r}")
-#                 abs_list = _extract_abs_prices(s_full)
-#                 deltas = _extract_deltas(s_full)
-#                 if base_price is None:
-#                     base_price = to_int_yen(s_full)
-#
-#         _dprint(i, f"[DEBUG row={i}] parsed abs_list={abs_list}, deltas={deltas}, base_price={base_price}")
-#
-#         # label -> col_norm matching（宽松 + 同义表）
-#         def _match_label_to_colnorm(tok: str) -> Optional[str]:
-#             if not tok:
-#                 return None
-#             tok_norm = _norm(tok)
-#             # direct equal
-#             for col_norm in color_to_pn.keys():
-#                 if tok_norm == col_norm:
-#                     return col_norm
-#             # synonyms
-#             candidates = set()
-#             if tok_norm in SYNONYM_LOOKUP:
-#                 candidates.update(SYNONYM_LOOKUP[tok_norm])
-#             candidates.add(tok_norm)
-#             for cand in candidates:
-#                 for col_norm in color_to_pn.keys():
-#                     if cand == col_norm or cand in col_norm or col_norm in cand:
-#                         return col_norm
-#             # fallback substring
-#             tok_short = re.sub(r"[\s\u3000\-]+", "", tok_norm)
-#             for col_norm in color_to_pn.keys():
-#                 if tok_short in col_norm or col_norm in tok_short:
-#                     return col_norm
-#             return None
-#
-#         color_abs_map: Dict[str, int] = {}
-#         color_delta_map: Dict[str, int] = {}
-#
-#         for label_raw, amt in abs_list:
-#             toks = [t.strip() for t in re.split(SPLIT_SEPS, label_raw) if t.strip()]
-#             for tok in toks:
-#                 if _is_pure_number_token(tok):
-#                     _dprint(i, f"[DEBUG row={i}] abs skip numeric token={tok!r}")
-#                     continue
-#                 matched = _match_label_to_colnorm(tok)
-#                 if matched:
-#                     color_abs_map[matched] = int(amt)
-#                     _dprint(i, f"[DEBUG row={i}] abs match: token={tok!r} -> color_norm={matched!r} price={amt}")
-#                 else:
-#                     _dprint(i, f"[DEBUG row={i}] abs NO-match token={tok!r}")
-#
-#         for label_raw, delta in deltas:
-#             if label_raw == "全色":
-#                 color_delta_map["ALL"] = int(delta)
-#                 _dprint(i, f"[DEBUG row={i}] delta ALL -> {delta}")
-#                 continue
-#             toks = [t.strip() for t in re.split(SPLIT_SEPS, label_raw) if t.strip()]
-#             for tok in toks:
-#                 if _is_pure_number_token(tok):
-#                     _dprint(i, f"[DEBUG row={i}] delta skip numeric token={tok!r}")
-#                     continue
-#                 matched = _match_label_to_colnorm(tok)
-#                 if matched:
-#                     color_delta_map[matched] = int(delta)
-#                     _dprint(i, f"[DEBUG row={i}] delta match: token={tok!r} -> color_norm={matched!r} delta={delta}")
-#                 else:
-#                     _dprint(i, f"[DEBUG row={i}] delta NO-match token={tok!r}")
-#
-#         _dprint(i, f"[DEBUG row={i}] mapped_abs={color_abs_map}, mapped_deltas={color_delta_map}")
-#
-#         # 输出生成逻辑：ALL -> ABS -> delta/base
-#         if "ALL" in color_delta_map:
-#             if base_price is None:
-#                 _dprint(i, f"[DEBUG row={i}] ALL present but base price missing -> skip")
-#                 continue
-#             final = int(base_price + color_delta_map["ALL"])
-#             for col_norm, pn in color_to_pn.items():
-#                 rows.append({"part_number": pn, "shop_name": "アキモバ", "price_new": int(final), "recorded_at": t})
-#                 _dprint(i, f"[DEBUG row={i}] -> color={col_norm} pn={pn} price={final} reason=ALL base={base_price} delta={color_delta_map['ALL']}")
-#             continue
-#
-#         if color_abs_map:
-#             for col_norm, pn in color_to_pn.items():
-#                 if col_norm in color_abs_map:
-#                     val = color_abs_map[col_norm]
-#                     rows.append({"part_number": pn, "shop_name": "アキモバ", "price_new": int(val), "recorded_at": t})
-#                     _dprint(i, f"[DEBUG row={i}] -> color={col_norm} pn={pn} price={val} reason=ABS abs={val}")
-#                 else:
-#                     if base_price is not None:
-#                         rows.append({"part_number": pn, "shop_name": "アキモバ", "price_new": int(base_price), "recorded_at": t})
-#                         _dprint(i, f"[DEBUG row={i}] -> color={col_norm} pn={pn} price={base_price} reason=BASE-FALLBACK base={base_price}")
-#                     else:
-#                         _dprint(i, f"[DEBUG row={i}] -> color={col_norm} pn={pn} skipped (no abs, no base)")
-#             continue
-#
-#         if base_price is None:
-#             _dprint(i, f"[DEBUG row={i}] no base/abs -> skip")
-#             continue
-#
-#         for col_norm, pn in color_to_pn.items():
-#             delta = color_delta_map.get(col_norm, 0)
-#             val = int(base_price + delta)
-#             rows.append({"part_number": pn, "shop_name": "アキモバ", "price_new": val, "recorded_at": t})
-#             _dprint(i, f"[DEBUG row={i}] -> color={col_norm} pn={pn} price={val} reason={'BASE+DELTA' if delta else 'BASE'} base={base_price} delta={delta}")
-#
-#     out = pd.DataFrame(rows, columns=["part_number","shop_name","price_new","recorded_at"])
-#     if not out.empty:
-#         out = out.dropna(subset=["part_number","price_new"]).reset_index(drop=True)
-#         out["part_number"] = out["part_number"].astype(str)
-#         out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
-#     return out

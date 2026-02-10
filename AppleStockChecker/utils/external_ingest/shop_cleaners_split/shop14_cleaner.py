@@ -84,36 +84,12 @@ def _label_matches_color_shop14(label_raw: str, color_raw: str, color_norm: str)
 
     return any(str(tok).lower() in color_raw_l for tok in candidates)
 
-def _is_truthy(v) -> bool:
-    return str(v or "").strip().lower() in {"1", "true", "yes", "y", "on"}
-
 def _dprint(enabled: bool, *args, **kwargs) -> None:
     if enabled:
         print(*args, **kwargs)
 
 def _norm(s: str) -> str:
     return (s or "").strip()
-
-def _has_all_colors(text: str) -> Optional[int]:
-    """
-    若文本含“全色”，且可选出现 '全色 ± 金額'，返回统一 delta；
-    若仅出现 '全色' 无金额，返回 0；
-    若未出现 '全色'，返回 None。
-    """
-    if not text:
-        return None
-    s = str(text)
-    if "全色" not in s:
-        return None
-    # 试图解析 "全色 ± n円"
-    m = re.search(r"全色\s*[：:\-]?\s*([+\-−－])?\s*(\d[\d,]*)\s*円", s)
-    if m:
-        sign = m.group(1) or "+"
-        amt = to_int_yen(m.group(2)) or 0
-        if sign in ("-", "−", "－"):
-            amt = -amt
-        return int(amt)
-    return 0
 
 COLOR_DELTA_RE_shop14 = re.compile(
     r"""(?P<label>[^：:\-\s/、／]+)\s*
@@ -208,60 +184,6 @@ _COLOR_ABS_PRICE_RE = re.compile(
     """,
     re.UNICODE | re.VERBOSE,
 )
-
-def _extract_color_deltas_shop14(text: str, *, debug: bool = True, ctx: str = "") -> List[Tuple[str, int]]:
-    """
-    从 '减价条件2' 提取若干 (label_raw, delta_int)。
-    允许多组，使用 '/', '／', '、', ',', '，', ';' 等分隔。
-    例：
-      '青-3000'          -> [('青', -3000)]
-      '橙/銀+1000'       -> [('橙', +1000), ('銀', +1000)]
-      'ブルー：-2,000円' -> [('ブルー', -2000)]
-    """
-    out: List[Tuple[str, int]] = []
-    if not text:
-        return out
-
-    s = str(text)
-    _dprint(debug, f"{ctx} [delta] raw='{s}'")
-
-    # 用安全切分，避免把 2,000 拆开
-    parts = [p.strip() for p in _SPLIT_TOKENS_SAFE_RE.split(s) if p and p.strip()]
-    if not parts:
-        parts = [s]
-
-    _dprint(debug, f"{ctx} [delta] split_parts={parts}")
-
-    for part in parts:
-        m = COLOR_DELTA_RE_shop14.search(part)
-        if not m:
-            _dprint(debug, f"{ctx} [delta] no_match part='{part}'")
-            continue
-
-        label = (m.group("label") or "").strip()
-        sep = m.group("sep")
-        sign = m.group("sign")
-        amt = to_int_yen(m.group("amount"))
-
-        _dprint(
-            debug,
-            f"{ctx} [delta] matched part='{part}' -> label='{label}', sep='{sep}', sign='{sign}', amount_raw='{m.group('amount')}', amt={amt}"
-        )
-
-        if amt is None:
-            continue
-
-        if sign:
-            negative = sign in ("-", "−", "－")
-        else:
-            negative = sep in ("-", "−", "－")
-
-        delta = -int(amt) if negative else int(amt)
-        out.append((label, delta))
-        _dprint(debug, f"{ctx} [delta] parsed -> ({label!r}, {delta})")
-
-    _dprint(debug, f"{ctx} [delta] out={out}")
-    return out
 
 def _label_matches_color_shop14(label_raw: str, color_raw: str, color_norm: str) -> bool:
     """
@@ -415,75 +337,6 @@ def _labels_from_text_fallback(extraction_text: str) -> str:
     t = re.sub(r"(?:[+\-−－])?\s*(?:¥|￥)?\s*\d[\d,，]*\s*(?:円)?", "", t)
     t = t.strip()
     return t
-
-def _extract_color_abs_prices(text: str, *, debug: bool = True, ctx: str = "") -> List[Tuple[str, int]]:
-    """
-    从 text 中抽取 (label_raw, abs_price) 绝对价。
-    修复点：不会在数字千位分隔符处拆分（保留 229,000 完整）。
-    支持多标签共用金额：'青/銀327000'、'青 銀 327000' 等。
-    """
-    out: List[Tuple[str, int]] = []
-    if not text:
-        return out
-
-    pending_labels: List[str] = []
-
-    s_all = str(text).strip()
-    if s_all.lower() == "nan" or s_all == "":
-        return out
-
-    _dprint(debug, f"{ctx} [abs] raw='{s_all}'")
-
-    parts = [p.strip() for p in _SPLIT_TOKENS_SAFE_RE.split(s_all) if p and p.strip()]
-    if not parts:
-        parts = [s_all]
-
-    _dprint(debug, f"{ctx} [abs] split_parts={parts}")
-
-    for part in parts:
-        # 如果片段里同时含有 + 或 - （显式差额），跳过（差额解析会处理）
-        if any(ch in part for ch in ("+", "-", "−", "－")):
-            _dprint(debug, f"{ctx} [abs] skip(delta_like) part='{part}'")
-            continue
-
-        m = _COLOR_ABS_PRICE_RE.search(part)
-        if m:
-            label_raw = _norm_label(m.group("label"))
-            amt_txt = m.group("amount")
-            amt_clean = re.sub(r"[,\uFF0C]", "", amt_txt)
-
-            _dprint(debug, f"{ctx} [abs] matched part='{part}' -> label='{label_raw}', amount_raw='{amt_txt}', amount_clean='{amt_clean}'")
-
-            try:
-                amt_val = int(amt_clean)
-            except Exception:
-                try:
-                    amt_val = int(to_int_yen(amt_txt) or 0)
-                except Exception:
-                    _dprint(debug, f"{ctx} [abs] amount_parse_failed amount_raw='{amt_txt}'")
-                    continue
-
-            if label_raw:
-                out.append((label_raw, amt_val))
-                if pending_labels:
-                    _dprint(debug, f"{ctx} [abs] apply pending_labels={pending_labels} with amt={amt_val}")
-                for pl in pending_labels:
-                    pln = _norm_label(pl)
-                    if pln:
-                        out.append((pln, amt_val))
-                pending_labels = []
-            continue
-
-        # 没有找到金额：可能只是标签
-        toks = [t for t in re.split(r"[／/、，;；,]", part) if t and t.strip()]
-        for tok in toks:
-            tok = _norm_label(tok)
-            if tok:
-                pending_labels.append(tok)
-        _dprint(debug, f"{ctx} [abs] no_amount part='{part}', pending_labels={pending_labels}")
-
-    _dprint(debug, f"{ctx} [abs] out={out}")
-    return out
 
 def _norm_colname(x) -> str:
     s = str(x or "")
@@ -643,46 +496,6 @@ def _strip_label_delims(s: str) -> str:
     s = re.sub(r"^[／/、，,;；\s]+", "", s)
     s = re.sub(r"[／/、，,;；\s]+$", "", s)
     return s.strip()
-
-def _repair_abs_delta_from_compound_text(text: str) -> Tuple[List[Tuple[str, int]], List[Tuple[str, int]]]:
-    """
-    从类似 '橙227000、青228000' / '青/銀229000、橙227000' / '橙-2500、青+1000'
-    这种复合串中恢复为:
-      abs=[('橙',227000), ('青',228000)] / delta=[...]
-    """
-    abs_list: List[Tuple[str, int]] = []
-    delta_list: List[Tuple[str, int]] = []
-    s = str(text or "")
-    if not s:
-        return abs_list, delta_list
-
-    for m in _PAIR_GROUP_RE_shop14.finditer(s):
-        labels_raw = _strip_label_delims(m.group("labels"))
-        sign = m.group("sign")
-        amount_raw = m.group("amount")
-
-        # 金额清洗
-        amt_clean = re.sub(r"[,\uFF0C]", "", str(amount_raw))
-        try:
-            amt = int(amt_clean)
-        except Exception:
-            continue
-
-        labels = _split_labels(labels_raw)  # 你已有：支持 /、空格、顿号等
-        if not labels:
-            continue
-
-        if sign and sign in {"-", "−", "－"}:
-            for lb in labels:
-                delta_list.append((lb, -amt))
-        elif sign and sign in {"+", "＋"}:
-            for lb in labels:
-                delta_list.append((lb, amt))
-        else:
-            for lb in labels:
-                abs_list.append((lb, amt))
-
-    return abs_list, delta_list
 
 @lru_cache(maxsize=4096)
 def _shop14_extract_rules_with_langextract(
