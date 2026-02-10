@@ -166,6 +166,52 @@ def _extract_jan_digits(v) -> Optional[str]:
     return m.group(1) if m else None
 
 
+# ----------------------------------------------------------------------
+# 共通辅助函数（各 shop 清洗器共用）
+# ----------------------------------------------------------------------
+
+def _truncate_for_log(s: str, n: int = 200) -> str:
+    """截断长字符串，保留前 n 个字符，用于日志显示"""
+    if s is None:
+        return ""
+    t = str(s)
+    if len(t) <= n:
+        return t
+    return t[:n] + f"... (truncated, total_length={len(t)})"
+
+
+def _norm_strip(s: str) -> str:
+    """通用 strip 归一化，返回去除首尾空白的字符串"""
+    return (s or "").strip()
+
+
+# 全角→半角 变换表（数字・标点・货币記号）
+_FZ_TO_HZ_TRANS = str.maketrans({
+    '０': '0', '１': '1', '２': '2', '３': '3', '４': '4',
+    '５': '5', '６': '6', '７': '7', '８': '8', '９': '9',
+    '，': ',', '．': '.', '：': ':', '（': '(', '）': ')',
+    '　': ' ', '－': '-', '＋': '+', '¥': '', '￥': '',
+})
+
+
+def _normalize_amount_text(s: str) -> Optional[int]:
+    """
+    把全角数字/标点转半角，去掉非数字字符后尝试转换为 int。
+    返回 None 表示无法解析。
+    """
+    if s is None:
+        return None
+    t = str(s).translate(_FZ_TO_HZ_TRANS)
+    m = re.search(r"([0-9][0-9,]*)", t)
+    if not m:
+        return None
+    numtxt = m.group(1).replace(",", "")
+    try:
+        return int(numtxt)
+    except Exception:
+        return None
+
+
 def _build_jan_map(info_df: pd.DataFrame) -> Dict[str, str]:
     """
     构建 { jan_digits -> part_number } 映射。

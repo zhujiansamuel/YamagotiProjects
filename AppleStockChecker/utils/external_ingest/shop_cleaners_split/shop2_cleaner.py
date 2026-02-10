@@ -41,7 +41,12 @@ from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb, _load_iphone17_info_df_from_db
+from ..cleaner_tools import (
+    _parse_capacity_gb,
+    _load_iphone17_info_df_from_db,
+    _truncate_for_log,
+    _norm_strip,
+)
 
 # 初始化 logger
 logger = logging.getLogger(__name__)
@@ -70,15 +75,6 @@ _LANGEXTRACT_MODEL_URL = os.getenv("SHOP2_LX_MODEL_URL", "http://localhost:11434
 # 辅助工具函数
 # ----------------------------------------------------------------------
 
-def _truncate_for_log(s: str, n: int = 200) -> str:
-    """截断长字符串，保留前 n 个字符，用于日志显示"""
-    if s is None:
-        return ""
-    t = str(s)
-    if len(t) <= n:
-        return t
-    return t[:n] + f"... (truncated, total_length={len(t)})"
-
 _YEN_RE = re.compile(r"[^\d]+")
 
 def _parse_yen(val) -> int | None:
@@ -97,8 +93,7 @@ def _parse_yen(val) -> int | None:
     except Exception:
         return None
 
-def _norm(s: str) -> str:
-    return (s or "").strip()
+_norm = _norm_strip
 
 def _as_text(val) -> str:
     """
