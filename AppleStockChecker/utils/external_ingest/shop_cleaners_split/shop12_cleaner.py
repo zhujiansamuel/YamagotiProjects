@@ -36,7 +36,12 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic
+from ..cleaner_tools import (
+    _parse_capacity_gb,
+    _normalize_model_generic,
+    _truncate_for_log,
+    _norm_strip,
+)
 
 # ----------------------------------------------------------------------
 # 初始化 logger
@@ -57,17 +62,7 @@ SHOP12_EXTRACTION_MODE = "auto"  # "regex" | "llm" | "auto"
 # 辅助工具函数
 # ----------------------------------------------------------------------
 
-def _truncate_for_log(s: str, n: int = 200) -> str:
-    """截断长字符串，保留前 n 个字符，用于日志显示"""
-    if s is None:
-        return ""
-    t = str(s)
-    if len(t) <= n:
-        return t
-    return t[:n] + f"... (truncated, total_length={len(t)})"
-
-def _norm(s: str) -> str:
-    return (s or "").strip()
+_norm = _norm_strip
 
 # ----------------------------------------------------------------------
 # Step 1: 備考1 文本预处理

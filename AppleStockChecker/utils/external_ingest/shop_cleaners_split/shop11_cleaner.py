@@ -43,6 +43,9 @@ from ..cleaner_tools import (
     _normalize_model_generic,
     _load_iphone17_info_df_from_db,
     _build_color_map,
+    _truncate_for_log,
+    _norm_strip,
+    _FZ_TO_HZ_TRANS,
 )
 
 # 初始化 logger
@@ -64,17 +67,7 @@ SHOP11_EXTRACTION_MODE = "auto"  # "regex" | "llm" | "auto"
 # 辅助工具函数
 # ----------------------------------------------------------------------
 
-def _truncate_for_log(s: str, n: int = 200) -> str:
-    """截断长字符串，保留前 n 个字符，用于日志显示"""
-    if s is None:
-        return ""
-    t = str(s)
-    if len(t) <= n:
-        return t
-    return t[:n] + f"... (truncated, total_length={len(t)})"
-
-def _norm(s: str) -> str:
-    return (s or "").strip()
+_norm = _norm_strip
 
 def _coerce_int(v) -> Optional[int]:
     if v is None:
@@ -96,13 +89,6 @@ def _coerce_int(v) -> Optional[int]:
 # ----------------------------------------------------------------------
 # Step 1: 全角→半角归一化
 # ----------------------------------------------------------------------
-
-_FZ_TO_HZ_TRANS = str.maketrans({
-    '０': '0', '１': '1', '２': '2', '３': '3', '４': '4',
-    '５': '5', '６': '6', '７': '7', '８': '8', '９': '9',
-    '，': ',', '．': '.', '：': ':', '（': '(', '）': ')',
-    '　': ' ', '－': '-', '＋': '+', '¥': '', '￥': '',
-})
 
 def _normalize_number_text(txt: str) -> str:
     if txt is None:

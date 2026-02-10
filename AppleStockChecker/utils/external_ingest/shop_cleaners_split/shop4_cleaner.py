@@ -41,6 +41,10 @@ from ..cleaner_tools import (
     _normalize_model_generic,
     _load_iphone17_info_df_from_db,
     _build_color_map,
+    _truncate_for_log,
+    _norm_strip,
+    _FZ_TO_HZ_TRANS,
+    _normalize_amount_text,
 )
 
 # ----------------------------------------------------------------------
@@ -65,43 +69,13 @@ SHOP4_EXTRACTION_MODE = "auto"  # "regex" | "llm" | "auto"
 # 辅助工具函数
 # ----------------------------------------------------------------------
 
-def _truncate_for_log(s: str, n: int = 200) -> str:
-    """截断长字符串，保留前 n 个字符，用于日志显示"""
-    if s is None:
-        return ""
-    t = str(s)
-    if len(t) <= n:
-        return t
-    return t[:n] + f"... (truncated, total_length={len(t)})"
-
-def _norm(s: str) -> str:
-    return (s or "").strip()
+_norm = _norm_strip
 
 # ----------------------------------------------------------------------
 # Step 1: 全角→半角 & 金额归一化
 # ----------------------------------------------------------------------
 
-_FZ_TO_HZ_TRANS = str.maketrans({
-    '０': '0', '１': '1', '２': '2', '３': '3', '４': '4',
-    '５': '5', '６': '6', '７': '7', '８': '8', '９': '9',
-    '，': ',', '．': '.', '：': ':', '（': '(', '）': ')',
-    '　': ' ', '－': '-', '＋': '+', '¥': '', '￥': '',
-})
-
 LABEL_SPLIT_RE = re.compile(r"[／/、，,・\s]+")
-
-def _normalize_amount_text(s: str) -> Optional[int]:
-    if s is None:
-        return None
-    t = str(s).translate(_FZ_TO_HZ_TRANS)
-    m = re.search(r"([0-9][0-9,]*)", t)
-    if not m:
-        return None
-    numtxt = m.group(1).replace(",", "")
-    try:
-        return int(numtxt)
-    except Exception:
-        return None
 
 def _coerce_int_maybe(v) -> Optional[int]:
     if v is None:

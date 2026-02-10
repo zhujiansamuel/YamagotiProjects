@@ -34,17 +34,14 @@ from ..cleaner_tools import (
     _normalize_model_generic,
     _load_iphone17_info_df_from_db,
     _build_color_map,
+    _truncate_for_log,
+    _norm_strip,
 )
 
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
 logger = logging.getLogger(__name__)
-
-
-def _truncate_for_log(s, n: int = 200) -> str:
-    s = str(s or "")
-    return s[:n] + ("…" if len(s) > n else "")
 
 
 # ---------------------------------------------------------------------------
@@ -59,8 +56,7 @@ SHOP14_LLM_MODEL_ID = os.getenv("SHOP14_LLM_MODEL_ID", "gemma3:1b")
 # Step 2: 文本归一化 helpers
 # ---------------------------------------------------------------------------
 
-def _norm(s: str) -> str:
-    return (s or "").strip()
+_norm = _norm_strip
 
 
 def _norm_label(lbl: str) -> str:

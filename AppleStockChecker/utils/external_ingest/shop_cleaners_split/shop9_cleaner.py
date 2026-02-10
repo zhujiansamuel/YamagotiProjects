@@ -41,6 +41,7 @@ from ..cleaner_tools import (
     _normalize_model_generic,
     _load_iphone17_info_df_from_db,
     _build_color_map,
+    _truncate_for_log,
 )
 
 # 初始化 logger
@@ -69,15 +70,6 @@ COL_TIME  = "time-scraped"
 # ----------------------------------------------------------------------
 # 辅助工具函数
 # ----------------------------------------------------------------------
-
-def _truncate_for_log(s: str, n: int = 200) -> str:
-    """截断长字符串，保留前 n 个字符，用于日志显示"""
-    if s is None:
-        return ""
-    t = str(s)
-    if len(t) <= n:
-        return t
-    return t[:n] + f"... (truncated, total_length={len(t)})"
 
 def _norm(s: str) -> str:
     if s is None:
