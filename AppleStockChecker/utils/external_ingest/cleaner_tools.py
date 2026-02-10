@@ -185,26 +185,132 @@ def _norm_strip(s: str) -> str:
     return (s or "").strip()
 
 
-# 全角→半角 变换表（数字・标点・货币記号）
+# 全角→半角 完整变换表（数字、标点、货币、日文符号）
 _FZ_TO_HZ_TRANS = str.maketrans({
+    # 数字
     '０': '0', '１': '1', '２': '2', '３': '3', '４': '4',
     '５': '5', '６': '6', '７': '7', '８': '8', '９': '9',
-    '，': ',', '．': '.', '：': ':', '（': '(', '）': ')',
-    '　': ' ', '－': '-', '＋': '+', '¥': '', '￥': '',
+    # 标点
+    '，': ',', '．': '.', '：': ':', '；': ';',
+    '（': '(', '）': ')', '「': '[', '」': ']',
+    '『': '{', '』': '}', '【': '[', '】': ']',
+    # 空格和连字符
+    '　': ' ',   # 全角空格→半角空格
+    '－': '-', '＋': '+', '／': '/', '＊': '*',
+    # 货币符号（转为空）
+    '¥': '', '￥': '',
+    # Unicode 变体
+    '−': '-',  # U+2212 MINUS SIGN
 })
+
+
+def normalize_text_basic(
+    text: str,
+    *,
+    fullwidth_to_halfwidth: bool = True,
+    remove_newlines: bool = True,
+    collapse_spaces: bool = True,
+    strip: bool = True
+) -> str:
+    """
+    通用文本规范化（初步清洗）
+
+    参数:
+        text: 输入文本
+        fullwidth_to_halfwidth: 全角→半角转换（数字、标点）
+        remove_newlines: 去除换行符 (\\r\\n → 空格)
+        collapse_spaces: 合并多个空格为一个
+        strip: 去除首尾空白
+
+    返回:
+        规范化后的文本
+
+    示例:
+        >>> normalize_text_basic("iPhone　17　Pro\\n256GB")
+        'iPhone 17 Pro 256GB'
+
+        >>> normalize_text_basic("１２３，４５６円")
+        '123,456円'
+    """
+    if text is None:
+        return ""
+
+    s = str(text)
+
+    # 1. 全角→半角
+    if fullwidth_to_halfwidth:
+        s = s.translate(_FZ_TO_HZ_TRANS)
+
+    # 2. 去除换行（转为空格，保持单词间隔）
+    if remove_newlines:
+        s = s.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
+
+    # 3. 合并多个空格
+    if collapse_spaces:
+        s = re.sub(r"\s+", " ", s)
+
+    # 4. Strip
+    if strip:
+        s = s.strip()
+
+    return s
+
+
+def safe_to_text(value) -> str:
+    """
+    安全地将任意值转为字符串，处理 NaN/None/空值
+
+    参数:
+        value: 任意类型的值（包括 pandas NA/NaT）
+
+    返回:
+        str: 转换后的字符串，异常值返回空字符串
+
+    示例:
+        >>> safe_to_text(None)
+        ''
+        >>> safe_to_text(pd.NA)
+        ''
+        >>> safe_to_text(123)
+        '123'
+        >>> safe_to_text("hello")
+        'hello'
+    """
+    if value is None:
+        return ""
+
+    # pandas NA/NaT 处理
+    if pd.isna(value):
+        return ""
+
+    # bool 类型特殊处理（避免 True → 'True'）
+    if isinstance(value, bool):
+        return ""
+
+    return str(value)
 
 
 def _normalize_amount_text(s: str) -> Optional[int]:
     """
     把全角数字/标点转半角，去掉非数字字符后尝试转换为 int。
+
+    改进点：
+    - 使用 normalize_text_basic 预处理（全角→半角 + 去换行 + 合并空格）
+    - 支持更复杂的输入格式
+
     返回 None 表示无法解析。
     """
     if s is None:
         return None
-    t = str(s).translate(_FZ_TO_HZ_TRANS)
+
+    # 预处理：全角→半角 + 去换行 + 合并空格
+    t = normalize_text_basic(str(s), strip=True)
+
+    # 提取数字部分（支持逗号分隔）
     m = re.search(r"([0-9][0-9,]*)", t)
     if not m:
         return None
+
     numtxt = m.group(1).replace(",", "")
     try:
         return int(numtxt)

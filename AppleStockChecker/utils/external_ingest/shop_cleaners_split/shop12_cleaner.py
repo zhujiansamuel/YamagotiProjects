@@ -42,6 +42,7 @@ from ..cleaner_tools import (
     _build_color_map,
     _truncate_for_log,
     _norm_strip,
+    normalize_text_basic,
 )
 
 # ----------------------------------------------------------------------
@@ -95,13 +96,13 @@ def _normalize_remark_for_llm(remark_raw: str) -> str:
 # ----------------------------------------------------------------------
 
 def _norm_amount_to_int(s: str) -> Optional[int]:
+    """
+    解析金额文本，使用通用规范化函数
+    """
     if s is None:
         return None
-    tt = str(s).replace("　", " ").replace("，", ",").replace("．", ".")
-    tt = tt.translate(str.maketrans({
-        '０':'0','１':'1','２':'2','３':'3','４':'4','５':'5','６':'6','７':'7','８':'8','９':'9',
-        '－':'-','＋':'+','¥':'','￥':''
-    }))
+    # 使用通用规范化（全角→半角 + 去换行 + 合并空格）
+    tt = normalize_text_basic(str(s))
     m = re.search(r"([0-9][0-9,]*)", tt)
     if not m:
         return None
