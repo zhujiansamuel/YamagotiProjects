@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Protocol, Dict, Callable, Optional,List
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -18,84 +18,8 @@ from dateutil import parser as dateparser
 import textwrap
 from functools import lru_cache
 
-_NUM_MODEL_PAT = re.compile(r"(iPhone)\s*(\d{2})(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
-_AIR_PAT = re.compile(r"(iPhone)\s*(Air)(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
-
 def _norm(s: str) -> str:
     return (s or "").strip()
-
-def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
-    """
-    读取 iphone17_info，并尽量保留 jan 列以供 shop1 做 JAN→PN 映射。
-    输出列至少包含：part_number, model_name, capacity_gb, color，
-    若检测到任何 jan 列，则额外返回标准化列 'jan'。
-    """
-    try:
-        from django.conf import settings
-        p = getattr(settings, "EXTERNAL_IPHONE17_INFO_PATH", None)
-        if p:
-            path = str(p)
-        else:
-            raise AttributeError
-    except Exception:
-        path = os.getenv("IPHONE17_INFO_CSV") or str(Path(__file__).resolve().parents[2] / "data" / "iphone17_info.csv")
-
-    pth = Path(path)
-    if not pth.exists():
-        raise FileNotFoundError(f"未找到 iphone17_info：{pth}")
-
-    if re.search(r"\.(xlsx|xlsm|xls|ods)$", str(pth), re.I):
-        df = pd.read_excel(pth)
-    else:
-        df = pd.read_csv(pth, encoding="utf-8-sig")
-
-    need = {"part_number", "model_name", "capacity_gb", "color"}
-    missing = need - set(df.columns)
-    if missing:
-        raise ValueError(f"iphone17_info 缺少必要列：{missing}")
-
-    df = df.copy()
-    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
-    df = df.dropna(subset=["model_name", "capacity_gb", "part_number", "color"])
-
-    # ★ 检测并标准化 jan 列（尽最大可能适配命名）
-    jan_candidates = []
-    for c in df.columns:
-        cl = str(c).strip().lower()
-        if cl in {"jan", "jancode", "jan_code", "jan13", "jan14"}:
-            jan_candidates.append(c)
-        elif "jan" in cl or "jan" in str(c):  # 兼容 'JANコード' 等
-            jan_candidates.append(c)
-    jan_candidates = list(dict.fromkeys(jan_candidates))  # 去重保序
-
-    cols = ["part_number", "model_name", "capacity_gb", "color"]
-    if jan_candidates:
-        src = jan_candidates[0]
-        df["jan"] = df[src]
-        cols.append("jan")
-
-    return df[cols]
-
-def _normalize_model_generic(text: str) -> str:
-    """
-    统一型号主体：
-      - iPhone17/16 + 后缀（Pro/Pro Max/Plus/mini）
-      - iPhone Air（含“17 air”→ Air）
-      - 允许紧凑写法：17pro / 17promax / 16Pro / 16Plus ...
-    输出：'iPhone 17 Pro Max' / 'iPhone 17 Pro' / 'iPhone Air' / ...
-    """
-    if not text:
-        return ""
-
-_FZ_TO_HZ_TRANS = str.maketrans({
-    '０':'0','１':'1','２':'2','３':'3','４':'4','５':'5','６':'6','７':'7','８':'8','９':'9',
-    '，':',','．':'.','：':':','（':'(','）':')','　':' ','－':'-','＋':'+','¥':'','￥':''
-})
-
-_FZ_TO_HZ_TRANS = str.maketrans({
-    '０':'0','１':'1','２':'2','３':'3','４':'4','５':'5','６':'6','７':'7','８':'8','９':'9',
-    '，':',','．':'.','：':':','（':'(','）':')','　':' ','－':'-','＋':'+','¥':'','￥':''
-})
 
 def to_int_yen_shop11(v) -> Optional[int]:
     """
@@ -325,7 +249,6 @@ except Exception:  # 允许在未安装时仍可跑 fallback
 SHOP11_OLLAMA_URL = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 SHOP11_OLLAMA_MODEL_ID = os.getenv("SHOP11_OLLAMA_MODEL_ID", "gemma3:1b")
 
-
 def _coerce_int(v) -> Optional[int]:
     if v is None:
         return None
@@ -342,7 +265,6 @@ def _coerce_int(v) -> Optional[int]:
         return int(float(s))
     except Exception:
         return None
-
 
 @lru_cache(maxsize=1)
 def _shop11_model_config():
@@ -366,7 +288,6 @@ def _shop11_model_config():
         return lx.factory.ModelConfig(model_id=SHOP11_OLLAMA_MODEL_ID, provider_kwargs=provider_kwargs)
     except Exception:
         return None
-
 
 def _lx_extract_ollama(text: str, prompt: str, examples: list):
     """
@@ -407,7 +328,6 @@ def _lx_extract_ollama(text: str, prompt: str, examples: list):
         )
     except Exception:
         return None
-
 
 @lru_cache(maxsize=8)
 def _shop11_lx_storage_materials(valid_models: Tuple[str, ...]):
@@ -486,7 +406,6 @@ def _shop11_lx_storage_materials(valid_models: Tuple[str, ...]):
     ]
     return prompt, examples
 
-
 @lru_cache(maxsize=1)
 def _shop11_lx_color_materials():
     """
@@ -564,7 +483,6 @@ def _shop11_lx_color_materials():
     ]
     return prompt, examples
 
-
 @lru_cache(maxsize=4096)
 def _lx_parse_storage_shop11(storage: str, valid_models: Tuple[str, ...]) -> Tuple[str, Optional[int], Tuple[Tuple[str, str, Tuple[Tuple[str, str], ...]], ...]]:
     """
@@ -600,7 +518,6 @@ def _lx_parse_storage_shop11(storage: str, valid_models: Tuple[str, ...]) -> Tup
             cap_gb = _coerce_int(attrs.get("capacity_gb"))
 
     return model_norm, cap_gb, tuple(trace)
-
 
 @lru_cache(maxsize=4096)
 def _lx_parse_color_deltas_shop11(
@@ -650,9 +567,6 @@ def _lx_parse_color_deltas_shop11(
 
     return tuple(tmp.items()), tuple(trace)
 
-
-
-
 def clean_shop11(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> pd.DataFrame:
     print("shop11:モバステ---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
 
@@ -663,7 +577,7 @@ def clean_shop11(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) ->
 
     df2 = df.copy().reset_index(drop=True)
 
-    info_df = _load_iphone17_info_df_for_shop2()
+    info_df = _load_iphone17_info_df_from_db()
     cmap_all = _build_color_map_shop11(info_df)
 
     # 用 info_df 推导“允许的规范化机型”，用来约束 LLM 输出，减少 key 对不上

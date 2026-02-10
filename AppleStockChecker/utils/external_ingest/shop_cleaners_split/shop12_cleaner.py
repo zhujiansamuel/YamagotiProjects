@@ -11,18 +11,12 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic
 
 # ====== 你原先已有的：机型/容量/颜色映射相关（保持不动即可） ======
-_NUM_MODEL_PAT = re.compile(r"(iPhone)\s*(\d{2})(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
-_AIR_PAT = re.compile(r"(iPhone)\s*(Air)(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
 
 def _norm(s: str) -> str:
     return (s or "").strip()
-
-def _normalize_model_generic(text: str) -> str:
-    if not text:
-        return ""
 
 def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
     try:
@@ -418,7 +412,6 @@ def _label_matches_color(label_raw: str, color_raw: str, color_norm: str) -> boo
     ln_short = re.sub(r"[\s\u3000]+", "", ln)
     cn_short = re.sub(r"[\s\u3000]+", "", cn)
     return bool(ln_short and (ln_short in cn_short or cn_short in ln_short))
-
 
 def clean_shop12(df: pd.DataFrame) -> pd.DataFrame:
     now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())

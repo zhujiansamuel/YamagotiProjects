@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db
 
 # --- LangExtract (LLM 抽取) ---
 try:
@@ -23,76 +23,8 @@ SHOP3_OLLAMA_URL = os.getenv("SHOP3_OLLAMA_URL", "http://localhost:11434")
 SHOP3_OLLAMA_MODEL_ID = os.getenv("SHOP3_OLLAMA_MODEL_ID", "gemma3:1b")
 SHOP3_USE_LANGEXTRACT = os.getenv("SHOP3_USE_LANGEXTRACT", "1").strip().lower() not in {"0", "false", "no", "off"}
 
-_NUM_MODEL_PAT = re.compile(r"(iPhone)\s*(\d{2})(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
-_AIR_PAT = re.compile(r"(iPhone)\s*(Air)(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
-
 def _norm(s: str) -> str:
     return (s or "").strip()
-
-
-def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
-    """
-    读取 iphone17_info，并尽量保留 jan 列以供 shop1 做 JAN→PN 映射。
-    输出列至少包含：part_number, model_name, capacity_gb, color，
-    若检测到任何 jan 列，则额外返回标准化列 'jan'。
-    """
-    try:
-        from django.conf import settings
-        p = getattr(settings, "EXTERNAL_IPHONE17_INFO_PATH", None)
-        if p:
-            path = str(p)
-        else:
-            raise AttributeError
-    except Exception:
-        path = os.getenv("IPHONE17_INFO_CSV") or str(Path(__file__).resolve().parents[2] / "data" / "iphone17_info.csv")
-
-    pth = Path(path)
-    if not pth.exists():
-        raise FileNotFoundError(f"未找到 iphone17_info：{pth}")
-
-    if re.search(r"\.(xlsx|xlsm|xls|ods)$", str(pth), re.I):
-        df = pd.read_excel(pth)
-    else:
-        df = pd.read_csv(pth, encoding="utf-8-sig")
-
-    need = {"part_number", "model_name", "capacity_gb", "color"}
-    missing = need - set(df.columns)
-    if missing:
-        raise ValueError(f"iphone17_info 缺少必要列：{missing}")
-
-    df = df.copy()
-    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
-    df = df.dropna(subset=["model_name", "capacity_gb", "part_number", "color"])
-
-    # 检测并标准化 jan 列
-    jan_candidates = []
-    for c in df.columns:
-        cl = str(c).strip().lower()
-        if cl in {"jan", "jancode", "jan_code", "jan13", "jan14"}:
-            jan_candidates.append(c)
-        elif "jan" in cl or "jan" in str(c):
-            jan_candidates.append(c)
-    jan_candidates = list(dict.fromkeys(jan_candidates))
-
-    cols = ["part_number", "model_name", "capacity_gb", "color"]
-    if jan_candidates:
-        src = jan_candidates[0]
-        df["jan"] = df[src]
-        cols.append("jan")
-
-    return df[cols]
-
-
-def _normalize_model_generic(text: str) -> str:
-    """
-    统一型号主体：
-      - iPhone17/16 + 后缀（Pro/Pro Max/Plus/mini）
-      - iPhone Air（含“17 air”→ Air）
-      - 允许紧凑写法：17pro / 17promax / 16Pro / 16Plus ...
-    输出：'iPhone 17 Pro Max' / 'iPhone 17 Pro' / 'iPhone Air' / ...
-    """
-    if not text:
-        return ""
 
 def _parse_delta_int_llm(x: object, default_sign: Optional[int]) -> Optional[int]:
     """
@@ -142,7 +74,6 @@ def _parse_delta_int_llm(x: object, default_sign: Optional[int]) -> Optional[int
         explicit_sign = default_sign
 
     return int(explicit_sign * amt)
-
 
 def _price_from_shop3(x: object) -> Optional[int]:
     """
@@ -232,7 +163,6 @@ _DELTA_PATTERN_LOOSE = re.compile(
     re.UNICODE | re.VERBOSE
 )
 
-
 def _clean_label_token(tok: str) -> str:
     if tok is None:
         return ""
@@ -240,7 +170,6 @@ def _clean_label_token(tok: str) -> str:
     t = re.sub(r"\(.*?\)", "", t)
     t = re.sub(r"（.*?）", "", t)
     return t.strip()
-
 
 def _normalize_amount_text(s: str) -> Optional[int]:
     """
@@ -258,7 +187,6 @@ def _normalize_amount_text(s: str) -> Optional[int]:
         return int(numtxt)
     except Exception:
         return None
-
 
 # -------------------- 1) 原正则版：保留作为 fallback --------------------
 def _extract_color_deltas_shop3_regex(text: str) -> List[Tuple[str, int]]:
@@ -302,7 +230,6 @@ def _extract_color_deltas_shop3_regex(text: str) -> List[Tuple[str, int]]:
                     out.append((lbl, int(amt)))
 
     return out
-
 
 # -------------------- 2) LangExtract + Ollama：主用 --------------------
 if lx is not None:
@@ -369,7 +296,6 @@ else:
     _SHOP3_COLOR_DELTA_PROMPT = ""
     _SHOP3_COLOR_DELTA_EXAMPLES = []
 
-
 def _iter_extractions_from_langextract_result(result) -> List[object]:
     """
     lx.extract(text) 可能返回 AnnotatedDocument，也可能在未来版本/调用方式里返回 list；
@@ -383,7 +309,6 @@ def _iter_extractions_from_langextract_result(result) -> List[object]:
             out.extend(getattr(doc, "extractions", []) or [])
         return out
     return list(getattr(result, "extractions", []) or [])
-
 
 def _parse_delta_int(x: object) -> Optional[int]:
     """
@@ -414,7 +339,6 @@ def _parse_delta_int(x: object) -> Optional[int]:
     if amt is None:
         return None
     return int(sign * amt)
-
 
 @lru_cache(maxsize=4096)
 def _extract_color_deltas_shop3_llm_cached(text: str) -> Tuple[Tuple[str, int], ...]:
@@ -470,7 +394,6 @@ def _extract_color_deltas_shop3_llm_cached(text: str) -> Tuple[Tuple[str, int], 
 
     return tuple(mp.items())
 
-
 def _extract_color_deltas_shop3(text: str) -> List[Tuple[str, int]]:
     """
     主入口：优先使用 LangExtract+Ollama；失败/不可用则回退正则。
@@ -486,7 +409,6 @@ def _extract_color_deltas_shop3(text: str) -> List[Tuple[str, int]]:
         return list(_extract_color_deltas_shop3_llm_cached(s))
     except Exception:
         return _extract_color_deltas_shop3_regex(s)
-
 
 def _label_matches_color_shop3(label_raw: str, color_raw: str, color_norm: str) -> bool:
     """宽松匹配：归一等值 | 文本子串 | 家族词命中"""
@@ -508,7 +430,6 @@ def _label_matches_color_shop3(label_raw: str, color_raw: str, color_norm: str) 
                 break
     return any(tok in str(color_raw) for tok in candidates)
 
-
 def _build_color_map_shop3(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict[str, Tuple[str, str]]]:
     """
     (model_norm, cap_gb) -> { color_norm: (part_number, color_raw) }
@@ -527,7 +448,6 @@ def _build_color_map_shop3(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict[
         cmap.setdefault(key, {})
         cmap[key][_norm(str(r["color"]))] = (str(r["part_number"]), str(r["color"]))
     return cmap
-
 
 def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> pd.DataFrame:
     now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
@@ -550,7 +470,7 @@ def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
     if src.empty:
         return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
 
-    info_df = _load_iphone17_info_df_for_shop2()
+    info_df = _load_iphone17_info_df_from_db()
     color_maps = _build_color_map_shop3(info_df)
 
     model_norm = src["title"].map(_normalize_model_generic)

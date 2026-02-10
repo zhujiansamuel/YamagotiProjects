@@ -11,14 +11,11 @@ from typing import Dict, Optional, List, Tuple
 import pandas as pd
 
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb
-
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db
 
 # ----------------------------
 # 原有：机型/容量 normalization
 # ----------------------------
-_NUM_MODEL_PAT = re.compile(r"(iPhone)\s*(\d{2})(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
-_AIR_PAT = re.compile(r"(iPhone)\s*(Air)(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
 
 def _find_base_price(df: pd.DataFrame, idx: int) -> Optional[int]:
     """
@@ -35,82 +32,8 @@ def _find_base_price(df: pd.DataFrame, idx: int) -> Optional[int]:
                 return int(price)
     return None
 
-
 def _norm(s: str) -> str:
     return (s or "").strip()
-
-
-def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
-    """
-    读取 iphone17_info，并尽量保留 jan 列以供 shop1 做 JAN→PN 映射。
-    输出列至少包含：part_number, model_name, capacity_gb, color，
-    若检测到任何 jan 列，则额外返回标准化列 'jan'。
-    """
-    try:
-        from django.conf import settings
-        p = getattr(settings, "EXTERNAL_IPHONE17_INFO_PATH", None)
-        if p:
-            path = str(p)
-        else:
-            raise AttributeError
-    except Exception:
-        path = os.getenv("IPHONE17_INFO_CSV") or str(
-            Path(__file__).resolve().parents[2] / "data" / "iphone17_info.csv"
-        )
-
-    pth = Path(path)
-    if not pth.exists():
-        raise FileNotFoundError(f"未找到 iphone17_info：{pth}")
-
-    if re.search(r"\.(xlsx|xlsm|xls|ods)$", str(pth), re.I):
-        df = pd.read_excel(pth)
-    else:
-        df = pd.read_csv(pth, encoding="utf-8-sig")
-
-    need = {"part_number", "model_name", "capacity_gb", "color"}
-    missing = need - set(df.columns)
-    if missing:
-        raise ValueError(f"iphone17_info 缺少必要列：{missing}")
-
-    df = df.copy()
-    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
-    df = df.dropna(subset=["model_name", "capacity_gb", "part_number", "color"])
-
-    jan_candidates = []
-    for c in df.columns:
-        cl = str(c).strip().lower()
-        if cl in {"jan", "jancode", "jan_code", "jan13", "jan14"}:
-            jan_candidates.append(c)
-        elif "jan" in cl or "jan" in str(c):  # 兼容 'JANコード' 等
-            jan_candidates.append(c)
-    jan_candidates = list(dict.fromkeys(jan_candidates))
-
-    cols = ["part_number", "model_name", "capacity_gb", "color"]
-    if jan_candidates:
-        src = jan_candidates[0]
-        df["jan"] = df[src]
-        cols.append("jan")
-
-    return df[cols]
-
-
-def _normalize_model_generic(text: str) -> str:
-    if not text:
-        return ""
-
-
-# ----------------------------
-# LLM（LangExtract + Ollama）解析：颜色±金额
-# ----------------------------
-LABEL_SPLIT_RE = re.compile(r"[／/、，,・\s]+")
-
-_FZ_TO_HZ_TRANS = str.maketrans({
-    '０': '0', '１': '1', '２': '2', '３': '3', '４': '4',
-    '５': '5', '６': '6', '７': '7', '８': '8', '９': '9',
-    '，': ',', '．': '.', '：': ':', '（': '(', '）': ')', '　': ' ',
-    '－': '-', '＋': '+', '¥': '', '￥': ''
-})
-
 
 def _normalize_amount_text(s: str) -> Optional[int]:
     if s is None:
@@ -124,7 +47,6 @@ def _normalize_amount_text(s: str) -> Optional[int]:
         return int(numtxt)
     except Exception:
         return None
-
 
 def _coerce_int_maybe(v) -> Optional[int]:
     if v is None:
@@ -144,10 +66,8 @@ def _coerce_int_maybe(v) -> Optional[int]:
         return None
     return sign * int(amt)
 
-
 def _split_labels(label: str) -> List[str]:
     return [p.strip() for p in LABEL_SPLIT_RE.split(label or "") if p and p.strip()]
-
 
 # 可配置：默认用你给定的 Ollama
 SHOP4_USE_LLM = os.getenv("SHOP4_USE_LLM", "1") not in {"0", "false", "False"}
@@ -158,7 +78,6 @@ try:
     import langextract as lx
 except Exception:
     lx = None
-
 
 _SHOP4_LE_PROMPT = textwrap.dedent("""\
 You are extracting structured information from a Japanese iPhone pricing table.
@@ -247,7 +166,6 @@ if lx is not None:
         ),
     ]
 
-
 def _lx_extract_color_deltas(text: str):
     """
     对 text 做一次 LangExtract 抽取，返回 result.extractions（若不可用则空列表）。
@@ -289,7 +207,6 @@ def _lx_extract_color_deltas(text: str):
     exts = getattr(result, "extractions", None)
     return list(exts) if exts else []
 
-
 def _get_start_pos(extraction) -> int:
     ci = getattr(extraction, "char_interval", None)
     if ci is None:
@@ -308,7 +225,6 @@ def _get_start_pos(extraction) -> int:
                 except Exception:
                     pass
     return 0
-
 
 def _collect_adjustments_shop4_llm(df: pd.DataFrame, start_idx: int) -> Dict[str, int]:
     """
@@ -387,7 +303,6 @@ def _collect_adjustments_shop4_llm(df: pd.DataFrame, start_idx: int) -> Dict[str
 
     return result
 
-
 # ---- 旧 regex 解析兜底（可选）----
 _COLOR_DELTA_RE = re.compile(
     r"""^\s*
@@ -400,7 +315,6 @@ _COLOR_DELTA_RE = re.compile(
     """,
     re.VERBOSE,
 )
-
 
 def _parse_color_delta_shop4_regex(line: str) -> Optional[List[Tuple[str, int]]]:
     if not line or not isinstance(line, str):
@@ -458,7 +372,6 @@ def _parse_color_delta_shop4_regex(line: str) -> Optional[List[Tuple[str, int]]]
         return None
     return [(lbl.strip(), int(amt_val)) for lbl in labels]
 
-
 def _collect_adjustments_shop4(df: pd.DataFrame, start_idx: int) -> Dict[str, int]:
     """
     统一入口：优先走 LLM；LLM 不可用/失败则走 regex 兜底。
@@ -496,7 +409,6 @@ def _collect_adjustments_shop4(df: pd.DataFrame, start_idx: int) -> Dict[str, in
                 result[_norm(label)] = int(delta)
     return result
 
-
 # ----------------------------
 # shop4 主清洗器
 # ----------------------------
@@ -509,7 +421,7 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         if c not in df.columns:
             raise ValueError(f"shop4 清洗器缺少必要列：{c}")
 
-    info_df = _load_iphone17_info_df_for_shop2().copy()
+    info_df = _load_iphone17_info_df_from_db().copy()
     info_df["model_name_norm"] = info_df["model_name"].map(_normalize_model_generic)
     info_df["capacity_gb"] = pd.to_numeric(info_df["capacity_gb"], errors="coerce").astype("Int64")
     info_df["color_norm"] = info_df["color"].map(lambda x: _norm(str(x)))
@@ -633,7 +545,6 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
                 # print("  base_price(final):", base_price)
 
                 # print("  adjustments(collected):", adjustments)
-
 
                 # print("  llm_enabled:", bool(SHOP4_USE_LLM and lx is not None),
                 #       " model_id:", SHOP4_OLLAMA_MODEL_ID, " url:", SHOP4_OLLAMA_URL)

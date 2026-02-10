@@ -12,17 +12,13 @@ import pandas as pd
 import textwrap
 from functools import lru_cache
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb
-
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db
 
 # ========== 你的 Ollama 配置 ==========
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL_ID = os.getenv("OLLAMA_MODEL_ID", "gemma3:1b")
 
-
 # ========== 你原来就有的通用解析（沿用你 shop16 逻辑） ==========
-_NUM_MODEL_PAT = re.compile(r"(iPhone)\s*(\d{2})(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
-_AIR_PAT = re.compile(r"(iPhone)\s*(Air)(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
 
 def _norm(s: str) -> str:
     return (s or "").strip()
@@ -59,128 +55,6 @@ def _build_color_map_shop16(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict
         cmap.setdefault(key, {})
         cmap[key][_norm(str(r["color"]))] = (str(r["part_number"]), str(r["color"]))
     return cmap
-
-def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
-    """
-    读取 iphone17_info，并尽量保留 jan 列以供其它 shop 做 JAN→PN 映射。
-    输出列至少包含：part_number, model_name, capacity_gb, color，
-    若检测到任何 jan 列，则额外返回标准化列 'jan'。
-    """
-    try:
-        from django.conf import settings
-        p = getattr(settings, "EXTERNAL_IPHONE17_INFO_PATH", None)
-        if p:
-            path = str(p)
-        else:
-            raise AttributeError
-    except Exception:
-        path = os.getenv("IPHONE17_INFO_CSV") or str(Path(__file__).resolve().parents[2] / "data" / "iphone17_info.csv")
-
-    pth = Path(path)
-    if not pth.exists():
-        raise FileNotFoundError(f"未找到 iphone17_info：{pth}")
-
-    if re.search(r"\.(xlsx|xlsm|xls|ods)$", str(pth), re.I):
-        df = pd.read_excel(pth)
-    else:
-        df = pd.read_csv(pth, encoding="utf-8-sig")
-
-    need = {"part_number", "model_name", "capacity_gb", "color"}
-    missing = need - set(df.columns)
-    if missing:
-        raise ValueError(f"iphone17_info 缺少必要列：{missing}")
-
-    df = df.copy()
-    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
-    df = df.dropna(subset=["model_name", "capacity_gb", "part_number", "color"])
-
-    # 标准化 jan 列
-    jan_candidates = []
-    for c in df.columns:
-        cl = str(c).strip().lower()
-        if cl in {"jan", "jancode", "jan_code", "jan13", "jan14"}:
-            jan_candidates.append(c)
-        elif "jan" in cl or "jan" in str(c):
-            jan_candidates.append(c)
-    jan_candidates = list(dict.fromkeys(jan_candidates))
-
-    cols = ["part_number", "model_name", "capacity_gb", "color"]
-    if jan_candidates:
-        src = jan_candidates[0]
-        df["jan"] = df[src]
-        cols.append("jan")
-
-    return df[cols]
-
-def _normalize_model_generic(text: str) -> str:
-    if not text:
-        return ""
-
-SPLIT_TOKENS_RE = re.compile(r"[／/、，,]|(?:\s*;\s*)")
-
-# ========== 颜色家族匹配（沿用你 shop16 的宽松逻辑；可按 shop15 特性扩展） ==========
-FAMILY_SYNONYMS = {
-    "blue": ["ブルー", "青", "マリン"], "ブルー": ["ブルー", "青", "マリン"], "青": ["ブルー", "青", "マリン"], "マリン": ["ブルー", "青", "マリン"],
-    "black": ["ブラック", "黒"], "ブラック": ["ブラック", "黒"], "黒": ["ブラック", "黒"],
-    "white": ["ホワイト", "白"], "ホワイト": ["ホワイト", "白"], "白": ["ホワイト", "白"],
-    "green": ["グリーン", "緑"], "グリーン": ["グリーン", "緑"], "緑": ["グリーン", "緑"],
-    "red": ["レッド", "赤"], "レッド": ["レッド", "赤"], "赤": ["レッド", "赤"],
-    "yellow": ["イエロー", "黄"], "イエロー": ["イエロー", "黄"], "黄": ["イエロー", "黄"],
-    "orange": ["オレンジ", "橙"], "オレンジ": ["オレンジ", "橙"], "橙": ["オレンジ", "橙"],
-    "silver": ["シルバー", "銀"], "シルバー": ["シルバー", "銀"], "銀": ["シルバー", "銀"],
-    "gold": ["ゴールド", "金"], "ゴールド": ["ゴールド", "金"], "金": ["ゴールド", "金"],
-    "gray": ["グレー", "グレイ", "灰"], "グレー": ["グレー", "グレイ", "灰"], "グレイ": ["グレー", "グレイ", "灰"], "灰": ["グレー", "グレイ", "灰"],
-    "natural": ["ナチュラル"], "ナチュラル": ["ナチュラル"],
-}
-
-FAMILY_SYNONYMS_shop16 = {
-    # blue
-    "blue": ["ブルー", "青", "マリン"],
-    "ブルー": ["ブルー", "青", "マリン"],
-    "青": ["ブルー", "青", "マリン"],
-    "マリン": ["ブルー", "青", "マリン"],
-    # black
-    "black": ["ブラック", "黒"],
-    "ブラック": ["ブラック", "黒"],
-    "黒": ["ブラック", "黒"],
-    # white
-    "white": ["ホワイト", "白"],
-    "ホワイト": ["ホワイト", "白"],
-    "白": ["ホワイト", "白"],
-    # green
-    "green": ["グリーン", "緑"],
-    "グリーン": ["グリーン", "緑"],
-    "緑": ["グリーン", "緑"],
-    # red
-    "red": ["レッド", "赤"],
-    "レッド": ["レッド", "赤"],
-    "赤": ["レッド", "赤"],
-    # yellow
-    "yellow": ["イエロー", "黄"],
-    "イエロー": ["イエロー", "黄"],
-    "黄": ["イエロー", "黄"],
-    # orange
-    "orange": ["オレンジ", "橙"],
-    "オレンジ": ["オレンジ", "橙"],
-    "橙": ["オレンジ", "橙"],
-    # silver
-    "silver": ["シルバー", "銀"],
-    "シルバー": ["シルバー", "銀"],
-    "銀": ["シルバー", "銀"],
-    # gold
-    "gold": ["ゴールド", "金"],
-    "ゴールド": ["ゴールド", "金"],
-    "金": ["ゴールド", "金"],
-    # gray
-    "gray": ["グレー", "グレイ", "灰"],
-    "グレー": ["グレー", "グレイ", "灰"],
-    "グレイ": ["グレー", "グレイ", "灰"],
-    "灰": ["グレー", "グレイ", "灰"],
-    # natural
-    "natural": ["ナチュラル"],
-    "ナチュラル": ["ナチュラル"],
-}
-
 
 def _label_matches_color(label_raw: str, color_raw: str, color_norm: str) -> bool:
     label_norm = _norm(label_raw)
@@ -220,7 +94,6 @@ def _build_color_map(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict[str, T
         cmap.setdefault(key, {})
         cmap[key][_norm(str(r["color"]))] = (str(r["part_number"]), str(r["color"]))
     return cmap
-
 
 def _extract_color_deltas_shop16(text: str) -> List[Tuple[str, int]]:
     """从价格串中抽取多段“颜色±金额”，支持 '青/オレンジ -5000' 这类多标签共用金额。"""
@@ -314,8 +187,6 @@ def _extract_shared_delta_map_shop16(price_text_norm: str) -> Dict[str, int]:
                 out[lb] = delta
     return out
 
-
-
 def _normalize_price_text_shop16(s: object) -> str:
     s = "" if s is None else str(s)
     s = s.replace("\u3000", " ").replace("\xa0", " ").replace("\t", " ")
@@ -326,7 +197,6 @@ def _normalize_price_text_shop16(s: object) -> str:
     # 多个分隔合并
     s = re.sub(r"(?:\s*/\s*){2,}", " / ", s).strip()
     return s
-
 
 _BASE_ONLY_RE = re.compile(r"^\s*(?:￥|\¥)?\s*\d[\d,]*\s*(?:円)?\s*$")
 
@@ -382,7 +252,6 @@ def _extract_base_price_shop16(text: str) -> Optional[int]:
     if not m:
         return to_int_yen(text)  # 兜底
     return to_int_yen(m.group(1))
-
 
 SHOP16_PRICE_PROMPT = textwrap.dedent("""\
 You extract pricing information from Japanese iPhone buyback price strings (買取価格).
@@ -647,7 +516,6 @@ MODEL_COL = "iPhone 17 Pro Max"
 DESC_COL  = "説明1"
 PRICE_COL = "買取価格"
 
-
 def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
     # print("shop16:携帯空間---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
@@ -657,7 +525,7 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
         if c not in df.columns:
             raise ValueError(f"shop16 清洗器缺少必要列：{c}")
 
-    info_df = _load_iphone17_info_df_for_shop2()
+    info_df = _load_iphone17_info_df_from_db()
     cmap_all = _build_color_map_shop16(info_df)
 
     rows: List[dict] = []

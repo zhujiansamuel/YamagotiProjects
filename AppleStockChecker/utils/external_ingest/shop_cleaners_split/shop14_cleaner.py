@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Protocol, Dict, Callable, Optional,List
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -21,11 +21,6 @@ from typing import Dict, List, Optional, Tuple, Union
 SHOP14_DEBUG = str(True)
 SHOP14_OLLAMA_URL = os.getenv("SHOP14_OLLAMA_URL", "http://localhost:11434")
 SHOP14_LLM_MODEL_ID = os.getenv("SHOP14_LLM_MODEL_ID", "gemma3:1b")
-
-
-
-_NUM_MODEL_PAT = re.compile(r"(iPhone)\s*(\d{2})(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
-_AIR_PAT = re.compile(r"(iPhone)\s*(Air)(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
 
 # 统一用“家族->tokens”，同时包含英文（小写）+ 日文/汉字
 _FAMILY_TOKENS = {
@@ -89,7 +84,6 @@ def _label_matches_color_shop14(label_raw: str, color_raw: str, color_norm: str)
 
     return any(str(tok).lower() in color_raw_l for tok in candidates)
 
-
 def _is_truthy(v) -> bool:
     return str(v or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
@@ -99,69 +93,6 @@ def _dprint(enabled: bool, *args, **kwargs) -> None:
 
 def _norm(s: str) -> str:
     return (s or "").strip()
-
-def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
-    """
-    读取 iphone17_info，并尽量保留 jan 列以供 shop1 做 JAN→PN 映射。
-    输出列至少包含：part_number, model_name, capacity_gb, color，
-    若检测到任何 jan 列，则额外返回标准化列 'jan'。
-    """
-    try:
-        from django.conf import settings
-        p = getattr(settings, "EXTERNAL_IPHONE17_INFO_PATH", None)
-        if p:
-            path = str(p)
-        else:
-            raise AttributeError
-    except Exception:
-        path = os.getenv("IPHONE17_INFO_CSV") or str(Path(__file__).resolve().parents[2] / "data" / "iphone17_info.csv")
-
-    pth = Path(path)
-    if not pth.exists():
-        raise FileNotFoundError(f"未找到 iphone17_info：{pth}")
-
-    if re.search(r"\.(xlsx|xlsm|xls|ods)$", str(pth), re.I):
-        df = pd.read_excel(pth)
-    else:
-        df = pd.read_csv(pth, encoding="utf-8-sig")
-
-    need = {"part_number", "model_name", "capacity_gb", "color"}
-    missing = need - set(df.columns)
-    if missing:
-        raise ValueError(f"iphone17_info 缺少必要列：{missing}")
-
-    df = df.copy()
-    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
-    df = df.dropna(subset=["model_name", "capacity_gb", "part_number", "color"])
-
-    # ★ 检测并标准化 jan 列（尽最大可能适配命名）
-    jan_candidates = []
-    for c in df.columns:
-        cl = str(c).strip().lower()
-        if cl in {"jan", "jancode", "jan_code", "jan13", "jan14"}:
-            jan_candidates.append(c)
-        elif "jan" in cl or "jan" in str(c):  # 兼容 'JANコード' 等
-            jan_candidates.append(c)
-    jan_candidates = list(dict.fromkeys(jan_candidates))  # 去重保序
-
-    cols = ["part_number", "model_name", "capacity_gb", "color"]
-    if jan_candidates:
-        src = jan_candidates[0]
-        df["jan"] = df[src]
-        cols.append("jan")
-
-    return df[cols]
-
-def _normalize_model_generic(text: str) -> str:
-    """
-    统一型号主体：
-      - iPhone17/16 + 后缀（Pro/Pro Max/Plus/mini）
-      - iPhone Air（含“17 air”→ Air）
-      - 允许紧凑写法：17pro / 17promax / 16Pro / 16Plus ...
-    输出：'iPhone 17 Pro Max' / 'iPhone 17 Pro' / 'iPhone Air' / ...
-    """
-    if not text:
-        return ""
 
 def _has_all_colors(text: str) -> Optional[int]:
     """
@@ -256,8 +187,6 @@ FAMILY_SYNONYMS_shop14 = {
     "natural": ["ナチュラル"],
     "ナチュラル": ["ナチュラル"],
 }
-
-
 
 _SPLIT_TOKENS_SAFE_RE = re.compile(
     r"""
@@ -421,7 +350,6 @@ def _split_labels(labels: str) -> List[str]:
     parts = re.split(r"[／/、，,;；\s]+", s)
     return [p.strip() for p in parts if p and p.strip()]
 
-
 def _coerce_amount_yen(v) -> Optional[int]:
     """
     把 amount_yen 从 LLM attributes / 文本里转成 int（支持：-2500、-2,500円、229,500 等）
@@ -494,7 +422,6 @@ def _split_color_amount_pairs_multi(txt: str) -> List[Tuple[str, int]]:
     if len(out) >= 2:
         return out
     return []
-
 
 def _labels_from_text_fallback(extraction_text: str) -> str:
     """
@@ -606,7 +533,6 @@ def _resolve_remark_cols(df: "pd.DataFrame") -> Dict[str, Optional[str]]:
                 resolved[w] = ac
                 break
     return resolved
-
 
 @lru_cache(maxsize=1)
 def _shop14_lx_prompt_and_examples():
@@ -777,7 +703,6 @@ def _repair_abs_delta_from_compound_text(text: str) -> Tuple[List[Tuple[str, int
 
     return abs_list, delta_list
 
-
 @lru_cache(maxsize=4096)
 def _shop14_extract_rules_with_langextract(
     text: str,
@@ -920,7 +845,6 @@ def _shop14_extract_rules_with_langextract(
     out["delta"] = delta_list
     return out
 
-
 def clean_shop14(df: "pd.DataFrame") -> "pd.DataFrame":
     now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
     print(f"shop14:買取楽園---------->进入清洗器时间: {now}")
@@ -934,7 +858,7 @@ def clean_shop14(df: "pd.DataFrame") -> "pd.DataFrame":
     remark_cols = ["减价条件", "减价条件2", "23432"]
     remark_cols_map = _resolve_remark_cols(df)  # 关键：列名解析
 
-    info_df = _load_iphone17_info_df_for_shop2()
+    info_df = _load_iphone17_info_df_from_db()
     cmap_all = _build_color_map_shop14(info_df)
 
     rows: List[dict] = []

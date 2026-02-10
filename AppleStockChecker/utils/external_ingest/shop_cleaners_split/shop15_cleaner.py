@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Protocol, Dict, Callable, Optional,List
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -25,10 +25,6 @@ SHOP15_OLLAMA_URL_DEFAULT = os.getenv("SHOP15_OLLAMA_URL", "http://localhost:114
 SHOP15_OLLAMA_MODEL_DEFAULT = os.getenv("SHOP15_OLLAMA_MODEL", "gemma3:1b")
 # 基准价只从开头抓（避免把“ブルー229,000円”的229,000误当 base）
 _BASE_YEN_AT_START_RE = re.compile(r"^\s*(?:￥|¥|\u00a5)?\s*(\d[\d,]*)\s*円?")
-
-
-_NUM_MODEL_PAT = re.compile(r"(iPhone)\s*(\d{2})(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
-_AIR_PAT = re.compile(r"(iPhone)\s*(Air)(?:\s*(Pro\s*Max|Pro|Plus|mini))?", re.I)
 
 FAMILY_SYNONYMS = {
     "blue": ["ブルー"],
@@ -57,8 +53,6 @@ COLOR_DELTA_IN_PRICE_RE_shop15 = re.compile(
     """,
     re.UNICODE | re.VERBOSE,
 )
-
-
 
 def _parse_signed_int_yen(s: object) -> Optional[int]:
     """
@@ -284,7 +278,6 @@ def _extract_signed_amount_after_label_shop15(price_text: str, label: str) -> Op
         amt = -amt
     return amt
 
-
 def _coerce_specs_shop15(price_text: str, base_price: Optional[int], specs: List[Tuple[str, str, int]], debug: bool = False):
     """
     纠错策略（针对小模型不稳定输出）：
@@ -397,7 +390,6 @@ def _augment_multi_label_block_specs_shop15(
 
     return new_specs
 
-
 @lru_cache(maxsize=4096)
 def _parse_shop15_price_via_langextract_cached(
     price_text: str,
@@ -480,7 +472,6 @@ def _parse_shop15_price_via_langextract_cached(
 
     return base_price, specs
 
-
 def _parse_shop15_price_via_langextract(
     price_text: object,
     model_id: str = SHOP15_OLLAMA_MODEL_DEFAULT,
@@ -514,7 +505,6 @@ def _parse_shop15_price_via_langextract(
         print(f"[shop15][lx]    specs      = {specs}")
 
     return base_price, specs
-
 
 def _build_color_prices_from_specs_shop15(
     color_map: Dict[str, Tuple[str, str]],
@@ -571,72 +561,8 @@ def _shop15_debug_enabled(debug: bool = False) -> bool:
     v = os.getenv("SHOP15_DEBUG", "")
     return str(v).strip().lower() in {"1", "true", "yes", "y", "on"}
 
-
 def _norm(s: str) -> str:
     return (s or "").strip()
-
-def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
-    """
-    读取 iphone17_info，并尽量保留 jan 列以供 shop1 做 JAN→PN 映射。
-    输出列至少包含：part_number, model_name, capacity_gb, color，
-    若检测到任何 jan 列，则额外返回标准化列 'jan'。
-    """
-    try:
-        from django.conf import settings
-        p = getattr(settings, "EXTERNAL_IPHONE17_INFO_PATH", None)
-        if p:
-            path = str(p)
-        else:
-            raise AttributeError
-    except Exception:
-        path = os.getenv("IPHONE17_INFO_CSV") or str(Path(__file__).resolve().parents[2] / "data" / "iphone17_info.csv")
-
-    pth = Path(path)
-    if not pth.exists():
-        raise FileNotFoundError(f"未找到 iphone17_info：{pth}")
-
-    if re.search(r"\.(xlsx|xlsm|xls|ods)$", str(pth), re.I):
-        df = pd.read_excel(pth)
-    else:
-        df = pd.read_csv(pth, encoding="utf-8-sig")
-
-    need = {"part_number", "model_name", "capacity_gb", "color"}
-    missing = need - set(df.columns)
-    if missing:
-        raise ValueError(f"iphone17_info 缺少必要列：{missing}")
-
-    df = df.copy()
-    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
-    df = df.dropna(subset=["model_name", "capacity_gb", "part_number", "color"])
-
-    # ★ 检测并标准化 jan 列（尽最大可能适配命名）
-    jan_candidates = []
-    for c in df.columns:
-        cl = str(c).strip().lower()
-        if cl in {"jan", "jancode", "jan_code", "jan13", "jan14"}:
-            jan_candidates.append(c)
-        elif "jan" in cl or "jan" in str(c):  # 兼容 'JANコード' 等
-            jan_candidates.append(c)
-    jan_candidates = list(dict.fromkeys(jan_candidates))  # 去重保序
-
-    cols = ["part_number", "model_name", "capacity_gb", "color"]
-    if jan_candidates:
-        src = jan_candidates[0]
-        df["jan"] = df[src]
-        cols.append("jan")
-
-    return df[cols]
-
-def _normalize_model_generic(text: str) -> str:
-    """
-    统一型号主体：
-      - iPhone17/16 + 后缀（Pro/Pro Max/Plus/mini）
-      - iPhone Air（含“17 air”→ Air）
-      - 允许紧凑写法：17pro / 17promax / 16Pro / 16Plus ...
-    输出：'iPhone 17 Pro Max' / 'iPhone 17 Pro' / 'iPhone Air' / ...
-    """
-    if not text:
-        return ""
 
 def _label_matches_color(label_raw: str, color_raw: str, color_norm: str) -> bool:
     """
@@ -831,8 +757,6 @@ def _extract_color_specs_from_price_shop15(text: str, debug: bool = False) -> Li
         print(f"[shop15][spec] extracted specs={out}")
     return out
 
-
-
 def _build_color_deltas_shop15(
     color_map: Dict[str, Tuple[str, str]],
     labels_and_deltas: List[Tuple[str, int]],
@@ -923,7 +847,6 @@ def _build_color_prices_shop15(
 
     return color_prices, hit_log, unmatched
 
-
 def clean_shop15(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
     debug = _shop15_debug_enabled(debug)
 
@@ -934,7 +857,7 @@ def clean_shop15(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
         if c not in df.columns:
             raise ValueError(f"shop15 清洗器缺少必要列：{c}")
 
-    info_df = _load_iphone17_info_df_for_shop2()
+    info_df = _load_iphone17_info_df_from_db()
     cmap_all = _build_color_map_shop15(info_df)
 
     rows: List[dict] = []
