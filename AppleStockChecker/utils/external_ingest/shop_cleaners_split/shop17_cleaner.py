@@ -14,12 +14,52 @@ import time
 import textwrap
 import logging
 
+
+
+"""
+  原始文本
+    │
+    ├─ _pick_unopened_section()    ← 正则2: 提取【未開封】段
+    │
+    ├─ _normalize_color_text_shop17()  ← translate + 正则1: 归一化
+    │
+    ├─ "色減額" 分割               ← 字符串split（非正则）
+    │
+    ├─ fullmatch "なし"            ← 正则4: 全文なし早退
+    │
+    ├─ SPLIT_TOKENS_RE 拆分        ← 核心正则: 分割多条目
+    │
+    └─ 逐段匹配:
+        ├─ COLOR_NONE_RE           ← 核心正则: なし模式
+        │   └─ _normalize_label    ← 正则5: 清除空白
+        │   └─ _is_plausible       ← 正则3: 过滤含数字
+        │
+        └─ COLOR_DELTA_RE          ← 核心正则: 金额模式
+            └─ 同上验证
+"""
+
 # 初始化 logger
 logger = logging.getLogger(__name__)
 
 # DEBUG 功能现在由 logging 级别控制（在 settings.py 的 LOGGING 配置中）
 # 控制台显示 INFO 级别（简洁），文件记录 DEBUG 级别（详细）
 
+SHOP_NAME_OVERRIDE: Optional[str] = "ゲストモバイル"
+
+# ----------------------------------------------------------------------
+# 正则表达式与辅助函数（按处理流程排列）
+# ----------------------------------------------------------------------
+
+# ── Step 1: 提取【未開封】段落 ──
+def _pick_unopened_section(text: str) -> str:
+    """若包含【未開封】…，取该段直到下一个 '【' 或行末；否则返回原文。"""
+    if not text:
+        return ""
+    s = str(text)
+    m = re.search(r"【\s*未開封\s*】(.*?)(?=【|$)", s, flags=re.DOTALL)
+    return m.group(1) if m else s
+
+# ── Step 2: 归一化色減額文本 ──
 _DASH_TRANS_shop17 = str.maketrans({
     "−": "-",  # U+2212
     "－": "-",  # U+FF0D
@@ -31,9 +71,95 @@ _DASH_TRANS_shop17 = str.maketrans({
 })
 _FW_DIGITS_TRANS_shop17 = str.maketrans("０１２３４５６７８９", "0123456789")
 
+def _normalize_color_text_shop17(s: str) -> str:
+    """统一色減額文本里的全角数字/逗号/各种 dash，顺便清理空白。"""
+    s = "" if s is None else str(s)
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    s = s.translate(_FW_DIGITS_TRANS_shop17)
+    s = s.replace("，", ",")
+    s = s.translate(_DASH_TRANS_shop17)
+    s = s.replace("／", "/")
+    s = re.sub(r"[ \t\u3000\xa0]+", " ", s)
+    return s.strip()
+
+# ── Step 3: 归一化颜色标签（清除空白） ──
+def _normalize_label_shop17(lbl: str) -> str:
+    return re.sub(r"[\s\u3000\xa0]+", "", lbl or "")
+
+# ── Step 4: 验证颜色标签合理性 ──
 _BAD_LABEL_WORDS_shop17 = ("利用制限", "保証", "郵送", "持ち込み", "開始", "未満", "減額", "SIM", "制限")
 
-SHOP_NAME_OVERRIDE: Optional[str] = "ゲストモバイル"
+def _is_plausible_color_label_shop17(label: str) -> bool:
+    """过滤掉明显不是"颜色名"的 label（比如 利用制限△ / 保証開始3か月未満 等）。"""
+    label = _normalize_label_shop17(label)
+    if not label:
+        return False
+    if label.startswith(("△", "▲")):
+        return False
+    if re.search(r"\d", label):
+        return False
+    if len(label) > 16:
+        return False
+    if any(w in label for w in _BAD_LABEL_WORDS_shop17):
+        return False
+    return True
+
+# ── Step 5: 分割多颜色条目 ──
+SPLIT_TOKENS_RE_shop17 = re.compile(r"[／/、]|(?:\s*;\s*)|\n")
+
+# ── Step 6: 匹配无减额颜色（なし模式） ──
+COLOR_NONE_RE_shop17 = re.compile(
+    r"""(?P<label>[^：:\-\s/、／，,\n]+(?:\([^)]*\))?)\s*
+        (?:(?P<sep>[：:\-])\s*)?
+        (?:減額)?なし
+    """,
+    re.UNICODE | re.VERBOSE,
+)
+
+# ── Step 7: 匹配有金额减额的颜色 ──
+COLOR_DELTA_RE_shop17 = re.compile(
+    r"""(?P<label>[^：:\-\s/、／\n]+(?:\([^)]*\))?)\s*
+        (?P<sep>[：:\-])?\s*
+        (?P<sign>[+\-−－])?\s*
+        (?P<amount>\d[\d,]*)\s*(?:円)?
+    """,
+    re.UNICODE | re.VERBOSE,
+)
+
+# ----------------------------------------------------------------------
+# 辅助工具函数
+# ----------------------------------------------------------------------
+
+def _truncate_for_log(s: str, n: int = 200) -> str:
+    """截断长字符串，保留前 n 个字符，用于日志显示"""
+    if s is None:
+        return ""
+    t = str(s)
+    if len(t) <= n:
+        return t
+    return t[:n] + f"... (truncated, total_length={len(t)})"
+
+# ----------------------------------------------------------------------
+# LangExtract / Ollama 集成配置
+# ----------------------------------------------------------------------
+
+try:
+    import langextract as lx
+    from langextract.data import ExampleData, Extraction
+    _HAS_LANGEXTRACT = True
+except Exception:
+    lx = None
+    ExampleData = None
+    Extraction = None
+    _HAS_LANGEXTRACT = False
+
+LX_SHOP17_MODEL_ID = os.getenv("SHOP17_LX_MODEL_ID", "gemma3:1b")
+LX_SHOP17_MODEL_URL = os.getenv("SHOP17_LX_MODEL_URL", "http://localhost:11434")
+SHOP17_EXTRACTION_MODE = "auto"  # "regex" | "llm" | "auto"
+
+# ----------------------------------------------------------------------
+# 颜色匹配函数
+# ----------------------------------------------------------------------
 
 FAMILY_SYNONYMS_shop17 = {
     # blue 家族
@@ -101,80 +227,6 @@ FAMILY_SYNONYMS_shop17 = {
     "スペースブラック": ["スペースブラック"],
 }
 
-
-def _normalize_color_text_shop17(s: str) -> str:
-    """统一色減額文本里的全角数字/逗号/各种 dash，顺便清理空白。"""
-    s = "" if s is None else str(s)
-    s = s.replace("\r\n", "\n").replace("\r", "\n")
-    s = s.translate(_FW_DIGITS_TRANS_shop17)
-    s = s.replace("，", ",")
-    s = s.translate(_DASH_TRANS_shop17)
-    s = s.replace("／", "/")
-    s = re.sub(r"[ \t\u3000\xa0]+", " ", s)
-    return s.strip()
-
-
-
-def _is_plausible_color_label_shop17(label: str) -> bool:
-    """过滤掉明显不是“颜色名”的 label（比如 利用制限△ / 保証開始3か月未満 等）。"""
-    label = _normalize_label_shop17(label)
-    if not label:
-        return False
-    if label.startswith(("△", "▲")):
-        return False
-    if re.search(r"\d", label):
-        return False
-    if len(label) > 16:
-        return False
-    if any(w in label for w in _BAD_LABEL_WORDS_shop17):
-        return False
-    return True
-
-# 调试辅助函数：截断长字符串用于日志显示
-def _truncate_for_log(s: str, n: int = 200) -> str:
-    """截断长字符串，保留前 n 个字符，用于日志显示"""
-    if s is None:
-        return ""
-    t = str(s)
-    if len(t) <= n:
-        return t
-    return t[:n] + f"... (truncated, total_length={len(t)})"
-
-# ----------------------------------------------------------------------
-# LangExtract / Ollama 集成配置
-# ----------------------------------------------------------------------
-
-COLOR_NONE_RE_shop17 = re.compile(
-    r"""(?P<label>[^：:\-\s/、／，,\n]+(?:\([^)]*\))?)\s*
-        (?:(?P<sep>[：:\-])\s*)?
-        (?:減額)?なし
-    """,
-    re.UNICODE | re.VERBOSE,
-)
-
-COLOR_DELTA_RE_shop17 = re.compile(
-    r"""(?P<label>[^：:\-\s/、／\n]+(?:\([^)]*\))?)\s*
-        (?P<sep>[：:\-])?\s*
-        (?P<sign>[+\-−－])?\s*
-        (?P<amount>\d[\d,]*)\s*(?:円)?
-    """,
-    re.UNICODE | re.VERBOSE,
-)
-
-try:
-    import langextract as lx
-    from langextract.data import ExampleData, Extraction
-    _HAS_LANGEXTRACT = True
-except Exception:
-    lx = None
-    ExampleData = None
-    Extraction = None
-    _HAS_LANGEXTRACT = False
-
-LX_SHOP17_MODEL_ID = os.getenv("SHOP17_LX_MODEL_ID", "gemma3:1b")
-LX_SHOP17_MODEL_URL = os.getenv("SHOP17_LX_MODEL_URL", "http://localhost:11434")
-USE_LLM_FOR_SHOP17 = str(os.getenv("SHOP17_USE_LLM", "1")).strip().lower() not in {"0", "false", "no"}
-
 def _norm(s: str) -> str:
     return (s or "").strip()
 
@@ -213,22 +265,6 @@ def _build_color_map_shop17(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict
         cmap.setdefault(key, {})
         cmap[key][_norm(str(r["color"]))] = (str(r["part_number"]), str(r["color"]))
     return cmap
-
-def _pick_unopened_section(text: str) -> str:
-    """若包含【未開封】…，取该段直到下一个 '【' 或行末；否则返回原文。"""
-    if not text:
-        return ""
-    s = str(text)
-    m = re.search(r"【\s*未開封\s*】(.*?)(?=【|$)", s, flags=re.DOTALL)
-    return m.group(1) if m else s
-
-# ----------------------------------------------------------------------
-# 原来的 正则解析器（保留为 fallback）
-# ----------------------------------------------------------------------
-SPLIT_TOKENS_RE_shop17 = re.compile(r"[／/、]|(?:\s*;\s*)|\n")
-
-def _normalize_label_shop17(lbl: str) -> str:
-    return re.sub(r"[\s\u3000\xa0]+", "", lbl or "")
 
 def _extract_color_deltas_shop17_regex(text: str) -> List[Tuple[str, int]]:
     """
@@ -410,7 +446,7 @@ def _extract_color_deltas_shop17_llm(
     cleaner_name: Optional[str] = None,
     row_context: Optional[Dict] = None
 ) -> List[Tuple[str, int]]:
-    if not _HAS_LANGEXTRACT or not USE_LLM_FOR_SHOP17:
+    if not _HAS_LANGEXTRACT:
         return []
     if not text or not str(text).strip():
         return []
@@ -492,13 +528,20 @@ def _extract_color_deltas_shop17(
     row_context: Optional[Dict] = None
 ) -> List[Tuple[str, int]]:
     """
-    优先使用正则（对像「シルバーなし/ブルー-1000」这种结构非常稳定），
-    当正则完全解析不到任何颜色差额时，再让 LangExtract + Ollama 兜底。
+    根据 SHOP17_EXTRACTION_MODE 决定提取方式：
+    - "regex": 只用正则
+    - "llm":   只用 LLM
+    - "auto":  正则优先，正则无结果时 LLM 兜底
     """
-    regex_res = _extract_color_deltas_shop17_regex(text)
-    if regex_res:
-        return regex_res
-    return _extract_color_deltas_shop17_llm(text, shop_name, cleaner_name, row_context)
+    if SHOP17_EXTRACTION_MODE == "regex":
+        return _extract_color_deltas_shop17_regex(text)
+    elif SHOP17_EXTRACTION_MODE == "llm":
+        return _extract_color_deltas_shop17_llm(text, shop_name, cleaner_name, row_context)
+    else:  # auto
+        regex_res = _extract_color_deltas_shop17_regex(text)
+        if regex_res:
+            return regex_res
+        return _extract_color_deltas_shop17_llm(text, shop_name, cleaner_name, row_context)
 # ----------------------------------------------------------------------
 # 清洗主函数
 # ----------------------------------------------------------------------
@@ -582,14 +625,13 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
         )
 
         # 判断使用的提取方法
-        extraction_method = "none"
-        if labels_and_deltas:
-            # 检查是否来自正则
+        if not labels_and_deltas:
+            extraction_method = "none"
+        elif SHOP17_EXTRACTION_MODE in ("regex", "llm"):
+            extraction_method = SHOP17_EXTRACTION_MODE
+        else:  # auto: 需要判断结果来自哪个方法
             regex_result = _extract_color_deltas_shop17_regex(raw_color_s)
-            if regex_result:
-                extraction_method = "regex"
-            else:
-                extraction_method = "llm"
+            extraction_method = "regex" if regex_result else "llm"
 
         # DEBUG: 记录提取结果
         available_colors_list = [
