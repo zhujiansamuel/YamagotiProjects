@@ -14,60 +14,6 @@ from datetime import datetime
 import pytz
 import time
 
-def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
-    """
-    读取 iphone17_info，并尽量保留 jan 列以供 shop1 做 JAN→PN 映射。
-    输出列至少包含：part_number, model_name, capacity_gb, color，
-    若检测到任何 jan 列，则额外返回标准化列 'jan'。
-    """
-    try:
-        from django.conf import settings
-        p = getattr(settings, "EXTERNAL_IPHONE17_INFO_PATH", None)
-        if p:
-            path = str(p)
-        else:
-            raise AttributeError
-    except Exception:
-        path = os.getenv("IPHONE17_INFO_CSV") or str(Path(__file__).resolve().parents[2] / "data" / "iphone17_info.csv")
-
-    pth = Path(path)
-    if not pth.exists():
-        raise FileNotFoundError(f"未找到 iphone17_info：{pth}")
-
-    if re.search(r"\.(xlsx|xlsm|xls|ods)$", str(pth), re.I):
-        df = pd.read_excel(pth)
-    else:
-        df = pd.read_csv(pth, encoding="utf-8-sig")
-
-    need = {"part_number", "model_name", "capacity_gb", "color"}
-    missing = need - set(df.columns)
-    if missing:
-        raise ValueError(f"iphone17_info 缺少必要列：{missing}")
-
-    df = df.copy()
-    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
-    df = df.dropna(subset=["model_name", "capacity_gb", "part_number", "color"])
-
-    # ★ 检测并标准化 jan 列（尽最大可能适配命名）
-    jan_candidates = []
-    for c in df.columns:
-        cl = str(c).strip().lower()
-        if cl in {"jan", "jancode", "jan_code", "jan13", "jan14"}:
-            jan_candidates.append(c)
-        elif "jan" in cl or "jan" in str(c):  # 兼容 'JANコード' 等
-            jan_candidates.append(c)
-    jan_candidates = list(dict.fromkeys(jan_candidates))  # 去重保序
-
-    cols = ["part_number", "model_name", "capacity_gb", "color"]
-    if jan_candidates:
-        src = jan_candidates[0]
-        df["jan"] = df[src]
-        cols.append("jan")
-
-    return df[cols]
-
-JAN_RE_shop1 = re.compile(r"(\d{8,})")
-
 def _extract_jan_digits_shop1(v) -> Optional[str]:
     if v is None:
         return None
@@ -153,10 +99,10 @@ def clean_shop1(df: pd.DataFrame) -> pd.DataFrame:
     """
     以 JAN 映射 part_number；price -> price_new；time-scraped -> recorded_at。
     shop_name 固定为「買取商店」。
-    仅输出 _load_iphone17_info_df_for_shop2() 中存在的机型。
+    仅输出 _load_iphone17_info_df_from_db() 中存在的机型。
     """
     # 准备 JAN->PN 映射
-    info_df = _load_iphone17_info_df_for_shop2()
+    info_df = _load_iphone17_info_df_from_db()
     jan_map = _build_jan_to_pn_map_shop1(info_df)
 
     rows: List[dict] = []

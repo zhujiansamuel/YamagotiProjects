@@ -12,7 +12,7 @@ import pandas as pd
 import textwrap
 from functools import lru_cache
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db
 
 # ========== 你的 Ollama 配置 ==========
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
@@ -55,58 +55,6 @@ def _build_color_map_shop16(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict
         cmap.setdefault(key, {})
         cmap[key][_norm(str(r["color"]))] = (str(r["part_number"]), str(r["color"]))
     return cmap
-
-def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
-    """
-    读取 iphone17_info，并尽量保留 jan 列以供其它 shop 做 JAN→PN 映射。
-    输出列至少包含：part_number, model_name, capacity_gb, color，
-    若检测到任何 jan 列，则额外返回标准化列 'jan'。
-    """
-    try:
-        from django.conf import settings
-        p = getattr(settings, "EXTERNAL_IPHONE17_INFO_PATH", None)
-        if p:
-            path = str(p)
-        else:
-            raise AttributeError
-    except Exception:
-        path = os.getenv("IPHONE17_INFO_CSV") or str(Path(__file__).resolve().parents[2] / "data" / "iphone17_info.csv")
-
-    pth = Path(path)
-    if not pth.exists():
-        raise FileNotFoundError(f"未找到 iphone17_info：{pth}")
-
-    if re.search(r"\.(xlsx|xlsm|xls|ods)$", str(pth), re.I):
-        df = pd.read_excel(pth)
-    else:
-        df = pd.read_csv(pth, encoding="utf-8-sig")
-
-    need = {"part_number", "model_name", "capacity_gb", "color"}
-    missing = need - set(df.columns)
-    if missing:
-        raise ValueError(f"iphone17_info 缺少必要列：{missing}")
-
-    df = df.copy()
-    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
-    df = df.dropna(subset=["model_name", "capacity_gb", "part_number", "color"])
-
-    # 标准化 jan 列
-    jan_candidates = []
-    for c in df.columns:
-        cl = str(c).strip().lower()
-        if cl in {"jan", "jancode", "jan_code", "jan13", "jan14"}:
-            jan_candidates.append(c)
-        elif "jan" in cl or "jan" in str(c):
-            jan_candidates.append(c)
-    jan_candidates = list(dict.fromkeys(jan_candidates))
-
-    cols = ["part_number", "model_name", "capacity_gb", "color"]
-    if jan_candidates:
-        src = jan_candidates[0]
-        df["jan"] = df[src]
-        cols.append("jan")
-
-    return df[cols]
 
 def _label_matches_color(label_raw: str, color_raw: str, color_norm: str) -> bool:
     label_norm = _norm(label_raw)
@@ -577,7 +525,7 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
         if c not in df.columns:
             raise ValueError(f"shop16 清洗器缺少必要列：{c}")
 
-    info_df = _load_iphone17_info_df_for_shop2()
+    info_df = _load_iphone17_info_df_from_db()
     cmap_all = _build_color_map_shop16(info_df)
 
     rows: List[dict] = []
