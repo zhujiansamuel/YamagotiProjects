@@ -46,6 +46,7 @@ from ..cleaner_tools import (
     _load_iphone17_info_df_from_db,
     _truncate_for_log,
     _norm_strip,
+    safe_to_text,
 )
 
 # 初始化 logger
@@ -94,25 +95,6 @@ def _parse_yen(val) -> int | None:
         return None
 
 _norm = _norm_strip
-
-def _as_text(val) -> str:
-    """
-    把 data5 这种可能为 NaN/None/数字/字符串 的输入，统一规范成可解析的字符串。
-    """
-    if val is None:
-        return ""
-
-    # pandas 的 NaN / NA
-    try:
-        if pd.isna(val):
-            return ""
-    except Exception:
-        pass
-
-    s = str(val).strip()
-    if s.lower() in {"nan", "none", "null"}:
-        return ""
-    return s
 
 # ----------------------------------------------------------------------
 # Step 1: SIMfree+未開封 过滤
@@ -274,7 +256,7 @@ def _parse_rule_token_simple(token: str) -> Optional[Tuple[str, int]]:
     解析单条规则 token，例如：
       '黒-2000' / '青-2000円' / '銀 +3000' -> ('黒', -2000) / ('青', -2000) / ('銀', 3000)
     """
-    s = _as_text(token)
+    s = safe_to_text(token)
     if not s:
         return None
 
@@ -323,7 +305,7 @@ def _parse_adjust_rule_shop2_regex(val) -> dict:
     - 按分隔符拆开（换行/+++ / + / 逗号等），逐段用 _parse_rule_token_simple 解析
     - 也尝试旧版 regex 模式作为补充
     """
-    s = _as_text(val)
+    s = safe_to_text(val)
     if not s:
         return {}
 
@@ -452,7 +434,7 @@ def _parse_adjust_rule_llm_core(rule_text: str) -> dict:
 
         for ext in doc.get("extractions", []) or []:
             attrs = ext.get("attributes") or {}
-            extraction_text = _as_text(ext.get("extraction_text"))
+            extraction_text = safe_to_text(ext.get("extraction_text"))
 
             # 1) 优先从 extraction_text 按行解析（更贴近原文，且可一次吃掉多条）
             if extraction_text:
@@ -463,7 +445,7 @@ def _parse_adjust_rule_llm_core(rule_text: str) -> dict:
                         rules[g] = d
 
             # 2) 再用 attributes 兜底（处理 extraction_text 不含金额的情况）
-            group_label = _as_text(attrs.get("group_label"))
+            group_label = safe_to_text(attrs.get("group_label"))
             delta = _coerce_int(attrs.get("delta_yen"))
             if group_label and (delta is not None):
                 rules[group_label] = int(delta)
@@ -490,7 +472,7 @@ def _parse_adjust_rule_shop2_llm(
       B) delta 金额的绝对值必须在原文中出现
     然后用正则结果补全 LLM 漏掉的 key。
     """
-    s = _as_text(val)
+    s = safe_to_text(val)
     if not s:
         return {}
 
@@ -788,7 +770,7 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
             row_context=row_context,
         )
 
-        raw_rule_s = _as_text(raw_rule)
+        raw_rule_s = safe_to_text(raw_rule)
 
         # DEBUG: 记录提取结果
         available_colors_list = sub["color"].dropna().astype(str).unique().tolist()

@@ -43,8 +43,8 @@ from ..cleaner_tools import (
     _build_color_map,
     _truncate_for_log,
     _norm_strip,
-    _FZ_TO_HZ_TRANS,
     _normalize_amount_text,
+    normalize_text_basic,
 )
 
 # ----------------------------------------------------------------------
