@@ -30,7 +30,6 @@ import re
 import time
 import textwrap
 from functools import lru_cache
-from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -39,6 +38,8 @@ from ...external_ingest.helpers import to_int_yen, parse_dt_aware
 from ..cleaner_tools import (
     _parse_capacity_gb,
     _normalize_model_generic,
+    _load_iphone17_info_df_from_db,
+    _build_color_map,
     _truncate_for_log,
     _norm_strip,
 )
@@ -522,42 +523,6 @@ def _label_matches_color(label_raw: str, color_raw: str, color_norm: str) -> boo
     return bool(ln_short and (ln_short in cn_short or cn_short in ln_short))
 
 # ----------------------------------------------------------------------
-# info 表加载
-# ----------------------------------------------------------------------
-
-def _load_iphone17_info_df_for_shop2() -> pd.DataFrame:
-    try:
-        from django.conf import settings
-        p = getattr(settings, "EXTERNAL_IPHONE17_INFO_PATH", None)
-        if p:
-            path = str(p)
-        else:
-            raise AttributeError
-    except Exception:
-        path = os.getenv("IPHONE17_INFO_CSV") or str(Path(__file__).resolve().parents[2] / "data" / "iphone17_info.csv")
-
-    pth = Path(path)
-    if not pth.exists():
-        raise FileNotFoundError(f"未找到 iphone17_info：{pth}")
-
-    if re.search(r"\.(xlsx|xlsm|xls|ods)$", str(pth), re.I):
-        df = pd.read_excel(pth)
-    else:
-        df = pd.read_csv(pth, encoding="utf-8-sig")
-
-    need = {"part_number", "model_name", "capacity_gb", "color"}
-    missing = need - set(df.columns)
-    if missing:
-        raise ValueError(f"iphone17_info 缺少必要列：{missing}")
-
-    df = df.copy()
-    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
-    df = df.dropna(subset=["model_name", "capacity_gb", "part_number", "color"])
-
-    cols = ["part_number", "model_name", "capacity_gb", "color"]
-    return df[cols]
-
-# ----------------------------------------------------------------------
 # Step 7: 清洗主函数
 # ----------------------------------------------------------------------
 
@@ -595,21 +560,8 @@ def clean_shop12(df: pd.DataFrame, debug: bool = False) -> pd.DataFrame:
             raise ValueError(f"shop12 清洗器缺少必要列：{c}")
 
     # 载入 info 表并构建 (model_norm, cap)-> {color_norm: (pn, color_raw)}
-    info_df = _load_iphone17_info_df_for_shop2()
-    df2 = info_df.copy()
-    df2["model_name_norm"] = df2["model_name"].map(_normalize_model_generic)
-    df2["capacity_gb"] = pd.to_numeric(df2["capacity_gb"], errors="coerce").astype("Int64")
-    df2["color_norm"] = df2["color"].map(lambda x: _norm(str(x)))
-
-    cmap_all: Dict[Tuple[str, int], Dict[str, Tuple[str, str]]] = {}
-    for _, r in df2.iterrows():
-        m = r["model_name_norm"]
-        cap = r["capacity_gb"]
-        if not m or pd.isna(cap):
-            continue
-        key = (m, int(cap))
-        cmap_all.setdefault(key, {})
-        cmap_all[key][_norm(str(r["color"]))] = (str(r["part_number"]), str(r["color"]))
+    info_df = _load_iphone17_info_df_from_db()
+    cmap_all = _build_color_map(info_df)
 
     rows: List[dict] = []
 
