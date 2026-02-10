@@ -1,58 +1,81 @@
 from __future__ import annotations
-from typing import Protocol, Dict, Callable, Optional,List
-from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db, _build_color_map
+
+"""
+shop15 清洗器 — 買取当番
+
+  原始文本（price 列）
+    │
+    ├─ _extract_base_price_at_start()             ← Step 2: 提取基础价
+    │
+    ├─ _extract_price_parts_shop15_dispatch()      ← Step 9: 模式调度
+    │   │
+    │   ├─ regex 路径:
+    │   │   └─ _extract_price_parts_shop15_regex()       ← Step 6: 正则提取 specs
+    │   │
+    │   └─ llm 路径:
+    │       ├─ _parse_shop15_price_via_langextract()     ← Step 7: LLM 核心提取
+    │       └─ _coerce_specs / _augment_multi_label      ← Step 8: 纠错/增强
+    │
+    ├─ _build_color_prices_from_specs_shop15()     ← Step 10: specs → 最终价格
+    │
+    ├─ _label_matches_color()                      ← Step 4: 标签→颜色匹配
+    │
+    └─ clean_shop15()                              ← Step 11: 主函数，生成输出行
+"""
+
+import logging
 import os
-from functools import lru_cache
-from pathlib import Path
 import re
-import pandas as pd
-from typing import Optional, Tuple
-from urllib.parse import urlparse
-from typing import Dict, Optional, List, Iterable, Union
-import os, re, json, pathlib
-from datetime import datetime
-import pytz
 import time
 from functools import lru_cache
+from typing import Dict, List, Optional, Tuple
+
+import pandas as pd
+from ...external_ingest.helpers import to_int_yen, parse_dt_aware
+from ..cleaner_tools import (
+    _parse_capacity_gb,
+    _normalize_model_generic,
+    _load_iphone17_info_df_from_db,
+    _build_color_map,
+)
+
+# 初始化 logger
+logger = logging.getLogger(__name__)
+
+# DEBUG 功能现在由 logging 级别控制（在 settings.py 的 LOGGING 配置中）
+# 控制台显示 INFO 级别（简洁），文件记录 DEBUG 级别（详细）
+
+# ----------------------------------------------------------------------
+# 配置
+# ----------------------------------------------------------------------
+
 try:
     import langextract as lx
     _LANGEXTRACT_OK = True
 except Exception:
     lx = None
     _LANGEXTRACT_OK = False
+
 SHOP15_OLLAMA_URL_DEFAULT = os.getenv("SHOP15_OLLAMA_URL", "http://localhost:11434")
 SHOP15_OLLAMA_MODEL_DEFAULT = os.getenv("SHOP15_OLLAMA_MODEL", "gemma3:1b")
-# 基准价只从开头抓（避免把“ブルー229,000円”的229,000误当 base）
-_BASE_YEN_AT_START_RE = re.compile(r"^\s*(?:￥|¥|\u00a5)?\s*(\d[\d,]*)\s*円?")
 
-FAMILY_SYNONYMS = {
-    "blue": ["ブルー"],
-    "black": ["ブラック", "黒"],
-    "white": ["ホワイト", "白"],
-    "green": ["グリーン", "緑"],
-    "red": ["レッド", "赤"],
-    "pink": ["ピンク"],
-    "purple": ["パープル", "紫"],
-    "yellow": ["イエロー", "黄"],
-    "gold": ["ゴールド"],
-    "silver": ["シルバー"],
-    "gray": ["グレー", "グレイ", "灰"],
-    "natural": ["ナチュラル"],
-}
+SHOP15_EXTRACTION_MODE = "auto"  # "regex" | "llm" | "auto"
 
-FIRST_YEN_RE = re.compile(r"(?:￥|\¥)?\s*(\d[\d,]*)\s*円?")
+MODEL_COL = "data2"
+PRICE_COL = "price"
 
-BASE_YEN_AT_START_RE_shop15 = re.compile(r"^\s*(?:￥|\¥)?\s*(\d[\d,]*)\s*円?")
+# ----------------------------------------------------------------------
+# 辅助工具函数
+# ----------------------------------------------------------------------
 
-COLOR_DELTA_IN_PRICE_RE_shop15 = re.compile(
-    r"""(?P<label>[^\d円¥]+?)\s*             # 标签或标签列表（允许包含 、/／・ 等）
-        (?P<sep>[：:\-])? \s*                # 分隔符（可无）
-        (?P<sign>[+\-−－])? \s*              # 正负号（可无）
-        (?P<amount>\d[\d,]*) \s* (?:円)?     # 金额（可跟円）
-    """,
-    re.UNICODE | re.VERBOSE,
-)
+def _truncate_for_log(s: str, n: int = 200) -> str:
+    """截断长字符串，保留前 n 个字符，用于日志显示"""
+    if s is None:
+        return ""
+    t = str(s)
+    if len(t) <= n:
+        return t
+    return t[:n] + f"... (truncated, total_length={len(t)})"
 
 def _parse_signed_int_yen(s: object) -> Optional[int]:
     """
@@ -82,6 +105,13 @@ def _parse_signed_int_yen(s: object) -> Optional[int]:
     except Exception:
         return None
 
+# ----------------------------------------------------------------------
+# Step 2: 基础价提取
+# ----------------------------------------------------------------------
+
+# 基准价只从开头抓（避免把"ブルー229,000円"的229,000误当 base）
+_BASE_YEN_AT_START_RE = re.compile(r"^\s*(?:￥|¥|\u00a5)?\s*(\d[\d,]*)\s*円?")
+
 def _extract_base_price_at_start(text: object) -> Optional[int]:
     if text is None:
         return None
@@ -94,6 +124,13 @@ def _extract_base_price_at_start(text: object) -> Optional[int]:
     except Exception:
         return None
 
+# ----------------------------------------------------------------------
+# Step 3: 标签归一化 & 拆分
+# ----------------------------------------------------------------------
+
+def _norm(s: str) -> str:
+    return (s or "").strip()
+
 def _clean_label_shop15(label: str) -> str:
     if not label:
         return ""
@@ -103,27 +140,150 @@ def _clean_label_shop15(label: str) -> str:
     s = s.strip(" 　:：-‐‑–—/／、,，・")
     return s
 
-def _iter_extractions_in_order(result) -> List:
+_LABEL_LIST_SPLIT_RE_shop15 = re.compile(r"\s*(?:、|,|，|／|/|・|&|＆)\s*")
+
+def _split_color_labels_shop15(label_blob: str) -> List[str]:
+    if not label_blob:
+        return []
+    s = str(label_blob).replace("\u3000", " ")
+    s = re.sub(r"\s+", " ", s).strip()
+    s = s.strip(" 　:：-‐‑–—/／、,，・")
+    parts = [p.strip() for p in _LABEL_LIST_SPLIT_RE_shop15.split(s) if p.strip()]
+    return parts or [s]
+
+# ----------------------------------------------------------------------
+# Step 4: 颜色家族同义词 & 匹配
+# ----------------------------------------------------------------------
+
+FAMILY_SYNONYMS = {
+    "blue": ["ブルー"],
+    "black": ["ブラック", "黒"],
+    "white": ["ホワイト", "白"],
+    "green": ["グリーン", "緑"],
+    "red": ["レッド", "赤"],
+    "pink": ["ピンク"],
+    "purple": ["パープル", "紫"],
+    "yellow": ["イエロー", "黄"],
+    "gold": ["ゴールド"],
+    "silver": ["シルバー"],
+    "gray": ["グレー", "グレイ", "灰"],
+    "natural": ["ナチュラル"],
+}
+
+def _label_matches_color(label_raw: str, color_raw: str, color_norm: str) -> bool:
     """
-    LangExtract 输出顺序在不同 provider 下可能不严格保证，这里尽量按文本位置排序。
+    宽松匹配：精确(归一) | 原文子串 | 英文族名→日文家族词
     """
-    exts = list(getattr(result, "extractions", []) or [])
+    label_norm = _norm(label_raw)
+    if label_norm == color_norm:
+        return True
+    if label_raw and str(label_raw) in str(color_raw):
+        return True
+    key = label_raw.strip().lower()
+    if key in FAMILY_SYNONYMS:
+        for jp in FAMILY_SYNONYMS[key]:
+            if jp in str(color_raw):
+                return True
+    # 也尝试 label_norm 的英文键
+    if label_norm in FAMILY_SYNONYMS:
+        for jp in FAMILY_SYNONYMS[label_norm]:
+            if jp in str(color_raw):
+                return True
+    return False
 
-    def key(e):
-        ci = getattr(e, "char_interval", None)
-        sp = getattr(ci, "start_pos", None) if ci is not None else None
-        if sp is not None:
-            return (0, int(sp))
-        idx = getattr(e, "extraction_index", None)
-        if idx is not None:
-            return (1, int(idx))
-        return (2, 0)
+# ----------------------------------------------------------------------
+# Step 5: 正则模式定义
+# ----------------------------------------------------------------------
 
-    return sorted(exts, key=key)
+BASE_YEN_AT_START_RE_shop15 = re.compile(r"^\s*(?:￥|\¥)?\s*(\d[\d,]*)\s*円?")
 
-# -----------------------------
-# LLM 解析 prompt + few-shot
-# -----------------------------
+# 允许 label 里包含 "、/／・" 等，整体抓出来后再拆分
+COLOR_ENTRY_RE_shop15 = re.compile(
+    r"""(?P<label>[^\d円¥]+?)\s*             # 标签或标签列表（可含 、/／・）
+        (?P<sep>[：:\-])? \s*                # 可选分隔符
+        (?P<sign>[+\-−－])? \s*              # 可选正负号
+        (?P<amount>\d[\d,]*) \s* (?:円)?     # 金额
+    """,
+    re.UNICODE | re.VERBOSE,
+)
+
+# 颜色列表 + 差额 的 block，例如:
+# "オレンジ、ブルー-1000円", "シルバー、ブルー-3000円"
+MULTI_LABEL_DELTA_BLOCK_RE_shop15 = re.compile(
+    r"""
+    (?P<label_blob>[^\d円¥]+?)     # 一个或多个颜色标签（可包含 、／/・ 等）
+    \s*
+    (?P<sign>[+\-−－])            # + 或 -
+    \s*
+    (?P<amount>\d[\d,]*)          # 金额
+    \s*円?
+    """,
+    re.UNICODE | re.VERBOSE,
+)
+
+# ----------------------------------------------------------------------
+# Step 6: 正则提取函数
+# ----------------------------------------------------------------------
+
+def _extract_price_parts_shop15_regex(
+    price_text: str,
+) -> Tuple[Optional[int], List[Tuple[str, str, int]]]:
+    """
+    纯正则版：从 price_text 中提取 (base_price, specs)。
+    specs = [(label, kind, value)]  kind ∈ {"delta", "abs"}
+    """
+    if not price_text:
+        return None, []
+
+    s = str(price_text).replace("\u3000", " ")
+    base_price = _extract_base_price_at_start(s)
+
+    # 跳过开头的基础价部分
+    m0 = _BASE_YEN_AT_START_RE.search(s)
+    tail = s[m0.end():] if m0 else s
+
+    if not tail.strip():
+        return base_price, []
+
+    specs: List[Tuple[str, str, int]] = []
+
+    for m in COLOR_ENTRY_RE_shop15.finditer(tail):
+        label_blob = m.group("label") or ""
+        sep = m.group("sep")
+        sign = m.group("sign")
+        amount_str = m.group("amount")
+
+        amt = _parse_signed_int_yen(amount_str)
+        if amt is None:
+            continue
+        amt = abs(amt)
+
+        # 判断 delta vs abs
+        if sign:
+            negative = sign in ("-", "−", "－")
+            kind = "delta"
+            value = -amt if negative else amt
+        elif sep and sep in ("-", "−", "－"):
+            kind = "delta"
+            value = -amt
+        else:
+            # 无符号 → abs（如 "ブルー229,000円"）
+            kind = "abs"
+            value = amt
+
+        # 拆分 label blob（如 "オレンジ、ブルー"）
+        labels = _split_color_labels_shop15(label_blob)
+        for lab in labels:
+            lab_clean = _clean_label_shop15(lab)
+            if lab_clean:
+                specs.append((lab_clean, kind, value))
+
+    return base_price, specs
+
+# ----------------------------------------------------------------------
+# Step 7: LLM 配置 & 核心提取函数
+# ----------------------------------------------------------------------
+
 SHOP15_PRICE_PROMPT = (
     "You parse Japanese iPhone buyback 'price' strings.\n"
     "Extract:\n"
@@ -246,149 +406,24 @@ def _shop15_langextract_examples():
             ],
         ),
     ]
-def _extract_signed_amount_after_label_shop15(price_text: str, label: str) -> Optional[int]:
+
+def _iter_extractions_in_order(result) -> List:
     """
-    在原文中查找: <label> [可选:：] 空白? (+/-) 金额
-    如: 'シルバー　-3,000円' / 'ブルー:+2,000円'
-    返回 signed int（-3000 / +2000），找不到返回 None。
+    LangExtract 输出顺序在不同 provider 下可能不严格保证，这里尽量按文本位置排序。
     """
-    if not price_text or not label:
-        return None
-    s = str(price_text).replace("\u3000", " ")
-    lab = _clean_label_shop15(label)
-    if not lab:
-        return None
+    exts = list(getattr(result, "extractions", []) or [])
 
-    # 找到 label 出现位置（取第一个命中即可）
-    idx = s.find(lab)
-    if idx < 0:
-        return None
-    window = s[idx: idx + 40]  # 足够覆盖 "label  -3,000円"
+    def key(e):
+        ci = getattr(e, "char_interval", None)
+        sp = getattr(ci, "start_pos", None) if ci is not None else None
+        if sp is not None:
+            return (0, int(sp))
+        idx = getattr(e, "extraction_index", None)
+        if idx is not None:
+            return (1, int(idx))
+        return (2, 0)
 
-    m = re.match(
-        re.escape(lab) + r"\s*(?:[：:])?\s*([+\-−－])\s*(\d[\d,]*)",
-        window
-    )
-    if not m:
-        return None
-
-    sign = m.group(1)
-    amt = int(m.group(2).replace(",", ""))
-    if sign in ("-", "−", "－"):
-        amt = -amt
-    return amt
-
-def _coerce_specs_shop15(price_text: str, base_price: Optional[int], specs: List[Tuple[str, str, int]], debug: bool = False):
-    """
-    纠错策略（针对小模型不稳定输出）：
-      - kind=abs 且 value<0 => 强制改成 delta
-      - 若原文里 label 后出现 +/- 金额 => 强制 delta，并用原文的 signed 金额覆盖 value
-    """
-    fixed: List[Tuple[str, str, int]] = []
-    for (label, kind, value) in specs:
-        orig = (label, kind, value)
-        kind2, value2 = kind, value
-
-        # 规则1：abs 不应该是负数，直接改为 delta
-        if kind2 == "abs" and value2 < 0:
-            kind2 = "delta"
-
-        # 规则2：从原文补判（支持“シルバー  -3,000円”这种带空白的写法）
-        signed_ctx = _extract_signed_amount_after_label_shop15(price_text, label)
-        if signed_ctx is not None:
-            kind2 = "delta"
-            value2 = int(signed_ctx)
-
-        if _shop15_debug_enabled(debug) and (orig != (label, kind2, value2)):
-            print(f"[shop15][lx] coerce spec {orig} -> {(label, kind2, value2)}")
-
-        fixed.append((label, kind2, value2))
-    return fixed
-
-# 颜色列表 + 差额 的 block，例如:
-# "オレンジ、ブルー-1000円", "シルバー、ブルー-3000円"
-MULTI_LABEL_DELTA_BLOCK_RE_shop15 = re.compile(
-    r"""
-    (?P<label_blob>[^\d円¥]+?)     # 一个或多个颜色标签（可包含 、／/・ 等）
-    \s*
-    (?P<sign>[+\-−－])            # + 或 -
-    \s*
-    (?P<amount>\d[\d,]*)          # 金额
-    \s*円?
-    """,
-    re.UNICODE | re.VERBOSE,
-)
-
-def _augment_multi_label_block_specs_shop15(
-    price_text: str,
-    specs: List[Tuple[str, str, int]],
-    debug: bool = False,
-) -> List[Tuple[str, str, int]]:
-    """
-    处理形如: 'オレンジ、ブルー-1000円', 'シルバー、ブルー-3000円' 这种“多个颜色共享一个差额”的表达。
-
-    规则：
-      - 在 price_text 里用 MULTI_LABEL_DELTA_BLOCK_RE_shop15 找到所有 block
-      - label_blob 用 _split_color_labels_shop15 拆成 ['オレンジ','ブルー'] 这类列表
-      - 对每个 label:
-          * 强制 kind='delta'
-          * value = sign (+/-) * amount
-          * 若 specs 中已有该 label 的条目 => 覆盖为这个 delta（纠正 LLM）
-          * 若 specs 中没有该 label => 新增一条 delta
-      - 多个 block 顺序执行，后面的覆盖前面的（和你 _build_color_prices_from_specs_shop15 的逻辑一致）
-    """
-    if not price_text:
-        return specs
-
-    s = str(price_text)
-    new_specs: List[Tuple[str, str, int]] = list(specs)
-
-    for m in MULTI_LABEL_DELTA_BLOCK_RE_shop15.finditer(s):
-        label_blob = m.group("label_blob") or ""
-        sign = m.group("sign")
-        amount_str = m.group("amount")
-
-        # 金额解析失败直接跳过
-        try:
-            amt = int(amount_str.replace(",", ""))
-        except Exception:
-            continue
-
-        # 根据符号决定正负
-        value = -amt if sign in ("-", "−", "－") else amt
-
-        labels = _split_color_labels_shop15(label_blob)
-
-        for lab in labels:
-            lab_clean = _clean_label_shop15(lab)
-            if not lab_clean:
-                continue
-
-            found = False
-            for idx, (lbl_old, kind_old, val_old) in enumerate(new_specs):
-                if lbl_old == lab_clean:
-                    old = new_specs[idx]
-                    new_specs[idx] = (lab_clean, "delta", int(value))
-                    found = True
-                    if _shop15_debug_enabled(debug) and old != new_specs[idx]:
-                        print(
-                            f"[shop15][lx] multi-label block override "
-                            f"{old} -> {new_specs[idx]} from block {m.group(0)!r}"
-                        )
-                    break
-
-            if not found:
-                new_specs.append((lab_clean, "delta", int(value)))
-                if _shop15_debug_enabled(debug):
-                    print(
-                        f"[shop15][lx] multi-label block add "
-                        f"{new_specs[-1]} from block {m.group(0)!r}"
-                    )
-
-    if _shop15_debug_enabled(debug):
-        print(f"[shop15][lx] specs after multi-label augment = {new_specs}")
-
-    return new_specs
+    return sorted(exts, key=key)
 
 @lru_cache(maxsize=4096)
 def _parse_shop15_price_via_langextract_cached(
@@ -455,7 +490,7 @@ def _parse_shop15_price_via_langextract_cached(
             yen_raw = attrs.get("yen")
             v = _parse_signed_int_yen(yen_raw)
             if v is None:
-                # 最后兜底：如果没给 yen，就从 extraction_text 尝试（通常不会）
+                # 最后兜底：如果没给 yen，就从 extraction_text 尝试
                 v = _parse_signed_int_yen(txt)
 
             if v is None:
@@ -472,45 +507,220 @@ def _parse_shop15_price_via_langextract_cached(
 
     return base_price, specs
 
-def _parse_shop15_price_via_langextract(
-    price_text: object,
-    model_id: str = SHOP15_OLLAMA_MODEL_DEFAULT,
-    model_url: str = SHOP15_OLLAMA_URL_DEFAULT,
-    debug: bool = False,
-) -> Tuple[Optional[int], List[Tuple[str, str, int]]]:
-    if price_text is None:
-        return None, []
-    s = str(price_text)
+# ----------------------------------------------------------------------
+# Step 8: LLM 纠错 & 增强（仅 LLM 路径使用）
+# ----------------------------------------------------------------------
 
-    base_price, specs = (None, [])
+def _extract_signed_amount_after_label_shop15(price_text: str, label: str) -> Optional[int]:
+    """
+    在原文中查找: <label> [可选:：] 空白? (+/-) 金额
+    如: 'シルバー　-3,000円' / 'ブルー:+2,000円'
+    返回 signed int（-3000 / +2000），找不到返回 None。
+    """
+    if not price_text or not label:
+        return None
+    s = str(price_text).replace("\u3000", " ")
+    lab = _clean_label_shop15(label)
+    if not lab:
+        return None
+
+    # 找到 label 出现位置（取第一个命中即可）
+    idx = s.find(lab)
+    if idx < 0:
+        return None
+    window = s[idx: idx + 40]  # 足够覆盖 "label  -3,000円"
+
+    m = re.match(
+        re.escape(lab) + r"\s*(?:[：:])?\s*([+\-−－])\s*(\d[\d,]*)",
+        window
+    )
+    if not m:
+        return None
+
+    sign = m.group(1)
+    amt = int(m.group(2).replace(",", ""))
+    if sign in ("-", "−", "－"):
+        amt = -amt
+    return amt
+
+def _coerce_specs_shop15(
+    price_text: str, base_price: Optional[int],
+    specs: List[Tuple[str, str, int]],
+) -> List[Tuple[str, str, int]]:
+    """
+    纠错策略（针对小模型不稳定输出）：
+      - kind=abs 且 value<0 => 强制改成 delta
+      - 若原文里 label 后出现 +/- 金额 => 强制 delta，并用原文的 signed 金额覆盖 value
+    """
+    fixed: List[Tuple[str, str, int]] = []
+    for (label, kind, value) in specs:
+        kind2, value2 = kind, value
+
+        # 规则1：abs 不应该是负数，直接改为 delta
+        if kind2 == "abs" and value2 < 0:
+            kind2 = "delta"
+
+        # 规则2：从原文补判（支持"シルバー  -3,000円"这种带空白的写法）
+        signed_ctx = _extract_signed_amount_after_label_shop15(price_text, label)
+        if signed_ctx is not None:
+            kind2 = "delta"
+            value2 = int(signed_ctx)
+
+        fixed.append((label, kind2, value2))
+    return fixed
+
+def _augment_multi_label_block_specs_shop15(
+    price_text: str,
+    specs: List[Tuple[str, str, int]],
+) -> List[Tuple[str, str, int]]:
+    """
+    处理形如: 'オレンジ、ブルー-1000円', 'シルバー、ブルー-3000円' 这种"多个颜色共享一个差额"的表达。
+
+    规则：
+      - 在 price_text 里用 MULTI_LABEL_DELTA_BLOCK_RE_shop15 找到所有 block
+      - label_blob 用 _split_color_labels_shop15 拆成 ['オレンジ','ブルー'] 这类列表
+      - 对每个 label:
+          * 强制 kind='delta'
+          * value = sign (+/-) * amount
+          * 若 specs 中已有该 label 的条目 => 覆盖为这个 delta（纠正 LLM）
+          * 若 specs 中没有该 label => 新增一条 delta
+    """
+    if not price_text:
+        return specs
+
+    s = str(price_text)
+    new_specs: List[Tuple[str, str, int]] = list(specs)
+
+    for m in MULTI_LABEL_DELTA_BLOCK_RE_shop15.finditer(s):
+        label_blob = m.group("label_blob") or ""
+        sign = m.group("sign")
+        amount_str = m.group("amount")
+
+        # 金额解析失败直接跳过
+        try:
+            amt = int(amount_str.replace(",", ""))
+        except Exception:
+            continue
+
+        # 根据符号决定正负
+        value = -amt if sign in ("-", "−", "－") else amt
+
+        labels = _split_color_labels_shop15(label_blob)
+
+        for lab in labels:
+            lab_clean = _clean_label_shop15(lab)
+            if not lab_clean:
+                continue
+
+            found = False
+            for idx, (lbl_old, kind_old, val_old) in enumerate(new_specs):
+                if lbl_old == lab_clean:
+                    new_specs[idx] = (lab_clean, "delta", int(value))
+                    found = True
+                    break
+
+            if not found:
+                new_specs.append((lab_clean, "delta", int(value)))
+
+    return new_specs
+
+def _extract_price_parts_shop15_llm_with_guardrails(
+    price_text: str, idx: object = None,
+) -> Tuple[Optional[int], List[Tuple[str, str, int]]]:
+    """
+    LLM 提取 + 纠错（coerce + augment）。仅 LLM 路径使用。
+    返回 (base_price, specs)。
+    """
+    base_price, specs = None, []
+    llm_ok = False
+
     try:
-        base_price, specs = _parse_shop15_price_via_langextract_cached(s, model_id, model_url)
+        base_price, specs = _parse_shop15_price_via_langextract_cached(
+            str(price_text),
+            SHOP15_OLLAMA_MODEL_DEFAULT,
+            SHOP15_OLLAMA_URL_DEFAULT,
+        )
+        llm_ok = True
     except Exception as e:
-        if _shop15_debug_enabled(debug):
-            print(f"[shop15][lx] ERROR: {e!r} -> fallback base-only")
+        logger.warning(
+            "LangExtract extraction failed",
+            extra={
+                "event_type": "llm_extraction_error",
+                "shop_name": "買取当番",
+                "cleaner_name": "shop15",
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "model_id": SHOP15_OLLAMA_MODEL_DEFAULT,
+                "model_url": SHOP15_OLLAMA_URL_DEFAULT,
+                "row_index": idx,
+                "text_length": len(price_text),
+                "text_preview": _truncate_for_log(price_text, 100),
+            }
+        )
 
     # 兜底：LLM 没给 base，就自己从开头 regex 抓
     if base_price is None:
-        base_price = _extract_base_price_at_start(s)
+        base_price = _extract_base_price_at_start(price_text)
 
-    # 第一步：对单 label 的错标做纠偏（abs 负数 -> delta, 从原文补 +/-）
-    specs = _coerce_specs_shop15(s, base_price, specs, debug=debug)
+    # 纠错1：对单 label 的错标做纠偏（abs 负数 -> delta, 从原文补 +/-）
+    specs = _coerce_specs_shop15(price_text, base_price, specs)
 
-    # 第二步：对 "シルバー、ブルー-3000円" / "オレンジ、ブルー-1000円" 这类多颜色 block 做增强/覆盖
-    specs = _augment_multi_label_block_specs_shop15(s, specs, debug=debug)
+    # 纠错2：对 "シルバー、ブルー-3000円" 这类多颜色 block 做增强/覆盖
+    specs = _augment_multi_label_block_specs_shop15(price_text, specs)
 
-    if _shop15_debug_enabled(debug):
-        # print(f"[shop15][lx]    price_raw  = {s!r}")
-        # print(f"[shop15][lx]    base_price = {base_price}")
-        print(f"[shop15][lx]    specs      = {specs}")
+    # LLM 完全失败且无 specs 时，回退到正则
+    if (not llm_ok) and (not specs):
+        _, specs = _extract_price_parts_shop15_regex(price_text)
 
     return base_price, specs
+
+# ----------------------------------------------------------------------
+# Step 9: 提取模式调度
+# ----------------------------------------------------------------------
+
+def _extract_price_parts_shop15_dispatch(
+    price_text: str, idx: object = None,
+) -> Tuple[Optional[int], List[Tuple[str, str, int]], str]:
+    """
+    根据 SHOP15_EXTRACTION_MODE 决定提取方式：
+      - "regex": 只用正则
+      - "llm":   只用 LLM + 纠错
+      - "auto":  正则优先，正则无 specs 时 LLM 兜底
+
+    返回 (base_price, specs, extraction_method)
+    """
+    mode = SHOP15_EXTRACTION_MODE
+
+    if mode == "regex":
+        bp, specs = _extract_price_parts_shop15_regex(price_text)
+        return bp, specs, "regex"
+
+    if mode == "llm":
+        bp, specs = _extract_price_parts_shop15_llm_with_guardrails(
+            price_text, idx=idx,
+        )
+        return bp, specs, "llm"
+
+    # ---- auto: 正则优先，正则无 specs 时 LLM 兜底 ----
+    bp_re, specs_re = _extract_price_parts_shop15_regex(price_text)
+    if specs_re:
+        return bp_re, specs_re, "regex"
+
+    bp_llm, specs_llm = _extract_price_parts_shop15_llm_with_guardrails(
+        price_text, idx=idx,
+    )
+    # LLM 的 base_price 优先，其次正则的
+    bp_final = bp_llm if bp_llm is not None else bp_re
+    return bp_final, specs_llm, "llm"
+
+# ----------------------------------------------------------------------
+# Step 10: specs → 最终颜色价格
+# ----------------------------------------------------------------------
 
 def _build_color_prices_from_specs_shop15(
     color_map: Dict[str, Tuple[str, str]],
     base_price: Optional[int],
     specs: List[Tuple[str, str, int]],
-    debug: bool = False,
 ) -> Tuple[Dict[str, int], List[Tuple[str, str, str, int]], List[Tuple[str, str, int]]]:
     """
     specs: [(label, kind, value)]
@@ -519,6 +729,8 @@ def _build_color_prices_from_specs_shop15(
     未命中颜色：
       - 有 base => base
       - 无 base => 不产出该颜色价格（避免误写）
+
+    返回: (color_prices, hit_log, unmatched_specs)
     """
     hit_log: List[Tuple[str, str, str, int]] = []
     unmatched = list(specs)
@@ -542,84 +754,48 @@ def _build_color_prices_from_specs_shop15(
                     color_prices[col_norm] = int(base_price + int(value))
 
         if matched_any:
-            for idx, t in enumerate(unmatched):
+            for i, t in enumerate(unmatched):
                 if t == (label, kind, value):
-                    unmatched.pop(idx)
+                    unmatched.pop(i)
                     break
-
-    if _shop15_debug_enabled(debug):
-        print(f"[shop15][price] hit_log    = {hit_log}")
-        if unmatched:
-            print(f"[shop15][price] unmatched_specs={unmatched}")
 
     return color_prices, hit_log, unmatched
 
-# 建议加在模块里（任意位置，只要在 clean_shop15 调用前即可）
-def _shop15_debug_enabled(debug: bool = False) -> bool:
-    if debug:
-        return True
-    v = os.getenv("SHOP15_DEBUG", "")
-    return str(v).strip().lower() in {"1", "true", "yes", "y", "on"}
-
-def _norm(s: str) -> str:
-    return (s or "").strip()
-
-def _label_matches_color(label_raw: str, color_raw: str, color_norm: str) -> bool:
-    """
-    宽松匹配一个 'label_raw' 是否命中某个颜色（color_raw / color_norm）。
-    优先：
-      - 归一化后完全相等
-      - label_raw 子串包含于 color_raw
-      - 英文族名（如 Blue）映射到日文家族词，并判断是否是 color_raw 的子串
-    """
-    label_norm = _norm(label_raw)
-    if label_norm == color_norm:
-        return True
-    if label_raw and str(label_raw) in str(color_raw):
-        return True
-    key = label_raw.strip().lower()
-    if key in FAMILY_SYNONYMS:
-        for jp in FAMILY_SYNONYMS[key]:
-            if jp in str(color_raw):
-                return True
-    # 也尝试 label_norm 的英文键
-    if label_norm in FAMILY_SYNONYMS:
-        for jp in FAMILY_SYNONYMS[label_norm]:
-            if jp in str(color_raw):
-                return True
-    return False
-
-FIRST_YEN_RE_shop15 = re.compile(r"(\d[\d,]*)\s*円")  # 抓取 price 中第一个 “N円”（作为基准价）
-
-# 允许 label 里包含 "、/／・" 等，整体抓出来后再拆分
-COLOR_ENTRY_RE_shop15 = re.compile(
-    r"""(?P<label>[^\d円¥]+?)\s*             # 标签或标签列表（可含 、/／・）
-        (?P<sep>[：:\-])? \s*                # 可选分隔符
-        (?P<sign>[+\-−－])? \s*              # 可选正负号
-        (?P<amount>\d[\d,]*) \s* (?:円)?     # 金额
-    """,
-    re.UNICODE | re.VERBOSE,
-)
-
-_LABEL_LIST_SPLIT_RE_shop15 = re.compile(r"\s*(?:、|,|，|／|/|・|&|＆)\s*")
-
-def _split_color_labels_shop15(label_blob: str) -> List[str]:
-    if not label_blob:
-        return []
-    s = str(label_blob).replace("\u3000", " ")
-    s = re.sub(r"\s+", " ", s).strip()
-    s = s.strip(" 　:：-‐‑–—/／、,，・")
-    parts = [p.strip() for p in _LABEL_LIST_SPLIT_RE_shop15.split(s) if p.strip()]
-    return parts or [s]
+# ----------------------------------------------------------------------
+# Step 11: 清洗主函数
+# ----------------------------------------------------------------------
 
 def clean_shop15(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
-    debug = _shop15_debug_enabled(debug)
+    start_time = time.time()
+    _log_seq = 0  # 日志序号：同一次 clean_shop15 调用内单调递增，用于 ELK 排序
 
-    now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-    print(f"shop15:買取当番---------->进入清洗器时间: {now}")
+    # 定义清洗器级别的上下文信息
+    CLEANER_NAME = "shop15"
+    SHOP_NAME = "買取当番"
 
-    for c in ["price", "data2", "time-scraped"]:
+    logger.info(
+        "Starting shop15 cleaner",
+        extra={
+            "event_type": "cleaner_start",
+            "shop_name": SHOP_NAME,
+            "cleaner_name": CLEANER_NAME,
+            "input_rows": len(df),
+            "start_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+        }
+    )
+
+    for c in [PRICE_COL, MODEL_COL, "time-scraped"]:
         if c not in df.columns:
+            logger.error(
+                f"Missing required column: {c}",
+                extra={
+                    "event_type": "validation_error",
+                    "shop_name": SHOP_NAME,
+                    "cleaner_name": CLEANER_NAME,
+                    "missing_column": c,
+                    "available_columns": list(df.columns),
+                }
+            )
             raise ValueError(f"shop15 清洗器缺少必要列：{c}")
 
     info_df = _load_iphone17_info_df_from_db()
@@ -628,83 +804,267 @@ def clean_shop15(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
     rows: List[dict] = []
 
     for i, row in df.iterrows():
-        print("----------------------------------------------------------")
-        model_text = str(row.get("data2") or "").strip()
+        current_row_records: List[dict] = []
+        model_text = str(row.get(MODEL_COL) or "").strip()
         if not model_text:
             continue
 
         model_norm = _normalize_model_generic(model_text)
         cap_gb = _parse_capacity_gb(model_text)
         if not model_norm or cap_gb is None:
-            if debug:
-                print(f"[shop15][row {i}] skip: model/cap parse failed | data2={model_text!r}")
             continue
+        cap_gb = int(cap_gb)
 
-        key = (model_norm, int(cap_gb))
+        key = (model_norm, cap_gb)
         color_map = cmap_all.get(key)
         if not color_map:
-            if debug:
-                print(f"[shop15][row {i}] skip: no color_map for key={key} | data2={model_text!r}")
             continue
 
-        price_text = row.get("price")
-        if debug:
-            print(f"[shop15][row {i}] data2      = {model_text!r}")
-            # print(f"[shop15][row {i}] parsed -> model_norm={model_norm!r}, cap_gb={int(cap_gb)}")
-            print(f"[shop15][row {i}] price_raw  = {str(price_text)!r}")
-            # print(f"[shop15][row {i}] known_colors_in_info={[cr for (_, cr) in color_map.values()]}")
+        price_text = row.get(PRICE_COL)
+        price_text_s = "" if price_text is None else str(price_text)
 
-        # 关键：用 LangExtract + Ollama 解析 price
-        base_price, specs = _parse_shop15_price_via_langextract(
-            price_text,
-            model_id=SHOP15_OLLAMA_MODEL_DEFAULT,
-            model_url=SHOP15_OLLAMA_URL_DEFAULT,
-            debug=debug,
+        # 根据 SHOP15_EXTRACTION_MODE 提取价格信息
+        base_price, specs, extraction_method = _extract_price_parts_shop15_dispatch(
+            price_text_s, idx=i,
         )
 
-        # 应用到 “信息表里存在的所有颜色”
+        # DEBUG: 记录提取结果
+        available_colors_list = [
+            {"color_norm": cn, "part_number": pn, "color_raw": cr}
+            for cn, (pn, cr) in color_map.items()
+        ]
+
+        _log_seq += 1
+        logger.debug(
+            "Extraction result",
+            extra={
+                "event_type": "extraction_result",
+                "log_seq": _log_seq,
+                "shop_name": SHOP_NAME,
+                "cleaner_name": CLEANER_NAME,
+                "row_index": int(i),
+                "model_text": model_text,
+                "model_norm": model_norm,
+                "capacity_gb": cap_gb,
+                "base_price": base_price,
+                "price_text_raw": _truncate_for_log(price_text_s, 200),
+                "price_text_raw_full": price_text_s,
+                "extraction_method": extraction_method,
+                "specs": [
+                    {"label": label, "kind": kind, "value": value}
+                    for label, kind, value in specs
+                ],
+                "specs_count": len(specs),
+                "available_colors": available_colors_list,
+                "colors_in_catalog": len(color_map),
+            }
+        )
+
+        # 应用 specs 到颜色映射
         color_prices, hit_log, unmatched_specs = _build_color_prices_from_specs_shop15(
             color_map=color_map,
             base_price=base_price,
             specs=specs,
-            debug=debug,
         )
 
-        rec_at = parse_dt_aware(row.get("time-scraped"))
-
-        # 产出行：未命中颜色 => base（若 base 存在）；否则跳过
-        for col_norm, (pn, col_raw) in color_map.items():
-            if col_norm not in color_prices:
-                continue
-            rows.append(
-                {
-                    "part_number": str(pn),
-                    "shop_name": "買取当番",
-                    "price_new": int(color_prices[col_norm]),
-                    "recorded_at": rec_at,
+        # DEBUG: label 匹配日志
+        for (label, col_raw_hit, kind, value) in hit_log:
+            _log_seq += 1
+            logger.debug(
+                f"Label matched: {label} -> {col_raw_hit}",
+                extra={
+                    "event_type": "label_matching",
+                    "log_seq": _log_seq,
+                    "shop_name": SHOP_NAME,
+                    "cleaner_name": CLEANER_NAME,
+                    "row_index": int(i),
+                    "model_norm": model_norm,
+                    "capacity_gb": cap_gb,
+                    "base_price": base_price,
+                    "label": label,
+                    "color_raw_hit": col_raw_hit,
+                    "kind": kind,
+                    "value": value,
+                    "price_text_raw_full": price_text_s,
                 }
             )
 
-        if debug:
-            preview = []
-            for col_norm, (pn, col_raw) in color_map.items():
-                if col_norm in color_prices:
-                    preview.append((col_raw, pn, color_prices[col_norm]))
-            print(f"[shop15][row {i}] final      = {preview}")
+        # WARNING: 未匹配到任何颜色的 specs
+        for (label, kind, value) in unmatched_specs:
+            _log_seq += 1
+            logger.warning(
+                f"Label not matched: {label}",
+                extra={
+                    "event_type": "label_no_match",
+                    "log_seq": _log_seq,
+                    "shop_name": SHOP_NAME,
+                    "cleaner_name": CLEANER_NAME,
+                    "row_index": int(i),
+                    "model_norm": model_norm,
+                    "capacity_gb": cap_gb,
+                    "label": label,
+                    "kind": kind,
+                    "value": value,
+                    "available_colors": [cn for cn in color_map.keys()],
+                    "price_text_raw_full": price_text_s,
+                }
+            )
+
+        rec_at = parse_dt_aware(row.get("time-scraped"))
+
+        # 生成输出记录
+        output_records = []
+        for col_norm, (pn, col_raw) in color_map.items():
+            if col_norm not in color_prices:
+                continue
+
+            final_price = int(color_prices[col_norm])
+            delta = final_price - base_price if base_price is not None else 0
+            delta_source = "spec_matched" if any(
+                _label_matches_color(lab, col_raw, col_norm) for (lab, _, _) in specs
+            ) else "default_base"
+
+            # DEBUG: 每条输出记录
+            _log_seq += 1
+            logger.debug(
+                f"Output record: {pn}",
+                extra={
+                    "event_type": "output_record",
+                    "log_seq": _log_seq,
+                    "shop_name": SHOP_NAME,
+                    "cleaner_name": CLEANER_NAME,
+                    "row_index": int(i),
+                    "model_text": model_text,
+                    "model_norm": model_norm,
+                    "capacity_gb": cap_gb,
+                    "part_number": pn,
+                    "color_norm": col_norm,
+                    "color_raw": col_raw,
+                    "base_price": base_price,
+                    "delta": delta,
+                    "final_price": final_price,
+                    "delta_source": delta_source,
+                    "recorded_at": str(rec_at) if rec_at else None,
+                    "price_text_raw_full": price_text_s,
+                }
+            )
+
+            output_records.append({
+                "part_number": pn,
+                "color_norm": col_norm,
+                "delta": delta,
+                "final_price": final_price,
+                "delta_source": delta_source,
+            })
+
+            rows.append({
+                "part_number": str(pn),
+                "shop_name": SHOP_NAME,
+                "price_new": final_price,
+                "recorded_at": rec_at,
+            })
+
+            current_row_records.append({
+                "part_number": pn,
+                "color_norm": col_norm,
+                "delta": delta,
+                "final_price": final_price,
+                "recorded_at": rec_at,
+                "delta_source": delta_source,
+            })
+
+        # DEBUG: 行级详细汇总
+        _log_seq += 1
+        logger.debug(
+            "Row summary",
+            extra={
+                "event_type": "row_processing_summary",
+                "log_seq": _log_seq,
+                "shop_name": SHOP_NAME,
+                "cleaner_name": CLEANER_NAME,
+                "row_index": int(i),
+                "model_text": model_text,
+                "model_norm": model_norm,
+                "capacity_gb": cap_gb,
+                "base_price": base_price,
+                "price_text_raw_full": price_text_s,
+                "current_row_records": [
+                    {"pn": r["part_number"], "color": r["color_norm"], "delta": r["delta"], "final_price": r["final_price"], "src": r["delta_source"]}
+                    for r in current_row_records
+                ],
+            }
+        )
+
+        # INFO: 行级概览（简洁）
+        specs_matched = len(hit_log)
+        all_deltas = [cp - base_price for cp in color_prices.values() if base_price is not None]
+
+        _log_seq += 1
+        logger.info(
+            f"Row {i:<3d} | {model_text:<28s} | specs: {len(specs):<2d} | matched: {specs_matched:<2d} | records: {len(output_records):<2d} | method: {extraction_method}",
+            extra={
+                "event_type": "row_processing_summary",
+                "log_seq": _log_seq,
+                "shop_name": SHOP_NAME,
+                "cleaner_name": CLEANER_NAME,
+                "row_index": int(i),
+                "model_text": model_text,
+                "model_norm": model_norm,
+                "capacity_gb": cap_gb,
+                "base_price": base_price,
+                "price_text_raw_preview": _truncate_for_log(price_text_s, 100),
+                "extraction_method": extraction_method,
+                "specs_count": len(specs),
+                "specs_matched_count": specs_matched,
+                "unmatched_count": len(unmatched_specs),
+                "colors_in_catalog": len(color_map),
+                "output_records_count": len(output_records),
+                "has_discounted_colors": any(d != 0 for d in all_deltas),
+                "min_delta": min(all_deltas) if all_deltas else 0,
+                "max_delta": max(all_deltas) if all_deltas else 0,
+            }
+        )
 
     out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
     if out.empty:
+        elapsed_time = time.time() - start_time
+        logger.info(
+            "Shop15 cleaner completed (empty)",
+            extra={
+                "event_type": "cleaner_complete",
+                "shop_name": SHOP_NAME,
+                "cleaner_name": CLEANER_NAME,
+                "input_rows": len(df),
+                "output_records": 0,
+                "elapsed_seconds": round(elapsed_time, 2),
+                "end_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+            }
+        )
         return out
 
     out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
     out["part_number"] = out["part_number"].astype(str)
     out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
 
-    # “有历史则更新”：同一 (part_number, shop_name) 只保留最新 recorded_at
+    # "有历史则更新"：同一 (part_number, shop_name) 只保留最新 recorded_at
     out = (
         out.sort_values(["part_number", "shop_name", "recorded_at"])
           .drop_duplicates(subset=["part_number", "shop_name"], keep="last")
           .reset_index(drop=True)
+    )
+
+    elapsed_time = time.time() - start_time
+    logger.info(
+        "Shop15 cleaner completed",
+        extra={
+            "event_type": "cleaner_complete",
+            "shop_name": SHOP_NAME,
+            "cleaner_name": CLEANER_NAME,
+            "input_rows": len(df),
+            "output_records": len(out),
+            "elapsed_seconds": round(elapsed_time, 2),
+            "end_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+        }
     )
 
     return out
