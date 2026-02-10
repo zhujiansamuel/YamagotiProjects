@@ -11,7 +11,7 @@ from typing import Dict, Optional, List, Tuple
 import pandas as pd
 
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db, _build_color_map
 
 # ----------------------------
 # 原有：机型/容量 normalization
@@ -421,22 +421,8 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         if c not in df.columns:
             raise ValueError(f"shop4 清洗器缺少必要列：{c}")
 
-    info_df = _load_iphone17_info_df_from_db().copy()
-    info_df["model_name_norm"] = info_df["model_name"].map(_normalize_model_generic)
-    info_df["capacity_gb"] = pd.to_numeric(info_df["capacity_gb"], errors="coerce").astype("Int64")
-    info_df["color_norm"] = info_df["color"].map(lambda x: _norm(str(x)))
-
-    pn_map: Dict[Tuple[str, int], Dict[str, str]] = {}
-    for _, r in info_df.iterrows():
-        m = r["model_name_norm"]
-        cap = r["capacity_gb"]
-        col = r["color_norm"]
-        pn = str(r["part_number"])
-        if pd.isna(cap) or not m or not col:
-            continue
-        key = (m, int(cap))
-        pn_map.setdefault(key, {})
-        pn_map[key][col] = pn
+    info_df = _load_iphone17_info_df_from_db()
+    pn_map = _build_color_map(info_df)
 
     _DEBUG_HINT_PAT = re.compile(
         r"(全色|シルバー|ブルー|ディープブルー|ブラック|ホワイト|グリーン|ピンク|レッド|イエロー|パープル|"
@@ -551,7 +537,7 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
 
         if "ALL" in adjustments:
             final_price = int(base_price + adjustments["ALL"])
-            for col_norm, pn in color_to_pn.items():
+            for col_norm, (pn, _) in color_to_pn.items():
                 rows.append({
                     "part_number": pn,
                     "shop_name": "モバイルミックス",
@@ -559,7 +545,7 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
                     "recorded_at": rec_at,
                 })
         else:
-            for col_norm, pn in color_to_pn.items():
+            for col_norm, (pn, _) in color_to_pn.items():
                 delta = int(adjustments.get(col_norm, 0))
                 final_price = int(base_price + delta)
                 rows.append({

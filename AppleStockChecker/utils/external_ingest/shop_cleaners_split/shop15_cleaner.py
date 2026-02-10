@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Protocol, Dict, Callable, Optional,List
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db, _build_color_map
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -780,24 +780,6 @@ def _build_color_deltas_shop15(
 
     return color_deltas, hit_log, sorted(unmatched)
 
-def _build_color_map_shop15(info_df: pd.DataFrame) -> Dict[tuple, Dict[str, Tuple[str, str]]]:
-    """
-    (model_norm, cap_gb) -> { color_norm: (part_number, color_raw) }
-    """
-    df = info_df.copy()
-    df["model_name_norm"] = df["model_name"].map(_normalize_model_generic)
-    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
-    df["color_norm"] = df["color"].map(lambda x: _norm(str(x)))
-    cmap: Dict[tuple, Dict[str, Tuple[str, str]]] = {}
-    for _, r in df.iterrows():
-        m = r["model_name_norm"]; cap = r["capacity_gb"]
-        if not m or pd.isna(cap):
-            continue
-        key = (m, int(cap))
-        cmap.setdefault(key, {})
-        cmap[key][_norm(str(r["color"]))] = (str(r["part_number"]), str(r["color"]))
-    return cmap
-
 def _build_color_prices_shop15(
     color_map: Dict[str, Tuple[str, str]],
     base_price: Optional[int],
@@ -858,7 +840,7 @@ def clean_shop15(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
             raise ValueError(f"shop15 清洗器缺少必要列：{c}")
 
     info_df = _load_iphone17_info_df_from_db()
-    cmap_all = _build_color_map_shop15(info_df)
+    cmap_all = _build_color_map(info_df)
 
     rows: List[dict] = []
 

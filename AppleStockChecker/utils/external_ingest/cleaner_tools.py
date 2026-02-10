@@ -4,7 +4,7 @@
 提供数据库访问、数据转换等通用功能
 """
 from __future__ import annotations
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import re
 
@@ -128,3 +128,62 @@ def _normalize_model_generic(text: str) -> str:
         return "iPhone Air"
 
     return ""
+
+
+def _build_color_map(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict[str, Tuple[str, str]]]:
+    """
+    构建 (model_norm, cap_gb) -> { color_norm: (part_number, color_raw) } 查找字典。
+
+    各 shop 清洗器共用，用于按 (机型, 容量) 快速查找所有颜色变体及其 part_number。
+    """
+    df = info_df.copy()
+    df["model_name_norm"] = df["model_name"].map(_normalize_model_generic)
+    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
+    df["color_norm"] = df["color"].map(lambda x: (str(x) or "").strip())
+    cmap: Dict[Tuple[str, int], Dict[str, Tuple[str, str]]] = {}
+    for _, r in df.iterrows():
+        m = r["model_name_norm"]
+        cap = r["capacity_gb"]
+        if not m or pd.isna(cap):
+            continue
+        key = (m, int(cap))
+        cmap.setdefault(key, {})
+        cmap[key][(str(r["color"]) or "").strip()] = (str(r["part_number"]), str(r["color"]))
+    return cmap
+
+
+# ----------------------------------------------------------------------
+# JAN 映射相关
+# ----------------------------------------------------------------------
+_JAN_RE = re.compile(r"(\d{8,})")
+
+
+def _extract_jan_digits(v) -> Optional[str]:
+    """从 JAN 字段值中提取连续 8+ 位数字。"""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return None
+    m = _JAN_RE.search(str(v))
+    return m.group(1) if m else None
+
+
+def _build_jan_map(info_df: pd.DataFrame) -> Dict[str, str]:
+    """
+    构建 { jan_digits -> part_number } 映射。
+
+    自动在 info_df 中查找名为 jan / jancode / jan_code 的列。
+    若不存在则返回空字典。
+    """
+    jan_map: Dict[str, str] = {}
+    jcol = None
+    for c in info_df.columns:
+        if str(c).strip().lower() in {"jan", "jancode", "jan_code"}:
+            jcol = c
+            break
+    if not jcol:
+        return jan_map
+    for _, r in info_df.iterrows():
+        jan_digits = _extract_jan_digits(r.get(jcol))
+        pn = r.get("part_number")
+        if jan_digits and pd.notna(pn):
+            jan_map[str(jan_digits)] = str(pn)
+    return jan_map

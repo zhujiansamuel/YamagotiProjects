@@ -12,7 +12,7 @@ import pandas as pd
 import textwrap
 from functools import lru_cache
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db, _build_color_map
 
 # ========== 你的 Ollama 配置 ==========
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
@@ -39,23 +39,6 @@ COLOR_ABS_RE = re.compile(
 
 FIRST_YEN_RE = re.compile(r"(?:￥|\¥)?\s*(\d[\d,]*)\s*円?")
 
-def _build_color_map_shop16(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict[str, Tuple[str, str]]]:
-    """(model_norm, cap_gb) -> { color_norm: (part_number, color_raw) }"""
-    df = info_df.copy()
-    df["model_name_norm"] = df["model_name"].map(_normalize_model_generic)
-    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
-    df["color_norm"] = df["color"].map(lambda x: _norm(str(x)))
-    cmap: Dict[Tuple[str, int], Dict[str, Tuple[str, str]]] = {}
-    for _, r in df.iterrows():
-        m = r["model_name_norm"]
-        cap = r["capacity_gb"]
-        if not m or pd.isna(cap):
-            continue
-        key = (m, int(cap))
-        cmap.setdefault(key, {})
-        cmap[key][_norm(str(r["color"]))] = (str(r["part_number"]), str(r["color"]))
-    return cmap
-
 def _label_matches_color(label_raw: str, color_raw: str, color_norm: str) -> bool:
     label_norm = _norm(label_raw)
     if label_norm == color_norm:
@@ -76,24 +59,6 @@ def _label_matches_color(label_raw: str, color_raw: str, color_norm: str) -> boo
                 break
 
     return any(tok in str(color_raw) for tok in candidates)
-
-def _build_color_map(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict[str, Tuple[str, str]]]:
-    """(model_norm, cap_gb) -> { color_norm: (part_number, color_raw) }"""
-    df = info_df.copy()
-    df["model_name_norm"] = df["model_name"].map(_normalize_model_generic)
-    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
-    df["color_norm"] = df["color"].map(lambda x: _norm(str(x)))
-
-    cmap: Dict[Tuple[str, int], Dict[str, Tuple[str, str]]] = {}
-    for _, r in df.iterrows():
-        m = r["model_name_norm"]
-        cap = r["capacity_gb"]
-        if not m or pd.isna(cap):
-            continue
-        key = (m, int(cap))
-        cmap.setdefault(key, {})
-        cmap[key][_norm(str(r["color"]))] = (str(r["part_number"]), str(r["color"]))
-    return cmap
 
 def _extract_color_deltas_shop16(text: str) -> List[Tuple[str, int]]:
     """从价格串中抽取多段“颜色±金额”，支持 '青/オレンジ -5000' 这类多标签共用金额。"""
@@ -526,7 +491,7 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
             raise ValueError(f"shop16 清洗器缺少必要列：{c}")
 
     info_df = _load_iphone17_info_df_from_db()
-    cmap_all = _build_color_map_shop16(info_df)
+    cmap_all = _build_color_map(info_df)
 
     rows: List[dict] = []
 

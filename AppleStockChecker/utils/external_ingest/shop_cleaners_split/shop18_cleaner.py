@@ -1,58 +1,15 @@
 from __future__ import annotations
-from typing import Protocol, Dict, Callable, Optional,List
+from typing import Dict, Optional, List, Tuple
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db
-import os
-from functools import lru_cache
-from pathlib import Path
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db, _extract_jan_digits, _build_jan_map
 import re
 import pandas as pd
-from typing import Optional, Tuple
 from urllib.parse import urlparse
-from typing import Dict, Optional, List, Iterable, Union
-import os, re, json, pathlib
 from datetime import datetime
 import pytz
 import time
 
-def _norm(s: str) -> str:
-    return (s or "").strip()
-
-def _extract_jan_digits(s: str) -> Optional[str]:
-    if not s:
-        return None
-    m = JAN_DIGITS_RE.search(str(s))
-    return m.group(1) if m else None
-
-def _build_maps(info_df: pd.DataFrame) -> Tuple[Dict[str, str], Dict[Tuple[str, int, str], str]]:
-    """
-    返回：
-      jan_map: { jan_digits -> part_number }（若信息表含 'jan' 列）
-      triple_map: { (model_norm, capacity_gb, color_norm) -> part_number }
-    """
-    df = info_df.copy()
-    df["model_name_norm"] = df["model_name"].map(_normalize_model_generic)
-    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
-    df["color_norm"] = df["color"].map(lambda x: _norm(str(x)))
-
-    # JAN 映射（可选）
-    jan_map: Dict[str, str] = {}
-    jan_col_candidates = [c for c in df.columns if str(c).lower() == "jan"]
-    if jan_col_candidates:
-        jcol = jan_col_candidates[0]
-        jseries = df[jcol].map(lambda x: _extract_jan_digits(str(x)) if pd.notna(x) else None)
-        for _, r in df.assign(jan_norm=jseries).dropna(subset=["jan_norm"]).iterrows():
-            jan_map[str(r["jan_norm"])] = str(r["part_number"])
-
-    triple_map: Dict[Tuple[str, int, str], str] = {}
-    for _, r in df.iterrows():
-        m = r["model_name_norm"]
-        cap = r["capacity_gb"]
-        col = r["color_norm"]
-        if not m or pd.isna(cap) or not col:
-            continue
-        triple_map[(m, int(cap), col)] = str(r["part_number"])
-    return jan_map, triple_map
+SHOP_NAME_OVERRIDE: Optional[str] = "買取オク"
 
 def _match_by_type(type_text: str, info_df: pd.DataFrame) -> Optional[str]:
     """
@@ -107,7 +64,7 @@ def clean_shop18(df: pd.DataFrame) -> pd.DataFrame:
             raise ValueError(f"shop18 清洗器缺少必要列：{c}")
 
     info_df = _load_iphone17_info_df_from_db()
-    jan_map, triple_map = _build_maps(info_df)
+    jan_map = _build_jan_map(info_df)
 
     # 为回退匹配准备（按 (model, cap) 切片）
     rows: List[dict] = []

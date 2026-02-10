@@ -1,42 +1,13 @@
 from __future__ import annotations
-from typing import Protocol, Dict, Callable, Optional,List
-from ..helpers import to_int_yen, parse_dt_aware
-import os
-from functools import lru_cache
-from pathlib import Path
-import re
-import pandas as pd
-from typing import Optional, Tuple
-from urllib.parse import urlparse
 from typing import Dict, Optional, List, Iterable, Union
-import os, re, json, pathlib
+from ..helpers import to_int_yen, parse_dt_aware
+from ..cleaner_tools import _load_iphone17_info_df_from_db, _extract_jan_digits, _build_jan_map
+import re
+import json
+import pandas as pd
 from datetime import datetime
 import pytz
 import time
-
-def _extract_jan_digits_shop1(v) -> Optional[str]:
-    if v is None:
-        return None
-    m = JAN_RE_shop1.search(str(v))
-    return m.group(1) if m else None
-
-def _pick_info_jan_col_shop1(info_df: pd.DataFrame) -> Optional[str]:
-    for c in info_df.columns:
-        if str(c).strip().lower() in {"jan", "jancode", "jan_code"}:
-            return c
-    return None
-
-def _build_jan_to_pn_map_shop1(info_df: pd.DataFrame) -> Dict[str, str]:
-    jan_map: Dict[str, str] = {}
-    jcol = _pick_info_jan_col_shop1(info_df)
-    if not jcol:
-        return jan_map
-    for _, r in info_df.iterrows():
-        jan_digits = _extract_jan_digits_shop1(r.get(jcol))
-        pn = r.get("part_number")
-        if jan_digits and pd.notna(pn):
-            jan_map[str(jan_digits)] = str(pn)
-    return jan_map
 
 def _iter_records(df: pd.DataFrame):
     """
@@ -103,12 +74,12 @@ def clean_shop1(df: pd.DataFrame) -> pd.DataFrame:
     """
     # 准备 JAN->PN 映射
     info_df = _load_iphone17_info_df_from_db()
-    jan_map = _build_jan_to_pn_map_shop1(info_df)
+    jan_map = _build_jan_map(info_df)
 
     rows: List[dict] = []
 
     for rec in _iter_records(df):
-        jan = _extract_jan_digits_shop1(rec.get("JAN"))
+        jan = _extract_jan_digits(rec.get("JAN"))
 
         if not jan:
             continue

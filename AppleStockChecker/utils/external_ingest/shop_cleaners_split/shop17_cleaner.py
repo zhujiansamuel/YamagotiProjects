@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Protocol, Dict, Callable, Optional, List, Tuple
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _load_iphone17_info_df_from_db, _parse_capacity_gb, _normalize_model_generic
+from ..cleaner_tools import _load_iphone17_info_df_from_db, _parse_capacity_gb, _normalize_model_generic, _build_color_map
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -194,23 +194,6 @@ def _label_matches_color_shop17(label_raw: str, color_raw: str, color_norm: str)
                 candidates.update(toks)
                 break
     return any(tok in str(color_raw) for tok in candidates)
-
-def _build_color_map_shop17(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict[str, Tuple[str, str]]]:
-    """(model_norm, cap_gb) -> { color_norm: (part_number, color_raw) }"""
-    df = info_df.copy()
-    df["model_name_norm"] = df["model_name"].map(_normalize_model_generic)
-    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
-    df["color_norm"] = df["color"].map(lambda x: _norm(str(x)))
-    cmap: Dict[Tuple[str, int], Dict[str, Tuple[str, str]]] = {}
-    for _, r in df.iterrows():
-        m = r["model_name_norm"]
-        cap = r["capacity_gb"]
-        if not m or pd.isna(cap):
-            continue
-        key = (m, int(cap))
-        cmap.setdefault(key, {})
-        cmap[key][_norm(str(r["color"]))] = (str(r["part_number"]), str(r["color"]))
-    return cmap
 
 def _pick_unopened_section(text: str) -> str:
     """若包含【未開封】…，取该段直到下一个 '【' 或行末；否则返回原文。"""
@@ -534,7 +517,7 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
             raise ValueError(f"shop17 清洗器缺少必要列：{c}")
 
     info_df = _load_iphone17_info_df_from_db()
-    cmap_all = _build_color_map_shop17(info_df)
+    cmap_all = _build_color_map(info_df)
     rows: List[dict] = []
 
     for idx, row in df.iterrows():

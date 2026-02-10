@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Protocol, Dict, Callable, Optional,List
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db, _build_color_map
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -221,25 +221,6 @@ def _label_matches_color_shop11(label_raw: str, color_raw: str, color_norm: str)
                     return True
 
     return False
-
-def _build_color_map_shop11(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict[str, Tuple[str, str]]]:
-    """
-    构建 (model_norm, cap_gb) -> { color_norm: (part_number, color_raw) }
-    """
-    df = info_df.copy()
-    df["model_name_norm"] = df["model_name"].map(_normalize_model_generic)
-    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
-    df["color_norm"] = df["color"].map(lambda x: _norm(str(x)))
-    cmap: Dict[Tuple[str, int], Dict[str, Tuple[str, str]]] = {}
-    for _, r in df.iterrows():
-        m = r["model_name_norm"]
-        cap = r["capacity_gb"]
-        if not m or pd.isna(cap):
-            continue
-        key = (m, int(cap))
-        cmap.setdefault(key, {})
-        cmap[key][_norm(str(r["color"]))] = (str(r["part_number"]), str(r["color"]))
-    return cmap
 
 try:
     import langextract as lx
@@ -578,7 +559,7 @@ def clean_shop11(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) ->
     df2 = df.copy().reset_index(drop=True)
 
     info_df = _load_iphone17_info_df_from_db()
-    cmap_all = _build_color_map_shop11(info_df)
+    cmap_all = _build_color_map(info_df)
 
     # 用 info_df 推导“允许的规范化机型”，用来约束 LLM 输出，减少 key 对不上
     valid_models = tuple(

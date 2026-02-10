@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Protocol, Dict, Callable, Optional,List
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db, _build_color_map
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -132,25 +132,7 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
     price_series = df["data3"].map(_price_from_shop7)
     recorded_at = df["time-scraped"].map(parse_dt_aware)
 
-    # (model_norm, cap) -> { color_norm: part_number }
-    info2 = info_df.copy()
-    if "color" not in info2.columns:
-        raise ValueError("info_df 缺少 'color' 列，无法进行颜色映射")
-    info2["model_name_norm"] = info2["model_name"].map(_normalize_model_generic)
-    info2["capacity_gb"] = pd.to_numeric(info2["capacity_gb"], errors="coerce").astype("Int64")
-    info2["color_norm"] = info2["color"].map(lambda x: _norm(str(x)))
-
-    pn_map: Dict[Tuple[str, int], Dict[str, str]] = {}
-    for _, r in info2.iterrows():
-        m = r["model_name_norm"]
-        cap = r["capacity_gb"]
-        col = r["color_norm"]
-        pn = str(r["part_number"])
-        if pd.isna(cap) or not m or not col:
-            continue
-        key = (m, int(cap))
-        pn_map.setdefault(key, {})
-        pn_map[key][col] = pn
+    pn_map = _build_color_map(info_df)
 
     # ---- DEBUG：挑选“疑似颜色/减价说明行”，只对这些行及其上一行输出 ----
     debug_pos_set: set[int] = set()
@@ -326,7 +308,7 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
                 _dprint(i, "  note: 下一行不是颜色减价行，按 base_price 输出")
 
         # 输出：对每个颜色做 base + delta
-        for col_norm, pn in color_to_pn.items():
+        for col_norm, (pn, _) in color_to_pn.items():
             delta = 0
             used_lbl = None
 
