@@ -67,3 +67,7 @@ htmlcov/
 .tmp_csv_uploads/
 /.tmp_csv_uploads/
 /.tmp_csv_uploads/
+
+# Project specific
+logs/
+simplepro.lic
