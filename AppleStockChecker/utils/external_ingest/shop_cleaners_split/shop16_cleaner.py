@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL_ID = os.getenv("OLLAMA_MODEL_ID", "gemma3:1b")
 
-SHOP16_EXTRACTION_MODE = "auto"  # "regex" | "llm" | "auto"
+SHOP16_EXTRACTION_MODE = "regex"  # "regex" | "llm" | "auto"
 
 MODEL_COL = "iPhone 17 Pro Max"
 DESC_COL  = "説明1"
@@ -248,7 +248,7 @@ COLOR_DELTA_RE = re.compile(
     r"""(?P<label>[^：:\-\s]+)\s*
         (?P<sep>[：:\-])\s*           # 捕获分隔符
         (?P<sign>[+\-−－])?\s*        # 显式正负号（可选）
-        (?P<amount>\d[\d,]*)\s*円
+        (?P<amount>\d[\d,]*)\s*(?:円)?
     """,
     re.UNICODE | re.VERBOSE,
 )
@@ -864,11 +864,12 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
                 "model_norm": model_norm,
                 "capacity_gb": cap_gb,
                 "base_price": base_price,
-                "price_text_raw": _truncate_for_log(price_text, 200),
-                "price_text_raw_full": price_text,
-                "price_text_normalized": _truncate_for_log(_normalize_price_text_shop16(price_raw), 200),
+                
+                "source_text_raw": _truncate_for_log(price_text, 200),
+                "source_text_raw_full": price_text,
+                "source_text_normalized": _truncate_for_log(_normalize_price_text_shop16(price_raw), 200),
                 "extraction_method": extraction_method,
-                "deltas": [
+                "labels_and_deltas": [
                     {"label": label, "delta": delta}
                     for label, delta in deltas
                 ],
@@ -876,7 +877,7 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
                     {"label": label, "amount": amt}
                     for label, amt in absps
                 ],
-                "deltas_count": len(deltas),
+                "labels_extracted_count": len(deltas),
                 "abs_prices_count": len(absps),
                 "available_colors": available_colors_list,
                 "colors_in_catalog": len(color_map),
@@ -886,6 +887,8 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
         # 标签映射到具体 color_norm
         color_delta_map: Dict[str, int] = {}
         color_abs_map: Dict[str, int] = {}
+        color_delta_label_map: Dict[str, str] = {}
+        color_abs_label_map: Dict[str, str] = {}
 
         if deltas:
             for col_norm, (_pn, col_raw) in color_map.items():
@@ -893,6 +896,7 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
                     label_raw2 = _normalize_label_shop16(label_raw)
                     if _label_matches_color_shop16(label_raw2, col_raw, col_norm):
                         color_delta_map[col_norm] = int(delta)
+                        color_delta_label_map[col_norm] = label_raw2
 
         if absps:
             for col_norm, (_pn, col_raw) in color_map.items():
@@ -900,6 +904,7 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
                     label_raw2 = _normalize_label_shop16(label_raw)
                     if _label_matches_color_shop16(label_raw2, col_raw, col_norm):
                         color_abs_map[col_norm] = int(abs_price)
+                        color_abs_label_map[col_norm] = label_raw2
 
         # DEBUG: 详细的 label 匹配日志（delta）
         if deltas:
@@ -921,6 +926,7 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
                         "shop_name": SHOP_NAME,
                         "cleaner_name": CLEANER_NAME,
                         "row_index": int(idx),
+                        "model_text": model_text,
                         "model_norm": model_norm,
                         "capacity_gb": cap_gb,
                         "base_price": base_price,
@@ -930,7 +936,11 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
                         "matched_colors": matched_colors,
                         "matched_part_numbers": matched_pns,
                         "match_count": len(matched_colors),
-                        "price_text_raw_full": price_text,
+                        "source_text_raw_full": price_text,
+                        "labels_and_deltas": [
+                            {"label": label, "delta": delta}
+                            for label, delta in deltas
+                        ],
                     }
                 )
 
@@ -945,13 +955,19 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
                             "shop_name": SHOP_NAME,
                             "cleaner_name": CLEANER_NAME,
                             "row_index": int(idx),
+                            "model_text": model_text,
                             "model_norm": model_norm,
                             "capacity_gb": cap_gb,
+                            "base_price": base_price,
                             "label": label_raw,
                             "delta": delta,
                             "match_type": "delta",
                             "available_colors": [cn for cn in color_map.keys()],
-                            "price_text_raw_full": price_text,
+                            "source_text_raw_full": price_text,
+                            "labels_and_deltas": [
+                                {"label": label, "delta": delta}
+                                for label, delta in deltas
+                            ],
                         }
                     )
 
@@ -975,6 +991,7 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
                         "shop_name": SHOP_NAME,
                         "cleaner_name": CLEANER_NAME,
                         "row_index": int(idx),
+                        "model_text": model_text,
                         "model_norm": model_norm,
                         "capacity_gb": cap_gb,
                         "base_price": base_price,
@@ -984,7 +1001,11 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
                         "matched_colors": matched_colors,
                         "matched_part_numbers": matched_pns,
                         "match_count": len(matched_colors),
-                        "price_text_raw_full": price_text,
+                        "source_text_raw_full": price_text,
+                        "labels_and_deltas": [
+                            {"label": label, "delta": delta}
+                            for label, delta in deltas
+                        ],
                     }
                 )
 
@@ -998,13 +1019,19 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
                             "shop_name": SHOP_NAME,
                             "cleaner_name": CLEANER_NAME,
                             "row_index": int(idx),
+                            "model_text": model_text,
                             "model_norm": model_norm,
                             "capacity_gb": cap_gb,
+                            "base_price": base_price,
                             "label": label_raw,
                             "abs_price": abs_price,
                             "match_type": "abs",
                             "available_colors": [cn for cn in color_map.keys()],
-                            "price_text_raw_full": price_text,
+                            "source_text_raw_full": price_text,
+                            "labels_and_deltas": [
+                                {"label": label, "delta": delta}
+                                for label, delta in deltas
+                            ],
                         }
                     )
 
@@ -1013,14 +1040,22 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
         for col_norm, (pn, col_raw) in color_map.items():
             if col_norm in color_abs_map:
                 price_new = color_abs_map[col_norm]
-                delta = 0
-                delta_source = "abs_price"
+                effective_source = "abs_price"
+                matched_label = color_abs_label_map.get(col_norm)
+                spec_value = color_abs_map[col_norm]
             else:
                 if base_price is None:
                     continue
-                delta = color_delta_map.get(col_norm, 0)
-                price_new = int(base_price) + int(delta)
-                delta_source = "matched_label" if col_norm in color_delta_map else "default_zero"
+                if col_norm in color_delta_map:
+                    spec_value = color_delta_map[col_norm]
+                    price_new = int(base_price) + int(spec_value)
+                    effective_source = "matched_label"
+                    matched_label = color_delta_label_map.get(col_norm)
+                else:
+                    price_new = int(base_price)
+                    effective_source = "default_zero"
+                    matched_label = None
+                    spec_value = None
 
             # DEBUG: 每条输出记录单独一条日志（扁平化）
             _log_seq += 1
@@ -1039,20 +1074,24 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
                     "color_norm": col_norm,
                     "color_raw": col_raw,
                     "base_price": base_price,
-                    "delta": delta,
                     "final_price": int(price_new),
-                    "delta_source": delta_source,
+                    "effective_source": effective_source,
+                    "matched_label": matched_label,
+                    "spec_value": spec_value,
                     "recorded_at": str(rec_at) if rec_at else None,
-                    "price_text_raw_full": price_text,
+                    "source_text_raw_full": price_text,
+                    "labels_and_deltas": [
+                        {"label": label, "delta": delta}
+                        for label, delta in deltas
+                    ],
                 }
             )
 
             output_records.append({
                 "part_number": pn,
                 "color_norm": col_norm,
-                "delta": delta,
                 "final_price": int(price_new),
-                "delta_source": delta_source,
+                "effective_source": effective_source,
             })
 
             rows.append({
@@ -1065,10 +1104,11 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
             current_row_records.append({
                 "part_number": pn,
                 "color_norm": col_norm,
-                "delta": delta,
                 "final_price": int(price_new),
                 "recorded_at": rec_at,
-                "delta_source": delta_source,
+                "effective_source": effective_source,
+                "matched_label": matched_label,
+                "spec_value": spec_value,
             })
 
         # DEBUG: 行级详细汇总
@@ -1088,18 +1128,27 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
                 "model_norm": model_norm,
                 "capacity_gb": cap_gb,
                 "base_price": base_price,
-                "price_text_raw_full": price_text,
-                "current_row_records": [
-                    {"pn": r["part_number"], "color": r["color_norm"], "delta": r["delta"], "final_price": r["final_price"], "src": r["delta_source"]}
-                    for r in current_row_records
+                "source_text_raw_full": price_text,
+                "abs_applied_details": [
+                    {"pn": r["part_number"], "color": r["color_norm"], "final_price": r["final_price"], "matched_label": r["matched_label"], "spec_value": r["spec_value"]}
+                    for r in current_row_records if r["effective_source"] == "abs_price"
+                ],
+                "delta_applied_details": [
+                    {"pn": r["part_number"], "color": r["color_norm"], "final_price": r["final_price"], "matched_label": r["matched_label"], "spec_value": r["spec_value"]}
+                    for r in current_row_records if r["effective_source"] == "matched_label"
+                ],
+                "default_applied_pns": [
+                    r["part_number"]
+                    for r in current_row_records if r["effective_source"] == "default_zero"
                 ],
             }
         )
 
-        # INFO: 行级概览（简洁）
+        # INFO: 行级概览（简洁，model_text 折叠多余空格便于阅读）
         _log_seq += 1
+        _model_display = " ".join(model_text.split())
         logger.info(
-            f"Row {idx:<3d} | {model_text:<28s} | deltas: {len(deltas):<2d} | abs: {len(absps):<2d} | matched: {colors_matched:<2d} | records: {len(output_records):<2d} | method: {extraction_method}",
+            f"Row {idx:<3d} | {_model_display} | deltas: {len(deltas):<2d} | abs: {len(absps):<2d} | matched: {colors_matched:<2d} | records: {len(output_records):<2d} | method: {extraction_method}",
             extra={
                 "event_type": "row_processing_summary",
                 "log_seq": _log_seq,
@@ -1110,9 +1159,9 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
                 "model_norm": model_norm,
                 "capacity_gb": cap_gb,
                 "base_price": base_price,
-                "price_text_raw_preview": _truncate_for_log(price_text, 100),
+                "source_text_raw_preview": _truncate_for_log(price_text, 100),
                 "extraction_method": extraction_method,
-                "deltas_extracted_count": len(deltas),
+                "labels_extracted_count": len(deltas),
                 "abs_prices_extracted_count": len(absps),
                 "colors_in_catalog": len(color_map),
                 "colors_matched_count": colors_matched,

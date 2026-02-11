@@ -796,9 +796,9 @@ LOGGING = {
             'formatter': 'simple',
             'level': 'INFO',  # 控制台只显示 INFO 及以上
         },
-        'shop17_file_json': {
+        'shop_cleaners_file_json': {
             'class': 'logging.handlers.TimedRotatingFileHandler',
-            'filename': str(SHOP_CLEANERS_LOG_DIR / 'shop17.log'),
+            'filename': str(SHOP_CLEANERS_LOG_DIR / 'shop_cleaners.log'),
             'when': 'midnight',
             'interval': 1,
             'backupCount': 14,
@@ -819,10 +819,10 @@ LOGGING = {
             'level': 'INFO',
             'propagate': False,
         },
-        # shop17 清洗器专用 logger
-        'AppleStockChecker.utils.external_ingest.shop_cleaners_split.shop17_cleaner': {
-            'handlers': ['console', 'shop17_file_json'],
-            'level': os.getenv('SHOP17_LOG_LEVEL', 'DEBUG'),  # 可通过环境变量控制
+        # 所有 shop cleaners 共用 logger（包级别）
+        'AppleStockChecker.utils.external_ingest.shop_cleaners_split': {
+            'handlers': ['console', 'shop_cleaners_file_json'],
+            'level': os.getenv('SHOP_CLEANERS_LOG_LEVEL', 'DEBUG'),
             'propagate': False,
         },
     },
