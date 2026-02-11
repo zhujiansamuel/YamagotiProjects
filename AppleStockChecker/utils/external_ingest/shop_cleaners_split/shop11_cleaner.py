@@ -5,7 +5,7 @@ shop11 清洗器 — モバステ
 
   原始文本（storage_name / price_unopened / caution_empty）
     │
-    ├─ _normalize_number_text()              ← Step 1: 全角→半角归一化
+    ├─ normalize_text_basic()              ← Step 1: 全角→半角归一化
     │
     ├─ to_int_yen_shop11()                   ← Step 2: 日元价格解析
     │
@@ -45,7 +45,7 @@ from ..cleaner_tools import (
     _build_color_map,
     _truncate_for_log,
     _norm_strip,
-    _FZ_TO_HZ_TRANS,
+    normalize_text_basic,
 )
 
 # 初始化 logger
@@ -87,15 +87,6 @@ def _coerce_int(v) -> Optional[int]:
         return None
 
 # ----------------------------------------------------------------------
-# Step 1: 全角→半角归一化
-# ----------------------------------------------------------------------
-
-def _normalize_number_text(txt: str) -> str:
-    if txt is None:
-        return ""
-    return str(txt).translate(_FZ_TO_HZ_TRANS).strip()
-
-# ----------------------------------------------------------------------
 # Step 2: 日元价格解析
 # ----------------------------------------------------------------------
 
@@ -114,13 +105,8 @@ def to_int_yen_shop11(v) -> Optional[int]:
     # 去掉括号内的备注
     s = re.sub(r"\（.*?\）|\(.*?\)", "", s).strip()
 
-    # 半角映射（数字/标点）
-    trans_map = str.maketrans({
-        '０': '0', '１': '1', '２': '2', '３': '3', '４': '4',
-        '５': '5', '６': '6', '７': '7', '８': '8', '９': '9',
-        '，': ',', '．': '.', '－': '-', '＋': '+', '¥': '', '￥': '',
-    })
-    s2 = s.translate(trans_map)
+    # 使用通用规范化（全角→半角 + 去换行 + 合并空格）
+    s2 = normalize_text_basic(s)
 
     m = re.search(r"([+\-−－]?)\s*(?:¥|￥)?\s*([\d][\d,]*)", s2)
     if not m:
@@ -431,14 +417,14 @@ def _extract_color_deltas_shop11_regex(text: str) -> List[Tuple[str, int]]:
     if not s:
         return out
 
-    s_norm = _normalize_number_text(s)
+    s_norm = normalize_text_basic(s)
 
     # 1) 主匹配：labelGroup：+/-?amount
     for m in _COLOR_GROUP_RE.finditer(s_norm):
         labels = m.group("labels") or ""
         sign = m.group("sign") or ""
         amt_txt = m.group("amount") or ""
-        amt_txt = _normalize_number_text(amt_txt)
+        amt_txt = normalize_text_basic(amt_txt)
         amt_digits = re.sub(r"[^\d]", "", amt_txt)
         if not amt_digits:
             continue
@@ -456,7 +442,7 @@ def _extract_color_deltas_shop11_regex(text: str) -> List[Tuple[str, int]]:
         labels = m.group("labels") or ""
         sign = m.group("sign") or ""
         amt_txt = m.group("amount") or ""
-        amt_txt = _normalize_number_text(amt_txt)
+        amt_txt = normalize_text_basic(amt_txt)
         amt_digits = re.sub(r"[^\d]", "", amt_txt)
         if not amt_digits:
             continue
@@ -826,7 +812,7 @@ def clean_shop11(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) ->
 
         # 2) 颜色差额：根据 SHOP11_EXTRACTION_MODE 调度
         avail_colors = tuple(color_map.keys())
-        caution_txt = _normalize_number_text(str(caution_raw or ""))
+        caution_txt = normalize_text_basic(str(caution_raw or ""))
 
         # 构建行级上下文，用于传递给下级函数和日志
         row_context = {

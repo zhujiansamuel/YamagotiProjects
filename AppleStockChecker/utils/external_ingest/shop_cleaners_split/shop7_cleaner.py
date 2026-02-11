@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Protocol, Dict, Callable, Optional,List
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db, _build_color_map
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db, _build_color_map, normalize_text_basic
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -186,15 +186,12 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         re.UNICODE,
     )
 
-    FW_TO_ASC = str.maketrans({
-        "０": "0", "１": "1", "２": "2", "３": "3", "４": "4", "５": "5", "６": "6", "７": "7", "８": "8", "９": "9",
-        "，": ",", "．": ".", "－": "-", "＋": "+", "　": " ",
-    })
-
     def _to_int_amount(s: str) -> Optional[int]:
+        """解析金额文本，使用通用规范化函数"""
         if s is None:
             return None
-        t = str(s).translate(FW_TO_ASC)
+        # 使用通用规范化（全角→半角 + 去换行 + 合并空格）
+        t = normalize_text_basic(str(s))
         m = re.search(r"([0-9][0-9,]*)", t)
         if not m:
             return None

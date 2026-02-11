@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Protocol, Dict, Callable, Optional, List, Tuple
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _load_iphone17_info_df_from_db, _parse_capacity_gb, _normalize_model_generic, _build_color_map
+from ..cleaner_tools import _load_iphone17_info_df_from_db, _parse_capacity_gb, _normalize_model_generic, _build_color_map, normalize_text_basic
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -60,27 +60,15 @@ def _pick_unopened_section(text: str) -> str:
     return m.group(1) if m else s
 
 # ── Step 2: 归一化色減額文本 ──
-_DASH_TRANS_shop17 = str.maketrans({
-    "−": "-",  # U+2212
-    "－": "-",  # U+FF0D
-    "‐": "-",  # U+2010
-    "‑": "-",  # U+2011
-    "‒": "-",  # U+2012
-    "–": "-",  # U+2013
-    "—": "-",  # U+2014
-})
-_FW_DIGITS_TRANS_shop17 = str.maketrans("０１２３４５６７８９", "0123456789")
-
 def _normalize_color_text_shop17(s: str) -> str:
-    """统一色減額文本里的全角数字/逗号/各种 dash，顺便清理空白。"""
-    s = "" if s is None else str(s)
-    s = s.replace("\r\n", "\n").replace("\r", "\n")
-    s = s.translate(_FW_DIGITS_TRANS_shop17)
-    s = s.replace("，", ",")
-    s = s.translate(_DASH_TRANS_shop17)
-    s = s.replace("／", "/")
-    s = re.sub(r"[ \t\u3000\xa0]+", " ", s)
-    return s.strip()
+    """
+    统一色減額文本里的全角数字/逗号/各种 dash，顺便清理空白。
+    使用通用规范化函数（全角→半角 + 去换行 + 合并空格）。
+    """
+    if s is None:
+        return ""
+    # 使用通用规范化（已包含全角→半角、换行处理、空格合并）
+    return normalize_text_basic(str(s))
 
 # ── Step 3: 归一化颜色标签（清除空白） ──
 def _normalize_label_shop17(lbl: str) -> str:

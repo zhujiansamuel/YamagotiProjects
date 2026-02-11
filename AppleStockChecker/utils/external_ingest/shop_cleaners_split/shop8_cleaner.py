@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Protocol, Dict, Callable, Optional,List
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
+from ..cleaner_tools import normalize_text_basic
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -16,15 +17,9 @@ import time
 
 PN_REGEX = re.compile(r"\b[A-Z0-9]{4,6}\d{0,3}J/A\b")
 
-def _clean_text(x: object) -> str:
-    s = "" if x is None else str(x)
-    s = s.replace("\u3000", " ")          # 全角空格
-    s = s.replace("\r", " ").replace("\n", " ")  # 去换行
-    return re.sub(r"\s+", " ", s).strip()
-
 def _extract_part_number(text: str) -> str | None:
-    t = _clean_text(text)
-    # 1) 优先：显式 “型番: XXXXXJ/A”
+    t = normalize_text_basic(text)
+    # 1) 优先：显式 "型番: XXXXXJ/A"
     m = re.search(r"型番[:：]\s*([A-Z0-9]{4,6}\d{0,3}J/A)\b", t)
     if m:
         return m.group(1)

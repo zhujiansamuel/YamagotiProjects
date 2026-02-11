@@ -42,6 +42,7 @@ from ..cleaner_tools import (
     _load_iphone17_info_df_from_db,
     _build_color_map,
     _truncate_for_log,
+    normalize_text_basic,
 )
 
 # 初始化 logger
@@ -72,14 +73,15 @@ COL_TIME  = "time-scraped"
 # ----------------------------------------------------------------------
 
 def _norm(s: str) -> str:
+    """
+    shop9 专用的规范化：全角→半角 + 小写 + 去空白
+    """
     if s is None:
         return ""
-    t = str(s).strip().lower()
-    t = t.replace("\u3000", " ")
-    t = re.sub(r"\s+", " ", t)
-    # 全角数字转半角
-    t = t.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
-    return t
+    # 使用通用规范化函数（全角→半角 + 去换行 + 合并空格 + strip）
+    t = normalize_text_basic(str(s))
+    # shop9 特有：转小写
+    return t.lower()
 
 def _norm_cls(x: str) -> str:
     # 容错：abs price / abs-price / ABS_PRICE 统一

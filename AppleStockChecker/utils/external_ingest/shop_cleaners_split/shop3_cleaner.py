@@ -44,8 +44,8 @@ from ..cleaner_tools import (
     _build_color_map,
     _truncate_for_log,
     _norm_strip,
-    _FZ_TO_HZ_TRANS,
     _normalize_amount_text,
+    normalize_text_basic,
 )
 
 # 初始化 logger
@@ -139,7 +139,7 @@ def _extract_color_deltas_shop3_regex(text: str) -> List[Tuple[str, int]]:
     if not text:
         return out
 
-    s = str(text).translate(_FZ_TO_HZ_TRANS).strip()
+    s = normalize_text_basic(str(text))
     for m in _DELTA_PATTERN_STRICT.finditer(s):
         labels_part = m.group("labels")
         sign = m.group("sign")
@@ -181,8 +181,7 @@ def _extract_signed_amounts_from_text(text: str) -> List[int]:
     """
     从原文中提取所有 "+/- 金额"（单位：JPY），例如 '-1500'、'−3,000'、'＋２,０００'
     """
-    s = (text or "").translate(_FZ_TO_HZ_TRANS)
-    s = s.replace("−", "-")  # U+2212
+    s = normalize_text_basic(text or "")
     out: List[int] = []
     for m in _SIGNED_AMOUNT_PAT.finditer(s):
         sign = m.group(1)
@@ -238,7 +237,7 @@ def _parse_delta_int_llm(x: object, default_sign: Optional[int]) -> Optional[int
             return int(default_sign * abs(v))
         return v
 
-    s = str(x).strip().translate(_FZ_TO_HZ_TRANS).replace("−", "-").strip()
+    s = normalize_text_basic(str(x))
     if not s:
         return None
 
