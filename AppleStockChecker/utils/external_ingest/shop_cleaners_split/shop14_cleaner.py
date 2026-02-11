@@ -43,6 +43,8 @@ from ..cleaner_tools import (
 # ---------------------------------------------------------------------------
 logger = logging.getLogger(__name__)
 
+CLEANER_NAME = "shop14"
+SHOP_NAME = "買取楽園"
 
 # ---------------------------------------------------------------------------
 # Step 1: 配置常量
@@ -559,8 +561,8 @@ def _shop14_extract_rules_with_langextract(
                 "[LangExtract-multi] multi-pair detected",
                 extra={
                     "event_type": "llm_multi_pair",
-                    "shop_name": "買取楽園",
-                    "cleaner_name": "shop14",
+                    "shop_name": SHOP_NAME,
+                    "cleaner_name": CLEANER_NAME,
                     "extraction_text": _truncate_for_log(txt),
                     "kind": kind,
                     "pairs": str(multi_pairs),
@@ -630,8 +632,8 @@ def _extract_rules_shop14_llm_with_guardrails(
             "LLM extraction failed, returning empty",
             extra={
                 "event_type": "llm_extraction_error",
-                "shop_name": "買取楽園",
-                "cleaner_name": "shop14",
+                "shop_name": SHOP_NAME,
+                "cleaner_name": CLEANER_NAME,
                 "error": str(exc),
                 "text_snippet": _truncate_for_log(text, 120),
                 "model_id": SHOP14_LLM_MODEL_ID,
@@ -688,20 +690,20 @@ def _extract_rules_shop14_dispatch(
 
 def clean_shop14(df: "pd.DataFrame", debug: bool = True) -> "pd.DataFrame":
     t_start = time.time()
-    log_seq = 0
+    _log_seq = 0
 
     logger.info(
         "shop14 cleaner started",
         extra={
             "event_type": "cleaner_start",
-            "shop_name": "買取楽園",
-            "cleaner_name": "shop14",
-            "log_seq": log_seq,
+            "shop_name": SHOP_NAME,
+            "cleaner_name": CLEANER_NAME,
+            "log_seq": _log_seq,
             "input_rows": len(df),
             "extraction_mode": SHOP14_EXTRACTION_MODE,
         },
     )
-    log_seq += 1
+    _log_seq += 1
 
     # ---- 列校验 ----
     for c in ["name", "data6", "price2", "time-scraped"]:
@@ -710,13 +712,13 @@ def clean_shop14(df: "pd.DataFrame", debug: bool = True) -> "pd.DataFrame":
                 f"Missing required column: {c}",
                 extra={
                     "event_type": "validation_error",
-                    "shop_name": "買取楽園",
-                    "cleaner_name": "shop14",
-                    "log_seq": log_seq,
+                    "shop_name": SHOP_NAME,
+                    "cleaner_name": CLEANER_NAME,
+                    "log_seq": _log_seq,
                     "column": c,
                 },
             )
-            log_seq += 1
+            _log_seq += 1
             raise ValueError(f"shop14 清洗器缺少必要列：{c}")
 
     remark_cols_map = _resolve_remark_cols(df)
@@ -788,147 +790,334 @@ def clean_shop14(df: "pd.DataFrame", debug: bool = True) -> "pd.DataFrame":
             agg_delta.extend(parsed2.get("delta") or [])
             extraction_method = method2
 
+        # ---- 统一为 specs 格式 ----
+        # 全色路径：纳入 delta_specs，label = "全色"
+        delta_specs: List[Tuple[str, int]] = list(agg_delta)
+        abs_specs: List[Tuple[str, int]] = list(agg_abs)
+
+        if agg_all_delta is not None:
+            delta_specs = [("全色", agg_all_delta)]
+            abs_specs = []
+
+        # ---- available_colors 列表（供日志使用） ----
+        available_colors_list = [
+            {"color_norm": cn, "part_number": pn, "color_raw": cr}
+            for cn, (pn, cr) in color_map.items()
+        ]
+
+        # ---- extraction_result 日志 ----
         logger.debug(
-            "extraction result",
+            "Extraction result",
             extra={
                 "event_type": "extraction_result",
-                "shop_name": "買取楽園",
-                "cleaner_name": "shop14",
-                "log_seq": log_seq,
-                "row_idx": idx,
-                "model": model_norm,
-                "cap_gb": cap_gb,
+                "log_seq": _log_seq,
+                "shop_name": SHOP_NAME,
+                "cleaner_name": CLEANER_NAME,
+                "row_index": int(idx),
+                "model_text": model_text,
+                "model_norm": model_norm,
+                "capacity_gb": cap_gb,
                 "base_price": base_price,
-                "all_delta": agg_all_delta,
-                "abs_count": len(agg_abs),
-                "delta_count": len(agg_delta),
+                "source_text_raw": _truncate_for_log(combined, 200),
+                "source_text_raw_full": combined,
+                "source_text_normalized": _truncate_for_log(
+                    combined.replace("\u3000", " ").strip(), 200
+                ),
                 "extraction_method": extraction_method,
-                "combined_text": _truncate_for_log(combined, 120),
+                "labels_and_deltas": [
+                    {"label": lb, "delta": d} for lb, d in delta_specs
+                ],
+                "abs_prices": [
+                    {"label": lb, "amount": amt} for lb, amt in abs_specs
+                ],
+                "labels_extracted_count": len(delta_specs),
+                "abs_prices_count": len(abs_specs),
+                "available_colors": available_colors_list,
+                "colors_in_catalog": len(color_map),
             },
         )
-        log_seq += 1
+        _log_seq += 1
 
-        # ---- 全色快捷路径 ----
-        if agg_all_delta is not None:
-            final_price = base_price + int(agg_all_delta)
+        # ---- label → color 匹配（§4.2 Label 追踪 Map） ----
+        color_delta_map: Dict[str, int] = {}
+        color_delta_label_map: Dict[str, str] = {}
+        color_abs_map: Dict[str, int] = {}
+        color_abs_label_map: Dict[str, str] = {}
 
-            for _col_norm, (pn, _raw) in color_map.items():
-                rows.append(
-                    {
-                        "part_number": pn,
-                        "shop_name": "買取楽園",
-                        "price_new": int(final_price),
-                        "recorded_at": rec_at,
-                    }
-                )
+        # -- Delta 匹配 --
+        for label_raw, delta_val in delta_specs:
+            is_all_color = (label_raw == "全色")
+            matched_colors: List[str] = []
+            matched_pns: List[str] = []
+
+            for col_norm, (pn, col_raw) in color_map.items():
+                if is_all_color or _label_matches_color_shop14(label_raw, col_raw, col_norm):
+                    color_delta_map[col_norm] = int(delta_val)
+                    color_delta_label_map[col_norm] = label_raw
+                    matched_colors.append(col_norm)
+                    matched_pns.append(pn)
+
+            if matched_colors:
                 logger.debug(
-                    "output record (all_delta)",
+                    f"Label matching (delta): {label_raw}",
                     extra={
-                        "event_type": "output_record",
-                        "shop_name": "買取楽園",
-                        "cleaner_name": "shop14",
-                        "log_seq": log_seq,
-                        "part_number": pn,
-                        "price": int(final_price),
-                        "reason": f"all_delta({agg_all_delta})",
+                        "event_type": "label_matching",
+                        "log_seq": _log_seq,
+                        "shop_name": SHOP_NAME,
+                        "cleaner_name": CLEANER_NAME,
+                        "row_index": int(idx),
+                        "model_text": model_text,
+                        "model_norm": model_norm,
+                        "capacity_gb": cap_gb,
+                        "base_price": base_price,
+                        "label": label_raw,
+                        "delta": delta_val,
+                        "match_type": "delta",
+                        "matched_colors": matched_colors,
+                        "matched_part_numbers": matched_pns,
+                        "match_count": len(matched_colors),
+                        "source_text_raw_full": combined,
+                        "labels_and_deltas": [
+                            {"label": lb, "delta": d} for lb, d in delta_specs
+                        ],
                     },
                 )
-                log_seq += 1
-            continue
-
-        # ---- label → color 匹配 ----
-        color_abs: Dict[str, int] = {}
-        color_deltas: Dict[str, int] = {}
-
-        if agg_abs:
-            for col_norm, (pn, col_raw) in color_map.items():
-                for label_raw, abs_price in agg_abs:
-                    if _label_matches_color_shop14(label_raw, col_raw, col_norm):
-                        color_abs[col_norm] = int(abs_price)
-                        logger.debug(
-                            "label matched (abs)",
-                            extra={
-                                "event_type": "label_matching",
-                                "shop_name": "買取楽園",
-                                "cleaner_name": "shop14",
-                                "log_seq": log_seq,
-                                "label": label_raw,
-                                "color_raw": col_raw,
-                                "match_type": "abs",
-                                "value": abs_price,
-                            },
-                        )
-                        log_seq += 1
-
-        if agg_delta:
-            for col_norm, (pn, col_raw) in color_map.items():
-                for label_raw, delta in agg_delta:
-                    if _label_matches_color_shop14(label_raw, col_raw, col_norm):
-                        color_deltas[col_norm] = int(delta)
-                        logger.debug(
-                            "label matched (delta)",
-                            extra={
-                                "event_type": "label_matching",
-                                "shop_name": "買取楽園",
-                                "cleaner_name": "shop14",
-                                "log_seq": log_seq,
-                                "label": label_raw,
-                                "color_raw": col_raw,
-                                "match_type": "delta",
-                                "value": delta,
-                            },
-                        )
-                        log_seq += 1
-
-        # ---- 各色价格计算 ----
-        row_count = 0
-        for col_norm, (pn, col_raw) in color_map.items():
-            if col_norm in color_abs:
-                price_val = int(color_abs[col_norm])
-                reason = "abs"
             else:
-                d = int(color_deltas.get(col_norm, 0))
-                price_val = int(base_price + d)
-                reason = f"base+delta({d})" if col_norm in color_deltas else "base"
+                logger.warning(
+                    f"Label not matched (delta): {label_raw}",
+                    extra={
+                        "event_type": "label_no_match",
+                        "log_seq": _log_seq,
+                        "shop_name": SHOP_NAME,
+                        "cleaner_name": CLEANER_NAME,
+                        "row_index": int(idx),
+                        "model_text": model_text,
+                        "model_norm": model_norm,
+                        "capacity_gb": cap_gb,
+                        "base_price": base_price,
+                        "label": label_raw,
+                        "delta": delta_val,
+                        "match_type": "delta",
+                        "available_colors": [cn for cn in color_map.keys()],
+                        "source_text_raw_full": combined,
+                        "labels_and_deltas": [
+                            {"label": lb, "delta": d} for lb, d in delta_specs
+                        ],
+                    },
+                )
+            _log_seq += 1
+
+        # -- Abs 匹配 --
+        for label_raw, abs_price in abs_specs:
+            matched_colors = []
+            matched_pns = []
+
+            for col_norm, (pn, col_raw) in color_map.items():
+                if _label_matches_color_shop14(label_raw, col_raw, col_norm):
+                    color_abs_map[col_norm] = int(abs_price)
+                    color_abs_label_map[col_norm] = label_raw
+                    matched_colors.append(col_norm)
+                    matched_pns.append(pn)
+
+            if matched_colors:
+                logger.debug(
+                    f"Label matching (abs): {label_raw}",
+                    extra={
+                        "event_type": "label_matching",
+                        "log_seq": _log_seq,
+                        "shop_name": SHOP_NAME,
+                        "cleaner_name": CLEANER_NAME,
+                        "row_index": int(idx),
+                        "model_text": model_text,
+                        "model_norm": model_norm,
+                        "capacity_gb": cap_gb,
+                        "base_price": base_price,
+                        "label": label_raw,
+                        "abs_price": abs_price,
+                        "match_type": "abs",
+                        "matched_colors": matched_colors,
+                        "matched_part_numbers": matched_pns,
+                        "match_count": len(matched_colors),
+                        "source_text_raw_full": combined,
+                        "labels_and_deltas": [
+                            {"label": lb, "delta": d} for lb, d in delta_specs
+                        ],
+                    },
+                )
+            else:
+                logger.warning(
+                    f"Label not matched (abs): {label_raw}",
+                    extra={
+                        "event_type": "label_no_match",
+                        "log_seq": _log_seq,
+                        "shop_name": SHOP_NAME,
+                        "cleaner_name": CLEANER_NAME,
+                        "row_index": int(idx),
+                        "model_text": model_text,
+                        "model_norm": model_norm,
+                        "capacity_gb": cap_gb,
+                        "base_price": base_price,
+                        "label": label_raw,
+                        "abs_price": abs_price,
+                        "match_type": "abs",
+                        "available_colors": [cn for cn in color_map.keys()],
+                        "source_text_raw_full": combined,
+                        "labels_and_deltas": [
+                            {"label": lb, "delta": d} for lb, d in delta_specs
+                        ],
+                    },
+                )
+            _log_seq += 1
+
+        # ---- 各色价格计算 + output_record（§3.4 / §4.1） ----
+        current_row_records: List[dict] = []
+        colors_matched = 0
+
+        for col_norm, (pn, col_raw) in color_map.items():
+            if col_norm in color_abs_map:
+                effective_source = "abs_price"
+                matched_label = color_abs_label_map[col_norm]
+                spec_value = color_abs_map[col_norm]
+                final_price = spec_value
+            elif col_norm in color_delta_map:
+                effective_source = "matched_label"
+                matched_label = color_delta_label_map[col_norm]
+                spec_value = color_delta_map[col_norm]
+                final_price = base_price + spec_value
+            else:
+                effective_source = "default_zero"
+                matched_label = None
+                spec_value = None
+                final_price = base_price
+
+            if effective_source != "default_zero":
+                colors_matched += 1
 
             rows.append(
                 {
                     "part_number": pn,
-                    "shop_name": "買取楽園",
-                    "price_new": price_val,
+                    "shop_name": SHOP_NAME,
+                    "price_new": int(final_price),
                     "recorded_at": rec_at,
                 }
             )
-            row_count += 1
+
+            current_row_records.append(
+                {
+                    "part_number": pn,
+                    "color_norm": col_norm,
+                    "final_price": int(final_price),
+                    "recorded_at": rec_at,
+                    "effective_source": effective_source,
+                    "matched_label": matched_label,
+                    "spec_value": spec_value,
+                }
+            )
 
             logger.debug(
-                "output record",
+                f"Output record: {pn}",
                 extra={
                     "event_type": "output_record",
-                    "shop_name": "買取楽園",
-                    "cleaner_name": "shop14",
-                    "log_seq": log_seq,
+                    "log_seq": _log_seq,
+                    "shop_name": SHOP_NAME,
+                    "cleaner_name": CLEANER_NAME,
+                    "row_index": int(idx),
+                    "model_text": model_text,
+                    "model_norm": model_norm,
+                    "capacity_gb": cap_gb,
                     "part_number": pn,
-                    "color": col_raw,
-                    "price": price_val,
-                    "reason": reason,
+                    "color_norm": col_norm,
+                    "color_raw": col_raw,
+                    "base_price": base_price,
+                    "final_price": int(final_price),
+                    "effective_source": effective_source,
+                    "matched_label": matched_label,
+                    "spec_value": spec_value,
+                    "recorded_at": str(rec_at) if rec_at else None,
+                    "source_text_raw_full": combined,
+                    "labels_and_deltas": [
+                        {"label": lb, "delta": d} for lb, d in delta_specs
+                    ],
                 },
             )
-            log_seq += 1
+            _log_seq += 1
+
+        # ---- row_processing_summary（§3.5 DEBUG + INFO） ----
+        all_spec_values = [
+            r["spec_value"] for r in current_row_records
+            if r["spec_value"] is not None
+        ]
 
         logger.debug(
-            "row processing summary",
+            "Row summary",
             extra={
                 "event_type": "row_processing_summary",
-                "shop_name": "買取楽園",
-                "cleaner_name": "shop14",
-                "log_seq": log_seq,
-                "row_idx": idx,
-                "model": model_norm,
-                "records_produced": row_count,
+                "log_seq": _log_seq,
+                "shop_name": SHOP_NAME,
+                "cleaner_name": CLEANER_NAME,
+                "row_index": int(idx),
+                "model_text": model_text,
+                "model_norm": model_norm,
+                "capacity_gb": cap_gb,
+                "base_price": base_price,
+                "source_text_raw_full": combined,
+                "abs_applied_details": [
+                    {
+                        "pn": r["part_number"],
+                        "color": r["color_norm"],
+                        "final_price": r["final_price"],
+                        "matched_label": r["matched_label"],
+                        "spec_value": r["spec_value"],
+                    }
+                    for r in current_row_records
+                    if r["effective_source"] == "abs_price"
+                ],
+                "delta_applied_details": [
+                    {
+                        "pn": r["part_number"],
+                        "color": r["color_norm"],
+                        "final_price": r["final_price"],
+                        "matched_label": r["matched_label"],
+                        "spec_value": r["spec_value"],
+                    }
+                    for r in current_row_records
+                    if r["effective_source"] == "matched_label"
+                ],
+                "default_applied_pns": [
+                    r["part_number"]
+                    for r in current_row_records
+                    if r["effective_source"] == "default_zero"
+                ],
             },
         )
-        log_seq += 1
+        _log_seq += 1
+
+        _model_display = f"{model_text[:28]}" if len(model_text) > 28 else model_text
+        logger.info(
+            f"Row {idx:<3d} | {_model_display:<28s} | deltas: {len(delta_specs):<2d} | abs: {len(abs_specs):<2d} | matched: {colors_matched:<2d} | records: {len(current_row_records):<2d} | method: {extraction_method}",
+            extra={
+                "event_type": "row_processing_summary",
+                "log_seq": _log_seq,
+                "shop_name": SHOP_NAME,
+                "cleaner_name": CLEANER_NAME,
+                "row_index": int(idx),
+                "model_text": model_text,
+                "model_norm": model_norm,
+                "capacity_gb": cap_gb,
+                "base_price": base_price,
+                "source_text_raw_preview": _truncate_for_log(combined, 100),
+                "extraction_method": extraction_method,
+                "labels_extracted_count": len(delta_specs),
+                "abs_prices_extracted_count": len(abs_specs),
+                "colors_in_catalog": len(color_map),
+                "colors_matched_count": colors_matched,
+                "output_records_count": len(current_row_records),
+                "has_discounted_colors": any(v != 0 for v in all_spec_values),
+                "min_delta": min(all_spec_values) if all_spec_values else 0,
+                "max_delta": max(all_spec_values) if all_spec_values else 0,
+            },
+        )
+        _log_seq += 1
 
     # ---- 输出 DataFrame 组装 ----
     out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
@@ -942,9 +1131,9 @@ def clean_shop14(df: "pd.DataFrame", debug: bool = True) -> "pd.DataFrame":
         "shop14 cleaner completed",
         extra={
             "event_type": "cleaner_complete",
-            "shop_name": "買取楽園",
-            "cleaner_name": "shop14",
-            "log_seq": log_seq,
+            "shop_name": SHOP_NAME,
+            "cleaner_name": CLEANER_NAME,
+            "log_seq": _log_seq,
             "output_rows": len(out),
             "elapsed_seconds": elapsed,
         },
