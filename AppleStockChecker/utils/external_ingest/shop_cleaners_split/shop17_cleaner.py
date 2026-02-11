@@ -677,7 +677,7 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
                 # DEBUG: 详细的 label 匹配日志
                 _log_seq += 1
                 logger.debug(
-                    f"Label matching: {label_raw}",
+                    f"Label matching (delta): {label_raw}",
                     extra={
                         "event_type": "label_matching",
                         "log_seq": _log_seq,
@@ -690,11 +690,11 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
                         "base_price": base_price,
                         "label": label_raw,
                         "delta": delta,
+                        "match_type": "delta",
                         "matched_colors": matched_colors,
                         "matched_part_numbers": matched_pns,
                         "match_count": len(matched_colors),
-
-                        "source_text_raw_full": raw_color_s,  # 完整版本
+                        "source_text_raw_full": raw_color_s,
                         "labels_and_deltas": [
                             {"label": label, "delta": delta}
                             for label, delta in labels_and_deltas
@@ -706,7 +706,7 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
                 if not matched_colors:
                     _log_seq += 1
                     logger.warning(
-                        f"Label not matched: {label_raw}",
+                        f"Label not matched (delta): {label_raw}",
                         extra={
                             "event_type": "label_no_match",
                             "log_seq": _log_seq,
@@ -719,14 +719,13 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
                             "base_price": base_price,
                             "label": label_raw,
                             "delta": delta,
+                            "match_type": "delta",
                             "available_colors": [cn for cn in color_map.keys()],
-
-                            "source_text_raw_full": raw_color_s,  # 完整版本
+                            "source_text_raw_full": raw_color_s,
                             "labels_and_deltas": [
                                 {"label": label, "delta": delta}
                                 for label, delta in labels_and_deltas
                             ],
-
                         }
                     )
 

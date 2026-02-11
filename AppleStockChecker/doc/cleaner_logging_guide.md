@@ -51,52 +51,103 @@
 
 ### 3.1 `extraction_result`（DEBUG）
 
-提取完成后立即记录，包含：
+提取完成后立即记录。所有字段：
 
 ```
 event_type: "extraction_result"
+log_seq: int
+shop_name: str
+cleaner_name: str
+row_index: int
+model_text: str
+model_norm: str
+capacity_gb: int
 base_price: int | None
+source_text_raw: str                                    # 截断版（≤200字符）
+source_text_raw_full: str                               # 完整版
+source_text_normalized: str                             # 归一化后的截断版（≤200字符）
 extraction_method: "regex" | "llm" | "auto" | "none"
-labels_and_deltas: [{"label": str, "delta": int}]     # delta 类型的提取结果
-abs_prices: [{"label": str, "amount": int}]            # abs 类型的提取结果（仅 shop15/16）
+labels_and_deltas: [{"label": str, "delta": int}]      # delta 类型的提取结果
+abs_prices: [{"label": str, "amount": int}]             # abs 类型的提取结果（仅 shop15/16；shop17 无此字段）
+labels_extracted_count: int                             # delta 标签数量
+abs_prices_count: int                                   # abs 标签数量（仅 shop15/16；shop17 无此字段）
 available_colors: [{"color_norm", "part_number", "color_raw"}]
+colors_in_catalog: int
 ```
 
 ### 3.2 `label_matching`（DEBUG）
 
-每个提取到的标签的颜色匹配详情：
+每个提取到的标签的颜色匹配详情。shop15/16 有 delta 和 abs 两个变体，shop17 仅 delta。
+消息格式：`"Label matching (delta): {label}"` 或 `"Label matching (abs): {label}"`。
 
 ```
 event_type: "label_matching"
+log_seq: int
+shop_name: str
+cleaner_name: str
+row_index: int
+model_text: str
+model_norm: str
+capacity_gb: int
+base_price: int
 label: str                    # 原始标签
-match_type: "delta" | "abs"   # 匹配类型（shop15/16）；shop17 仅 delta
+delta: int                    # delta 变体时的差额值（delta 变体独有）
+abs_price: int                # abs 变体时的绝对价（abs 变体独有，仅 shop15/16）
+match_type: "delta" | "abs"   # 匹配类型
 matched_colors: [str]         # 命中的 color_norm 列表
 matched_part_numbers: [str]   # 命中的 part_number 列表
+match_count: int              # 命中数量
+source_text_raw_full: str     # 完整原文
+labels_and_deltas: [{"label": str, "delta": int}]
 ```
 
 ### 3.3 `label_no_match`（WARNING）
 
-标签未命中任何颜色时触发：
+标签未命中任何颜色时触发。消息格式：`"Label not matched (delta): {label}"` 或 `"Label not matched (abs): {label}"`。
 
 ```
 event_type: "label_no_match"
+log_seq: int
+shop_name: str
+cleaner_name: str
+row_index: int
+model_text: str
+model_norm: str
+capacity_gb: int
+base_price: int
 label: str
+delta: int                    # delta 变体时（delta 变体独有）
+abs_price: int                # abs 变体时（abs 变体独有，仅 shop15/16）
+match_type: "delta" | "abs"   # 匹配类型
 available_colors: [str]       # 该机型可用的所有 color_norm
+source_text_raw_full: str     # 完整原文
+labels_and_deltas: [{"label": str, "delta": int}]
 ```
 
 ### 3.4 `output_record`（DEBUG）
 
-每条输出记录（per part_number）的详情：
+每条输出记录（per part_number）的详情。消息格式：`"Output record: {pn}"`。
 
 ```
 event_type: "output_record"
+log_seq: int
+shop_name: str
+cleaner_name: str
+row_index: int
+model_text: str
+model_norm: str
+capacity_gb: int
 part_number: str
 color_norm: str
+color_raw: str
 base_price: int
 final_price: int
 effective_source: "abs_price" | "matched_label" | "default_zero"
 matched_label: str | None
 spec_value: int | None
+recorded_at: str | None
+source_text_raw_full: str
+labels_and_deltas: [{"label": str, "delta": int}]
 ```
 
 ### 3.5 `row_processing_summary`（DEBUG + INFO）

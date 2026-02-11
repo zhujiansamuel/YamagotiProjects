@@ -853,6 +853,7 @@ def clean_shop15(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
                 "base_price": base_price,
                 "source_text_raw": _truncate_for_log(price_text_s, 200),
                 "source_text_raw_full": price_text_s,
+                "source_text_normalized": _truncate_for_log(price_text_s.replace("\u3000", " ").strip(), 200),
                 "extraction_method": extraction_method,
                 "labels_and_deltas": [
                     {"label": label, "delta": delta}
