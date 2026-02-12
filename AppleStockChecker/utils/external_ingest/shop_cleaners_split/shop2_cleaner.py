@@ -49,8 +49,14 @@ from ..cleaner_tools import (
     safe_to_text,
 )
 
-# 初始化 logger
+# ----------------------------------------------------------------------
+# Logging
+# ----------------------------------------------------------------------
+
 logger = logging.getLogger(__name__)
+
+CLEANER_NAME = "shop2"
+SHOP_NAME = "海峡通信"
 
 # DEBUG 功能现在由 logging 级别控制（在 settings.py 的 LOGGING 配置中）
 # 控制台显示 INFO 级别（简洁），文件记录 DEBUG 级别（详细）
@@ -461,15 +467,13 @@ def _parse_adjust_rule_llm_core(rule_text: str) -> dict:
 
 def _parse_adjust_rule_shop2_llm(
     val,
-    shop_name: Optional[str] = None,
-    cleaner_name: Optional[str] = None,
-    row_context: Optional[Dict] = None,
+    row_index: object = None,
 ) -> dict:
     """
     LLM 提取 + Guardrail A/B + 正则补全（仅 LLM 路径使用）。
     Guardrails:
       A) group_label 必须在原文中出现
-      B) delta 金额的绝对值必须在原文中出现
+      B) delta 金額の绝对值必须在原文中出现
     然后用正则结果补全 LLM 漏掉的 key。
     """
     s = safe_to_text(val)
@@ -482,24 +486,20 @@ def _parse_adjust_rule_shop2_llm(
         llm_rules = _parse_adjust_rule_llm_core(s)
         llm_ok = True
     except Exception as e:
-        log_extra = {
-            "event_type": "llm_extraction_error",
-            "error": str(e),
-            "error_type": type(e).__name__,
-            "model_id": _LANGEXTRACT_MODEL_ID,
-            "model_url": _LANGEXTRACT_MODEL_URL,
-            "text_length": len(s),
-            "text_preview": _truncate_for_log(s, 100),
-        }
-        if shop_name:
-            log_extra["shop_name"] = shop_name
-        if cleaner_name:
-            log_extra["cleaner_name"] = cleaner_name
-        if row_context:
-            log_extra.update(row_context)
         logger.warning(
             "LangExtract extraction failed",
-            extra=log_extra,
+            extra={
+                "event_type": "llm_extraction_error",
+                "shop_name": SHOP_NAME,
+                "cleaner_name": CLEANER_NAME,
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "model_id": _LANGEXTRACT_MODEL_ID,
+                "model_url": _LANGEXTRACT_MODEL_URL,
+                "row_index": row_index,
+                "text_length": len(s),
+                "text_preview": _truncate_for_log(s, 100),
+            },
         )
 
     # Guardrail A & B: label/amount 必须在原文出现
@@ -532,9 +532,7 @@ def _parse_adjust_rule_shop2_llm(
 
 def _parse_adjust_rule_shop2_dispatch(
     val,
-    shop_name: Optional[str] = None,
-    cleaner_name: Optional[str] = None,
-    row_context: Optional[Dict] = None,
+    row_index: object = None,
 ) -> Tuple[dict, str]:
     """
     根据 SHOP2_EXTRACTION_MODE 决定提取方式：
@@ -551,12 +549,7 @@ def _parse_adjust_rule_shop2_dispatch(
         return rules, "regex"
 
     if mode == "llm":
-        rules = _parse_adjust_rule_shop2_llm(
-            val,
-            shop_name=shop_name,
-            cleaner_name=cleaner_name,
-            row_context=row_context,
-        )
+        rules = _parse_adjust_rule_shop2_llm(val, row_index=row_index)
         return rules, "llm"
 
     # ---- auto: 正则优先，正则无结果时 LLM 兜底 ----
@@ -564,12 +557,7 @@ def _parse_adjust_rule_shop2_dispatch(
     if regex_rules:
         return regex_rules, "regex"
 
-    llm_rules = _parse_adjust_rule_shop2_llm(
-        val,
-        shop_name=shop_name,
-        cleaner_name=cleaner_name,
-        row_context=row_context,
-    )
+    llm_rules = _parse_adjust_rule_shop2_llm(val, row_index=row_index)
     return llm_rules, "llm"
 
 # ----------------------------------------------------------------------
@@ -578,22 +566,20 @@ def _parse_adjust_rule_shop2_dispatch(
 
 def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> pd.DataFrame:
     start_time = time.time()
-    _log_seq = 0  # 日志序号：同一次 clean_shop2 调用内单调递增，用于 ELK 排序
-
-    # 定义清洗器级别的上下文信息，将被所有下级日志继承
-    CLEANER_NAME = "shop2"
-    SHOP_NAME = "海峡通信"
+    _log_seq = 0
 
     logger.info(
-        "Starting shop2 cleaner",
+        "shop2 cleaner started",
         extra={
             "event_type": "cleaner_start",
             "shop_name": SHOP_NAME,
             "cleaner_name": CLEANER_NAME,
+            "log_seq": _log_seq,
             "input_rows": len(shop2_df),
-            "start_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-        }
+            "extraction_mode": SHOP2_EXTRACTION_MODE,
+        },
     )
+    _log_seq += 1
 
     # 统一列名（小写）
     df = shop2_df.copy()
@@ -603,7 +589,6 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
     need_cols = ["data2-1", "data2-2", "data3", "data5", "time-scraped"]
     for c in need_cols:
         if c not in df.columns:
-            _log_seq += 1
             logger.warning(
                 f"Missing column, filling with None: {c}",
                 extra={
@@ -613,25 +598,26 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
                     "cleaner_name": CLEANER_NAME,
                     "missing_column": c,
                     "available_columns": list(df.columns),
-                }
+                },
             )
+            _log_seq += 1
             df[c] = None
 
     # 只保留 simfree 未開封
     df = df[df["data2-2"].apply(_is_target)].copy().reset_index(drop=True)
     if df.empty:
-        elapsed_time = time.time() - start_time
+        elapsed = round(time.time() - start_time, 2)
         logger.info(
-            "Shop2 cleaner completed (no target rows)",
+            "shop2 cleaner completed (no target rows)",
             extra={
                 "event_type": "cleaner_complete",
                 "shop_name": SHOP_NAME,
                 "cleaner_name": CLEANER_NAME,
+                "log_seq": _log_seq,
                 "input_rows": len(shop2_df),
                 "output_records": 0,
-                "elapsed_seconds": round(elapsed_time, 2),
-                "end_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-            }
+                "elapsed_seconds": elapsed,
+            },
         )
         return pd.DataFrame(
             columns=["part_number", "shop_name", "price_new", "recorded_at"]
@@ -640,7 +626,6 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
     # iphone17_df 预处理
     info = _load_iphone17_info_df_from_db()
     if "capacity_gb" not in info.columns:
-        _log_seq += 1
         logger.error(
             "Missing required column: capacity_gb in iphone17_info",
             extra={
@@ -649,12 +634,12 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
                 "shop_name": SHOP_NAME,
                 "cleaner_name": CLEANER_NAME,
                 "missing_column": "capacity_gb",
-            }
+            },
         )
+        _log_seq += 1
         raise ValueError("iphone17_info.csv 需要包含 capacity_gb 列")
     info["color"] = info["color"].apply(_norm)
 
-    _log_seq += 1
     logger.debug(
         "After filter",
         extra={
@@ -663,13 +648,13 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
             "shop_name": SHOP_NAME,
             "cleaner_name": CLEANER_NAME,
             "total_rows_after_filter": len(df),
-        }
+        },
     )
+    _log_seq += 1
 
     out_rows: list[dict] = []
 
     for pos, row in enumerate(df.to_dict("records")):
-        current_row_records: list[dict] = []
         rec_raw = row.get("time-scraped")
         recorded_at = parse_dt_aware(rec_raw)
 
@@ -687,7 +672,7 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
                     "cleaner_name": CLEANER_NAME,
                     "row_index": pos,
                     "skip_reason": "data2-1 empty",
-                }
+                },
             )
             continue
 
@@ -702,7 +687,7 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
                     "row_index": pos,
                     "skip_reason": "capacity_gb parse failed",
                     "data2_1_raw": _truncate_for_log(raw_modelcap, 100),
-                }
+                },
             )
             continue
 
@@ -717,7 +702,7 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
                     "row_index": pos,
                     "skip_reason": "model_name loose match failed",
                     "data2_1_raw": _truncate_for_log(raw_modelcap, 100),
-                }
+                },
             )
             continue
 
@@ -735,7 +720,7 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
                     "skip_reason": "no info match",
                     "model_name": model_name,
                     "capacity_gb": cap_gb,
-                }
+                },
             )
             continue
 
@@ -750,32 +735,25 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
                     "row_index": pos,
                     "skip_reason": "base_price parse failed",
                     "data3_raw": _truncate_for_log(str(raw_price), 100),
-                }
+                },
             )
             continue
 
-        # 构建行级上下文，用于传递给下级函数和日志
-        row_context = {
-            "row_index": pos,
-            "model_name": model_name,
-            "capacity_gb": cap_gb,
-            "base_price": base_price,
-        }
-
-        # 提取颜色减价规则（dispatch: regex / llm / auto）
+        # ---- 提取 ----
         rules, extraction_method = _parse_adjust_rule_shop2_dispatch(
-            raw_rule,
-            shop_name=SHOP_NAME,
-            cleaner_name=CLEANER_NAME,
-            row_context=row_context,
+            raw_rule, row_index=pos,
         )
 
         raw_rule_s = safe_to_text(raw_rule)
+        source_text_raw_full = raw_rule_s
 
-        # DEBUG: 记录提取结果
+        # ---- delta_specs from rules ----
+        delta_specs: List[Tuple[str, int]] = list(rules.items())
+
+        # ---- available_colors 列表 ----
         available_colors_list = sub["color"].dropna().astype(str).unique().tolist()
 
-        _log_seq += 1
+        # ---- extraction_result（§3.1） ----
         logger.debug(
             "Extraction result",
             extra={
@@ -784,22 +762,32 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
                 "shop_name": SHOP_NAME,
                 "cleaner_name": CLEANER_NAME,
                 "row_index": pos,
-                "data2_1_raw": _truncate_for_log(raw_modelcap, 200),
-                "model_name": model_name,
+                "model_text": raw_modelcap,
+                "model_norm": model_name,
                 "capacity_gb": cap_gb,
                 "base_price": base_price,
-                "data5_raw": _truncate_for_log(raw_rule_s, 200),
-                "data5_raw_full": raw_rule_s,
+                "source_text_raw": _truncate_for_log(source_text_raw_full, 200),
+                "source_text_raw_full": source_text_raw_full,
+                "source_text_normalized": _truncate_for_log(
+                    source_text_raw_full.replace("\u3000", " ").strip(), 200,
+                ) if source_text_raw_full else "",
                 "extraction_method": extraction_method,
-                "parsed_rules": {k: v for k, v in rules.items()},
-                "rules_count": len(rules),
+                "labels_and_deltas": [
+                    {"label": g, "delta": d} for g, d in delta_specs
+                ],
+                "abs_prices": [],
+                "labels_extracted_count": len(delta_specs),
+                "abs_prices_count": 0,
                 "available_colors": available_colors_list,
                 "colors_in_catalog": len(sub),
-            }
+            },
         )
+        _log_seq += 1
 
+        # ---- 应用规则并生成输出 ----
         used_groups: set[str] = set()
-        output_records: list[dict] = []
+        current_row_records: list[dict] = []
+        colors_matched = 0
 
         for _, it in sub.iterrows():
             part = _norm(it.get("part_number"))
@@ -814,7 +802,7 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
                         "row_index": pos,
                         "color": color,
                         "skip_reason": "empty part_number",
-                    }
+                    },
                 )
                 continue
 
@@ -822,37 +810,49 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
             for tr in trace:
                 used_groups.add(tr["group"])
 
-            # 判断 delta 来源
-            delta_source = "matched_label" if trace else "default_zero"
-
-            # label matching 日志
             if trace:
-                matched_groups = [tr["group"] for tr in trace]
+                effective_source = "matched_label"
+                matched_label = ", ".join(tr["group"] for tr in trace)
+                spec_value = adj
+                colors_matched += 1
+            else:
+                effective_source = "default_zero"
+                matched_label = None
+                spec_value = None
+
+            # ---- label_matching（§3.2） ----
+            if trace:
                 _log_seq += 1
                 logger.debug(
-                    f"Label matching: {color}",
+                    f"Label matching (delta): {color}",
                     extra={
                         "event_type": "label_matching",
                         "log_seq": _log_seq,
                         "shop_name": SHOP_NAME,
                         "cleaner_name": CLEANER_NAME,
                         "row_index": pos,
-                        "model_name": model_name,
+                        "model_text": raw_modelcap,
+                        "model_norm": model_name,
                         "capacity_gb": cap_gb,
                         "base_price": base_price,
-                        "color": color,
-                        "part_number": part,
-                        "adjustment": adj,
-                        "matched_groups": matched_groups,
+                        "label": matched_label,
+                        "delta": adj,
+                        "match_type": "delta",
+                        "matched_colors": [color],
+                        "matched_part_numbers": [part],
+                        "match_count": 1,
                         "trace": trace,
-                        "data5_raw_full": raw_rule_s,
-                    }
+                        "source_text_raw_full": source_text_raw_full,
+                        "labels_and_deltas": [
+                            {"label": g, "delta": d} for g, d in delta_specs
+                        ],
+                    },
                 )
 
             price = int(base_price + adj)
             if price <= 0:
                 logger.warning(
-                    f"Skipping item: price <= 0",
+                    "Skipping item: price <= 0",
                     extra={
                         "event_type": "output_record",
                         "shop_name": SHOP_NAME,
@@ -861,15 +861,14 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
                         "color": color,
                         "part_number": part,
                         "base_price": base_price,
-                        "adjustment": adj,
+                        "spec_value": adj,
                         "final_price": price,
                         "skip_reason": "price <= 0",
-                    }
+                    },
                 )
                 continue
 
-            # DEBUG: 每条输出记录单独一条日志
-            _log_seq += 1
+            # ---- output_record（§3.4） ----
             logger.debug(
                 f"Output record: {part}",
                 extra={
@@ -878,70 +877,76 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
                     "shop_name": SHOP_NAME,
                     "cleaner_name": CLEANER_NAME,
                     "row_index": pos,
-                    "model_name": model_name,
+                    "model_text": raw_modelcap,
+                    "model_norm": model_name,
                     "capacity_gb": cap_gb,
                     "part_number": part,
-                    "color": color,
+                    "color_norm": color,
                     "base_price": base_price,
-                    "adjustment": adj,
                     "final_price": price,
-                    "delta_source": delta_source,
-                    "trace": trace,
+                    "effective_source": effective_source,
+                    "matched_label": matched_label,
+                    "spec_value": spec_value,
                     "recorded_at": str(recorded_at) if recorded_at else None,
-                    "data5_raw_full": raw_rule_s,
-                }
+                    "source_text_raw_full": source_text_raw_full,
+                    "labels_and_deltas": [
+                        {"label": g, "delta": d} for g, d in delta_specs
+                    ],
+                },
             )
+            _log_seq += 1
 
-            output_records.append({
+            out_rows.append({
                 "part_number": part,
-                "color": color,
-                "adjustment": adj,
-                "final_price": price,
-                "delta_source": delta_source,
+                "shop_name": SHOP_NAME,
+                "price_new": price,
+                "recorded_at": recorded_at,
             })
-
-            out_rows.append(
-                {
-                    "part_number": part,
-                    "shop_name": SHOP_NAME,
-                    "price_new": price,
-                    "recorded_at": recorded_at,
-                }
-            )
 
             current_row_records.append({
                 "part_number": part,
-                "color": color,
-                "adjustment": adj,
+                "color_norm": color,
                 "final_price": price,
                 "recorded_at": recorded_at,
-                "delta_source": delta_source,
+                "effective_source": effective_source,
+                "matched_label": matched_label,
+                "spec_value": spec_value,
             })
 
-        # WARNING: rules 未命中任何颜色
+        # ---- label_no_match（§3.3）: 未命中的 rule groups ----
         if rules:
             unused = [g for g in rules.keys() if g not in used_groups]
-            if unused:
-                _log_seq += 1
+            for ug in unused:
                 logger.warning(
-                    f"Unmatched rule groups: {unused}",
+                    f"Label not matched (delta): {ug}",
                     extra={
                         "event_type": "label_no_match",
                         "log_seq": _log_seq,
                         "shop_name": SHOP_NAME,
                         "cleaner_name": CLEANER_NAME,
                         "row_index": pos,
-                        "model_name": model_name,
+                        "model_text": raw_modelcap,
+                        "model_norm": model_name,
                         "capacity_gb": cap_gb,
-                        "unmatched_groups": unused,
+                        "base_price": base_price,
+                        "label": ug,
+                        "delta": rules[ug],
+                        "match_type": "delta",
                         "available_colors": available_colors_list,
-                        "data5_raw_full": raw_rule_s,
-                        "parsed_rules": {k: v for k, v in rules.items()},
-                    }
+                        "source_text_raw_full": source_text_raw_full,
+                        "labels_and_deltas": [
+                            {"label": g, "delta": d} for g, d in delta_specs
+                        ],
+                    },
                 )
+                _log_seq += 1
 
-        # DEBUG: 行级详细汇总
-        _log_seq += 1
+        # ---- row_processing_summary（§3.5 DEBUG + INFO） ----
+        all_spec_values = [
+            r["spec_value"] for r in current_row_records
+            if r["spec_value"] is not None
+        ]
+
         logger.debug(
             "Row summary",
             extra={
@@ -950,56 +955,72 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
                 "shop_name": SHOP_NAME,
                 "cleaner_name": CLEANER_NAME,
                 "row_index": pos,
-                "model_name": model_name,
+                "model_text": raw_modelcap,
+                "model_norm": model_name,
                 "capacity_gb": cap_gb,
                 "base_price": base_price,
-                "data5_raw_full": raw_rule_s,
-                "current_row_records": [
-                    {"pn": r["part_number"], "color": r["color"], "adj": r["adjustment"], "final_price": r["final_price"], "src": r["delta_source"]}
+                "source_text_raw_full": source_text_raw_full,
+                "abs_applied_details": [],
+                "delta_applied_details": [
+                    {
+                        "pn": r["part_number"],
+                        "color": r["color_norm"],
+                        "final_price": r["final_price"],
+                        "matched_label": r["matched_label"],
+                        "spec_value": r["spec_value"],
+                    }
                     for r in current_row_records
+                    if r["effective_source"] == "matched_label"
                 ],
-            }
+                "default_applied_pns": [
+                    r["part_number"]
+                    for r in current_row_records
+                    if r["effective_source"] == "default_zero"
+                ],
+            },
         )
-
-        # INFO: 行级概览（简洁）
-        colors_matched = len(used_groups)
         _log_seq += 1
+
+        _model_display = raw_modelcap[:28] if len(raw_modelcap) > 28 else raw_modelcap
         logger.info(
-            f"Row {pos:<3d} | {raw_modelcap:<28s} | rules: {len(rules):<2d} | matched: {colors_matched:<2d} | records: {len(output_records):<2d} | method: {extraction_method}",
+            f"Row {pos:<3d} | {_model_display:<28s} | deltas: {len(delta_specs):<2d} | abs: 0  | matched: {colors_matched:<2d} | records: {len(current_row_records):<2d} | method: {extraction_method}",
             extra={
                 "event_type": "row_processing_summary",
                 "log_seq": _log_seq,
                 "shop_name": SHOP_NAME,
                 "cleaner_name": CLEANER_NAME,
                 "row_index": pos,
-                "model_name": model_name,
+                "model_text": raw_modelcap,
+                "model_norm": model_name,
                 "capacity_gb": cap_gb,
                 "base_price": base_price,
-                "data5_raw_preview": _truncate_for_log(raw_rule_s, 100),
+                "source_text_raw_preview": _truncate_for_log(source_text_raw_full, 100),
                 "extraction_method": extraction_method,
-                "rules_count": len(rules),
+                "labels_extracted_count": len(delta_specs),
+                "abs_prices_extracted_count": 0,
                 "colors_in_catalog": len(sub),
                 "colors_matched_count": colors_matched,
-                "output_records_count": len(output_records),
-                "has_discounted_colors": any(v != 0 for v in rules.values()) if rules else False,
-                "min_delta": min(rules.values()) if rules else 0,
-                "max_delta": max(rules.values()) if rules else 0,
-            }
+                "output_records_count": len(current_row_records),
+                "has_discounted_colors": any(v != 0 for v in all_spec_values),
+                "min_delta": min(all_spec_values) if all_spec_values else 0,
+                "max_delta": max(all_spec_values) if all_spec_values else 0,
+            },
         )
+        _log_seq += 1
 
     if not out_rows:
-        elapsed_time = time.time() - start_time
+        elapsed = round(time.time() - start_time, 2)
         logger.info(
-            "Shop2 cleaner completed (no output rows)",
+            "shop2 cleaner completed (no output rows)",
             extra={
                 "event_type": "cleaner_complete",
                 "shop_name": SHOP_NAME,
                 "cleaner_name": CLEANER_NAME,
+                "log_seq": _log_seq,
                 "input_rows": len(shop2_df),
                 "output_records": 0,
-                "elapsed_seconds": round(elapsed_time, 2),
-                "end_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-            }
+                "elapsed_seconds": elapsed,
+            },
         )
         return pd.DataFrame(
             columns=["part_number", "shop_name", "price_new", "recorded_at"]
@@ -1009,18 +1030,18 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
         out_rows, columns=["part_number", "shop_name", "price_new", "recorded_at"]
     )
 
-    elapsed_time = time.time() - start_time
+    elapsed = round(time.time() - start_time, 2)
     logger.info(
-        "Shop2 cleaner completed",
+        "shop2 cleaner completed",
         extra={
             "event_type": "cleaner_complete",
             "shop_name": SHOP_NAME,
             "cleaner_name": CLEANER_NAME,
+            "log_seq": _log_seq,
             "input_rows": len(shop2_df),
             "output_records": len(out),
-            "elapsed_seconds": round(elapsed_time, 2),
-            "end_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-        }
+            "elapsed_seconds": elapsed,
+        },
     )
 
     return out
