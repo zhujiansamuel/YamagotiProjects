@@ -37,6 +37,28 @@ const AVG_LINES_DEFAULTS = [
 
 
 
+  模式 B：内联构建（shop 4, 7）
+
+  - 没有独立函数，在 clean_shop*() 里直接用 for 循环构建
+  - value 更简单，只存 part_number，不保留 color_raw
+
+  模式 C：JAN 条码匹配（shop 1, 18）
+
+  - 通过 JAN（条码数字）直接映射到 part_number
+  - shop18 额外提供 (model, cap, color) 三元组作为 fallback
+
+  模式 D：无预构建（shop 2, 9, 13）
+
+  - shop2：直接对 info_df 做 pandas filter
+  - shop9：_build_color_aliases() 只是同义词辅助，不是主查找表
+  - shop13：用 groupby 聚合，返回每个 (model, cap) 下的 PN 列表
+
+
+
+
+
+
+
 
 git fetch --all --prune
 git reset --hard origin/master
