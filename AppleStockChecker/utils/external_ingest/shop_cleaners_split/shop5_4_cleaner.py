@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Protocol, Dict, Callable, Optional,List
-from ...external_ingest.helpers import to_int_yen, parse_dt_aware
+from ...external_ingest.helpers import parse_dt_aware
+from ..cleaner_tools import extract_price_yen
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -69,23 +70,6 @@ def _extract_jan_from_data(x: object) -> Optional[str]:
     m2 = re.search(r"\b(\d{13})\b", s)
     return m2.group(1) if m2 else None
 
-def _price_from_shop5(x: object) -> Optional[int]:
-    """
-    price 列 -> price_new：
-      - 去掉前导 '～'、'新品'、'未開封' 等修饰
-      - 支持区间 '～162,500円' / '162,500～170,000円'：取最大值
-      - 支持 '10.5万'
-    """
-    if x is None:
-        return None
-    s = str(x).strip()
-    s = s.lstrip("～")  # '～162,500円' -> '162,500円'
-    s = (s.replace("新品", "")
-           .replace("新\u54c1", "")
-           .replace("未開封", "")
-           .replace("未开封", ""))
-    return to_int_yen(s)
-
 def clean_shop5_4(df: pd.DataFrame) -> pd.DataFrame:
     print("shop5-4:森森買取---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     """
@@ -117,7 +101,7 @@ def clean_shop5_4(df: pd.DataFrame) -> pd.DataFrame:
     jan_series = src["data"].map(_extract_jan_from_data)
     pn_series  = jan_series.map(lambda j: jan_to_pn.get(j) if j and re.fullmatch(r"\d{13}", j) else None)
 
-    price_new   = src["price"].map(_price_from_shop5)
+    price_new   = src["price"].map(extract_price_yen)
     recorded_at = src["time-scraped"].map(parse_dt_aware)
 
     # 5) 组装结果：必须有 PN & 价格

@@ -8,6 +8,45 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import re
 
+from .helpers import to_int_yen
+
+
+# ----------------------------------------------------------------------
+# 绝对值价格提取（公共函数）
+# ----------------------------------------------------------------------
+
+def extract_price_yen(raw: object) -> Optional[int]:
+    """
+    从价格字段提取整数日元（绝对值价格）。
+
+    统一处理流程：
+      1. safe_to_text() 安全转字符串（兼容 NaN/None/数字等）
+      2. normalize_text_basic() 全角→半角 + 去换行 + 合并空格
+      3. 去除前导 '～' 及修饰词（新品/未開封 等）
+      4. to_int_yen() 解析日元整数（支持区间取最大、万、逗号分隔、合理区间过滤）
+
+    替代原各 shop 中的重复 wrapper：
+      _price_from_shop3 / _price_from_shop5 / _price_from_shop6_data7 /
+      _price_from_shop7 / _price_from_shop10 / _price_from_shop13 /
+      _extract_price_new
+
+    参数:
+        raw: 价格字段的原始值（str / int / float / None / NaN 等）
+
+    返回:
+        Optional[int]: 解析出的日元整数，无法解析时返回 None
+    """
+    s = safe_to_text(raw)
+    if not s:
+        return None
+    s = normalize_text_basic(s)
+    s = s.lstrip("～")
+    s = (s.replace("新品", "")
+          .replace("新\u54c1", "")
+          .replace("未開封", "")
+          .replace("未开封", ""))
+    return to_int_yen(s)
+
 
 def _load_iphone17_info_df_from_db() -> pd.DataFrame:
     """
@@ -84,6 +123,9 @@ def _normalize_model_generic(text: str) -> str:
         return ""
     t = str(text).replace("\u3000", " ")
     t = re.sub(r"\s+", " ", t)
+
+    # 罕见写法归一：'i phone' / 'I Phone' → 'iPhone'
+    t = re.sub(r"(?i)\bi\s+phone\b", "iPhone", t)
 
     # 日文别名到英文
     t = (t.replace("プロマックス", "Pro Max")

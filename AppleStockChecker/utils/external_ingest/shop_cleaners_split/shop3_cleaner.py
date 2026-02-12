@@ -9,7 +9,7 @@ shop3 清洗器 — 買取一丁目
     │
     ├─ _parse_capacity_gb()                ← Step 2: 容量解析（外部工具）
     │
-    ├─ _price_from_shop3()                 ← Step 3: 基础价提取
+    ├─ extract_price_yen()                 ← Step 3: 基础价提取（公共函数）
     │
     ├─ _extract_color_deltas_shop3_dispatch()  ← Step 6: 模式调度
     │   │
@@ -46,6 +46,7 @@ from ..cleaner_tools import (
     _norm_strip,
     _normalize_amount_text,
     normalize_text_basic,
+    extract_price_yen,
 )
 
 # ----------------------------------------------------------------------
@@ -93,25 +94,6 @@ def _clean_label_token(tok: str) -> str:
     t = re.sub(r"\(.*?\)", "", t)
     t = re.sub(r"（.*?）", "", t)
     return t.strip()
-
-# ----------------------------------------------------------------------
-# Step 3: 基础价提取
-# ----------------------------------------------------------------------
-
-def _price_from_shop3(x: object) -> Optional[int]:
-    """
-    data5 -> price_new
-    - 预期形如 '¥177,000'；也兼容 '～177,000円'/'10.5万' 等；取区间最大值
-    - 去除可能出现的修饰词（"新品/未開封"等）
-    """
-    if x is None:
-        return None
-    s = str(x)
-    s = (s.replace("新品", "")
-           .replace("新\u54c1", "")
-           .replace("未開封", "")
-           .replace("未开封", ""))
-    return to_int_yen(s)
 
 # ----------------------------------------------------------------------
 # Step 4: 正则提取差价
@@ -579,7 +561,7 @@ def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
     cap_gb     = src["title"].map(_parse_capacity_gb)
 
     try:
-        base_price = src["data5"].map(_price_from_shop3)
+        base_price = src["data5"].map(extract_price_yen)
     except Exception:
         base_price = src["data5"].map(to_int_yen)
     recorded_at = src["time-scraped"].map(parse_dt_aware)

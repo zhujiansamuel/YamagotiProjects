@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Protocol, Dict, Callable, Optional,List
-from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db
+from ...external_ingest.helpers import parse_dt_aware
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db, extract_price_yen
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -56,21 +56,7 @@ def clean_shop13(df: pd.DataFrame) -> pd.DataFrame:
     model_norm = df["買取商品2"].map(_normalize_model_generic)
     cap_gb     = df["買取商品2"].map(_parse_capacity_gb)
 
-    def _price_from_shop13(x: object) -> Optional[int]:
-        if x is None:
-            return None
-        # 去掉常见修饰词，交给 to_int_yen 解析（支持 '円'、'¥'、'～'、'万' 等）
-        s = (
-            str(x)
-            .replace("新品", "")
-            .replace("新\u54c1", "")
-            .replace("未開封", "")
-            .replace("未开封", "")
-            .lstrip("～")
-        )
-        return to_int_yen(s)
-
-    price_new   = df["新品価格"].map(_price_from_shop13)
+    price_new   = df["新品価格"].map(extract_price_yen)
     recorded_at = df["time-scraped"].map(parse_dt_aware)
 
     # --- 展开为行 ---

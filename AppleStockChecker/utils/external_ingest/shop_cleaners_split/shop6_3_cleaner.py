@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Protocol, Dict, Callable, Optional,List
-from ...external_ingest.helpers import to_int_yen, parse_dt_aware
+from ...external_ingest.helpers import parse_dt_aware
+from ..cleaner_tools import extract_price_yen
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -63,17 +64,6 @@ def _extract_pn_from_text(text: object) -> Optional[str]:
     m = _PN_REGEX.search(s)
     return m.group(0) if m else None
 
-def _price_from_shop6_data7(x: object) -> Optional[int]:
-    if x is None:
-        return None
-    s = str(x)
-    # 去一些修饰词
-    s = (s.replace("新品", "")
-           .replace("新\u54c1", "")
-           .replace("未開封", "")
-           .replace("未开封", ""))
-    return to_int_yen(s)
-
 def clean_shop6_3(df: pd.DataFrame) -> pd.DataFrame:
     print("shop6-3:買取ルデヤ---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     # 必要列检查
@@ -97,7 +87,7 @@ def clean_shop6_3(df: pd.DataFrame) -> pd.DataFrame:
     pn_fallback = src["data8"].map(_extract_pn_from_text)  # 从 data8 兜底提取 PN
 
     # 价格/时间
-    price_new = src["data7"].map(_price_from_shop6_data7)
+    price_new = src["data7"].map(extract_price_yen)
     recorded_at = src["time-scraped"].map(parse_dt_aware)
 
     # 组装：优先 JAN→PN；无则 data8 提取；再无则丢弃

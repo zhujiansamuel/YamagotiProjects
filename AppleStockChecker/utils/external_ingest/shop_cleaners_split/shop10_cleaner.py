@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Protocol, Dict, Callable, Optional,List
-from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic
+from ...external_ingest.helpers import parse_dt_aware
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, extract_price_yen
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -64,13 +64,7 @@ def clean_shop10(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) ->
     model_norm = df["data2"].map(_normalize_model_generic)
     cap_gb     = df["data2"].map(_parse_capacity_gb)
 
-    def _price_from_shop10(x: object) -> int | None:
-        if x is None:
-            return None
-        s = str(x).replace("新品", "").replace("新\u54c1", "").replace("未開封", "").replace("未开封", "")
-        return to_int_yen(s)
-
-    price_new   = df["price"].map(_price_from_shop10)
+    price_new   = df["price"].map(extract_price_yen)
     recorded_at = df["time-scraped"].map(parse_dt_aware)
 
     groups = (
