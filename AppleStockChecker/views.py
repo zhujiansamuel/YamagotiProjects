@@ -1507,7 +1507,9 @@ class PurchasingShopTimeAnalysisViewSet(
     viewsets.GenericViewSet,
 ):
     """
-    可以给出数据不过累赘当时临时弃用
+    DEPRECATED: 主计算路径已迁移至 ClickHouse，请使用 PSTACHFullViewSet (ch/psta)。
+    本 ViewSet 仍读 PG PurchasingShopTimeAnalysis 表，保留供旧前端兼容。
+    参考: docs/REFACTOR_PLAN_V1.md §11.2, §14
     """
     queryset = (PurchasingShopTimeAnalysis.objects
                 .select_related("shop", "iphone")
@@ -1536,8 +1538,9 @@ class PurchasingShopTimeAnalysisPSTACompactViewSet(
     viewsets.GenericViewSet,
 ):
     """
-    实际向前台提供数据的接口
-    （没有做机种聚合，没有店铺聚合，没有统计信息，只用分钟对齐）
+    DEPRECATED: 主计算路径已迁移至 ClickHouse，请使用 PSTACHCompactViewSet (ch/psta-compact)。
+    本 ViewSet 仍读 PG PurchasingShopTimeAnalysis 表，保留供旧前端兼容。
+    参考: docs/REFACTOR_PLAN_V1.md §11.2, §14
     """
     queryset = (PurchasingShopTimeAnalysis.objects
                 .select_related("shop", "iphone")

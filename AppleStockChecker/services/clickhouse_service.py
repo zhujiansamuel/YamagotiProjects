@@ -371,6 +371,43 @@ class ClickHouseService:
 
         return result, total
 
+    def count_price_aligned(
+        self,
+        *,
+        run_id: str = "live",
+        shop_id: int | None = None,
+        iphone_id: int | None = None,
+        shop_ids: list[int] | None = None,
+        iphone_ids: list[int] | None = None,
+        bucket_gte: datetime | None = None,
+        bucket_lte: datetime | None = None,
+    ) -> int:
+        """price_aligned 快速计数。"""
+        wheres = ["run_id = %(run_id)s"]
+        params: dict = {"run_id": run_id}
+        if shop_id is not None:
+            wheres.append("shop_id = %(shop_id)s")
+            params["shop_id"] = shop_id
+        if iphone_id is not None:
+            wheres.append("iphone_id = %(iphone_id)s")
+            params["iphone_id"] = iphone_id
+        if shop_ids:
+            wheres.append("shop_id IN %(shop_ids)s")
+            params["shop_ids"] = shop_ids
+        if iphone_ids:
+            wheres.append("iphone_id IN %(iphone_ids)s")
+            params["iphone_ids"] = iphone_ids
+        if bucket_gte:
+            wheres.append("bucket >= %(b_gte)s")
+            params["b_gte"] = _to_naive(bucket_gte)
+        if bucket_lte:
+            wheres.append("bucket <= %(b_lte)s")
+            params["b_lte"] = _to_naive(bucket_lte)
+        where_clause = " AND ".join(wheres)
+        return self.client.execute(
+            f"SELECT count() FROM price_aligned WHERE {where_clause}", params
+        )[0][0]
+
     def count_features(self, *, run_id: str = "live", scope_prefix: str | None = None) -> int:
         """快速计数。"""
         wheres = ["run_id = %(run_id)s"]
