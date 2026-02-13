@@ -20,6 +20,8 @@ from .views import (
     FeaturePointsViewSet,
     CohortListViewSet,
     ShopWeightProfileListViewSet,
+    PSTACHFullViewSet,
+    PSTACHCompactViewSet,
 )
 from AppleStockChecker.views_options import (
     ScopeOptionsView,
@@ -171,6 +173,9 @@ router.register(r'cohorts', CohortListViewSet, basename='cohort-list')
 # ]
 """
 router.register(r'shop-profiles', ShopWeightProfileListViewSet, basename='shop-profile-list')
+# CH-backed PSTA (price_aligned)
+router.register(r'ch/psta', PSTACHFullViewSet, basename='ch-psta-full')
+router.register(r'ch/psta-compact', PSTACHCompactViewSet, basename='ch-psta-compact')
 """
 # [
 #     {
