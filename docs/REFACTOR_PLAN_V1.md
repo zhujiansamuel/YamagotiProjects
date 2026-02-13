@@ -643,8 +643,374 @@ PIPELINE_BATCH_DAYS = int(os.getenv('PIPELINE_BATCH_DAYS', 30))
 
 ---
 
-## 20. 待讨论 / 后续
+## 20. 实施阶段计划（已确定）
 
-- [ ] 实施阶段划分与优先级
-- [ ] 测试策略（单元测试 / 集成测试 / 回归对比）
-- [ ] 从旧系统切换到新系统的过渡方案
+> 当前状态: 全线停止运行，专心线下开发
+> 回归对比: 不做（无历史对比数据）
+> 过渡方案: 直接替换，不需要 feature flag
+
+---
+
+### Phase 1: 基础设施 + 时间对齐
+
+**目标**: CH 能跑起来，PG 数据能对齐后写入 CH
+
+**Step 1.1 — Docker + CH 建表**
+- [ ] `docker-compose.yml` 新增 clickhouse 服务
+- [ ] 创建 `AppleStockChecker/clickhouse/init.sql`
+  - `price_aligned` 表 (§5.1)
+  - `features_wide` 表 (§5.2)
+- [ ] 验证: `docker compose up clickhouse -d` 启动成功，`clickhouse-client` 能连接
+
+**Step 1.2 — Django Settings + ClickHouseService 基础**
+- [ ] `settings.py` 加 CH 配置 (§18)
+- [ ] `.env` 加 CH 环境变量
+- [ ] 创建 `AppleStockChecker/services/clickhouse_service.py`
+  - `__init__`: 建立连接
+  - `insert_price_aligned(data, run_id)`: 批量写入
+  - `insert_features(data, run_id)`: 批量写入
+  - `drop_run(run_id)`: 按分区删除
+  - `list_runs()`: 查询现有 run_id
+- [ ] 验证: Django shell 中能 `ClickHouseService().list_runs()` 返回空列表
+
+**Step 1.3 — engine 骨架 + 时间对齐**
+- [ ] 创建 `AppleStockChecker/engine/__init__.py`
+- [ ] 创建 `AppleStockChecker/engine/config.py`
+  ```python
+  @dataclass
+  class BucketConfig:
+      interval_min: int = 15
+      lookback_min: int = 15
+      min_quorum: int = 16
+      quorum_policy: str = 'use_anyway'
+
+  FEATURE_WINDOWS = [120, 900, 1800]  # 分钟
+  ```
+- [ ] 创建 `AppleStockChecker/engine/reader.py`
+  ```python
+  def read_price_records(date_from, date_to, shop_ids=None, iphone_ids=None) -> pd.DataFrame:
+      """从 PG PurchasingShopPriceRecord 批量读取"""
+      # pd.read_sql, 返回 columns: shop_id, iphone_id, price_new, price_a, price_b, recorded_at
+  ```
+- [ ] 创建 `AppleStockChecker/engine/align.py`
+  ```python
+  def align_to_buckets(df: pd.DataFrame, config: BucketConfig) -> pd.DataFrame:
+      """
+      1. recorded_at → floor 到 15min 整点 → bucket
+      2. 每 (shop, iphone, bucket) 取 recorded_at 最新的一行
+      3. 计算 alignment_diff_sec = (recorded_at - bucket).total_seconds()
+      返回: bucket, shop_id, iphone_id, price_new, price_a, price_b, alignment_diff_sec, record_time
+      """
+  ```
+- [ ] 创建 `AppleStockChecker/engine/pipeline.py` (Phase 1 版本，只做 align)
+  ```python
+  def run(run_id, date_from, date_to, device='cpu', steps=None, batch_days=30):
+      """
+      Phase 1: 只实现 align 步骤
+      1. 按 batch_days 分段读取 PG
+      2. 每段做 align_to_buckets
+      3. 写入 CH price_aligned
+      """
+  ```
+- [ ] 创建 `AppleStockChecker/management/commands/run_pipeline.py`
+  ```
+  参数:
+    --run-id       (必填) e.g. backfill_v1
+    --from         (必填) 起始日期 YYYY-MM-DD
+    --to           (必填) 结束日期 YYYY-MM-DD
+    --device       (可选) cuda:0 | cpu, 默认 settings.PIPELINE_DEVICE
+    --batch-days   (可选) 默认 settings.PIPELINE_BATCH_DAYS
+    --steps        (可选) 逗号分隔: align,aggregate,features,cohorts
+    --iphone-ids   (可选) 限定 iPhone ID
+    --shop-ids     (可选) 限定 Shop ID
+  ```
+- [ ] 创建 `AppleStockChecker/management/commands/drop_run.py`
+  ```
+  参数:
+    --run-id   (必填)
+    --confirm  (必填，防误删)
+    --tables   (可选) 默认 all，可选 price_aligned | features_wide
+  ```
+
+**Phase 1 验证:**
+```bash
+docker compose up clickhouse -d
+python manage.py run_pipeline --run-id test1 --from 2025-10-01 --to 2025-10-02 --steps align
+# → 检查 CH: SELECT count() FROM price_aligned WHERE run_id='test1'
+# → 检查数据: SELECT * FROM price_aligned WHERE run_id='test1' LIMIT 10
+python manage.py drop_run --run-id test1 --confirm
+# → 检查清空: SELECT count() FROM price_aligned WHERE run_id='test1' → 0
+```
+
+---
+
+### Phase 2: GPU 聚合 + 特征计算
+
+**目标**: 完整 pipeline 能跑通，从 PG 读到写入 CH features_wide
+
+**Step 2.1 — 跨店聚合**
+- [ ] 创建 `AppleStockChecker/engine/aggregate.py`
+  ```python
+  def build_price_tensor(aligned_df, device='cpu') -> PriceTensor:
+      """
+      DataFrame → 3D torch.Tensor (n_iphones, n_shops, n_buckets)
+      缺失值填 NaN
+      返回 PriceTensor(data, iphone_ids, shop_ids, bucket_index)
+      """
+
+  def aggregate_cross_shop(tensor: PriceTensor, min_quorum=16) -> AggResult:
+      """
+      对 shop 维度聚合:
+      - mean (nanmean)
+      - median (nanmedian)
+      - std (nanstd)
+      - shop_count (非 NaN 个数)
+      - dispersion = std / mean (变异系数)
+      返回 AggResult: 每个字段 shape (n_iphones, n_buckets)
+      """
+  ```
+- [ ] 验证: 用小规模数据（1 天 × 5 个 iPhone × 20 个店）确认 mean/median/std 数值正确
+
+**Step 2.2 — 特征计算 (PyTorch 向量化)**
+- [ ] 创建 `AppleStockChecker/engine/features.py`
+  ```python
+  def compute_ema_batch(series: Tensor, window: int) -> Tensor:
+      """(n_iphones, n_buckets) → EMA, 时间维串行但 iPhone 维并行"""
+
+  def compute_sma_batch(series: Tensor, window: int) -> Tensor:
+      """(n_iphones, n_buckets) → SMA, 用 F.conv1d 全向量化"""
+
+  def compute_wma_batch(series: Tensor, window: int) -> Tensor:
+      """(n_iphones, n_buckets) → WMA, 线性递增权重"""
+
+  def compute_bollinger_batch(series: Tensor, window: int, k=2.0) -> BollingerResult:
+      """(n_iphones, n_buckets) → mid, upper, lower, width"""
+
+  def compute_all_features(agg_mean: Tensor, windows: list[int]) -> dict[str, Tensor]:
+      """对每个窗口计算全部特征，返回 {列名: Tensor}"""
+  ```
+- [ ] 验证: GPU 和 CPU 结果一致 (torch.allclose, atol=1e-5)
+
+**Step 2.3 — Cohort 加权聚合**
+- [ ] 创建 `AppleStockChecker/engine/cohorts.py`
+  ```python
+  def load_cohort_configs() -> list[CohortConfig]:
+      """从 PG 读取 Cohort + CohortMember + ShopWeightProfile"""
+
+  def compute_cohort_features(agg: AggResult, features: dict, configs: list[CohortConfig], device) -> dict:
+      """
+      对每个 cohort:
+        1. 取成员 iPhone 的 agg 结果
+        2. 按权重加权平均
+        3. 在加权后的序列上计算 EMA/SMA/WMA/Bollinger
+      返回: {scope: 'cohort:slug', bucket, mean, median, ..., ema_120, ...}
+      """
+  ```
+
+**Step 2.4 — pipeline.py 完整版**
+- [ ] 更新 `AppleStockChecker/engine/pipeline.py`
+  ```python
+  def run(run_id, date_from, date_to, device='cuda:0', steps=None, batch_days=30,
+          iphone_ids=None, shop_ids=None):
+      """
+      完整流程:
+      1. [align]     reader → align → CH price_aligned
+      2. [aggregate]  CH price_aligned → tensor → cross-shop agg
+      3. [features]   agg → EMA/SMA/WMA/Bollinger
+      4. [cohorts]    agg + cohort config → cohort features
+      5. [write]      全部写入 CH features_wide
+
+      steps 参数控制只执行部分步骤 (默认全部)
+      batch_days 控制每次从 PG 读取的天数 (内存控制)
+      """
+  ```
+- [ ] 日志输出: 每个 step 打印耗时、行数、设备信息
+
+**Step 2.5 — promote_run 命令**
+- [ ] 创建 `AppleStockChecker/management/commands/promote_run.py`
+  ```
+  参数:
+    --from          (必填) 源 run_id
+    --to            (必填) 目标 run_id，通常是 'live'
+    --keep-backup   (可选) promote 前把当前目标 run 备份为 backup_YYYYMMDD
+    --confirm       (必填，防误操作)
+
+  流程:
+    1. 如果 --keep-backup: INSERT SELECT 当前 live → backup_YYYYMMDD
+    2. DROP PARTITION 删旧目标
+    3. INSERT SELECT 源 → 目标
+    4. 打印统计: 迁移了多少行
+  ```
+
+**Phase 2 验证:**
+```bash
+# 跑完整 pipeline (1 个月数据)
+python manage.py run_pipeline --run-id backfill_v1 --from 2025-10-01 --to 2025-11-01 --device cuda:0
+
+# 检查 features_wide 写入
+clickhouse-client -q "
+  SELECT scope, count(), min(bucket), max(bucket)
+  FROM features_wide WHERE run_id='backfill_v1'
+  GROUP BY scope ORDER BY scope
+"
+
+# 不满意就删
+python manage.py drop_run --run-id backfill_v1 --confirm
+
+# 满意就提升
+python manage.py promote_run --from backfill_v1 --to live --keep-backup --confirm
+```
+
+---
+
+### Phase 3: API 改造
+
+**目标**: 前端 ViewSet 从 PG 切换到 CH，JSON 格式不变
+
+**Step 3.1 — ClickHouseService 加读查询**
+- [ ] `query_price_aligned(run_id, filters, order, limit, offset)` — 支持 PSTA ViewSet 的全部过滤字段
+  - 过滤: bucket 范围, shop_id, iphone_id, batch_id (如适用)
+  - 排序: bucket DESC (默认)
+  - 分页: limit + offset
+  - JOIN: 需要 shop name / iphone specs → 从 PG 查 (或缓存)
+- [ ] `query_features(run_id, scope, bucket_gte, bucket_lte, names, order, limit, offset)` — 支持 OverallBar/CohortBar/FeatureSnapshot 的过滤
+  - scope 过滤: LIKE 'iphone:%' / LIKE 'cohort:%' / 精确匹配
+  - 字段选择: 前端只需要部分列时可以 SELECT 指定列
+- [ ] `count_price_aligned(run_id, filters)` / `count_features(run_id, filters)` — 分页用
+
+**Step 3.2 — ViewSet 改造**
+
+改造顺序（从简单到复杂）：
+
+1. [ ] `OverallBarViewSet` + `OverallBarPointsViewSet`
+   - 改为继承 `APIView`
+   - GET list: `ClickHouseService().query_features(scope='iphone:*')`
+   - 保持 JSON 格式: `{bucket, iphone, mean, median, std, shop_count, dispersion, is_final, updated_at}`
+   - is_final / updated_at: CH 中没有这两个字段 → is_final 根据 bucket 是否在 now()-5min 之前推算，updated_at 用 inserted_at
+
+2. [ ] `CohortBarViewSet` + `CohortBarPointsViewSet`
+   - 同上，scope='cohort:*'
+   - JSON 保持: `{bucket, cohort, mean, median, std, n_models, shop_count_agg, dispersion}`
+
+3. [ ] `FeatureSnapshotViewSet` + `FeaturePointsViewSet`
+   - scope + name 过滤 → CH 的 scope 列 + 各特征列
+   - 原来是行存 (scope, name, value)，现在是列存 → 需要做列转行适配
+   - JSON 保持: `{bucket, scope, name, value, version, is_final}`
+
+4. [ ] `PurchasingShopTimeAnalysisViewSet` + `PSTACompactViewSet`
+   - 查 CH price_aligned
+   - 需要 JOIN PG 的 Iphone 和 SecondHandShop 信息
+   - JSON 保持原有嵌套结构: `{shop: {...}, iphone: {...}, prices, timestamps}`
+
+**Step 3.3 — 辅助功能**
+- [ ] API 加可选参数 `?run_id=xxx`（默认 'live'），方便调试时查看不同 run 的数据
+- [ ] 错误处理: CH 不可用时返回 503 + 友好错误信息
+
+**Phase 3 验证:**
+```bash
+# 确保 CH 有 live 数据
+python manage.py promote_run --from backfill_v1 --to live --confirm
+
+# 测试 API (用 curl 或 httpie)
+http GET :8000/api/overall-bars/ bucket__gte=2025-10-01
+http GET :8000/api/cohort-bars/ cohort__slug=top3
+http GET :8000/api/features/ scope=iphone:42 name=ema_120
+http GET :8000/api/purchasing-time-analyses/ Timestamp_Time__gte=2025-10-01
+
+# 对比: 返回的 JSON 结构与旧 API 一致
+```
+
+---
+
+### Phase 4: 全量回写 + 上线
+
+**目标**: 全量历史数据写入 CH，切换为正式运行
+
+**Step 4.1 — 全量回写**
+- [ ] 确定历史数据范围（PG 中 PriceRecord 最早记录 ~ 当前）
+- [ ] 分批执行:
+  ```bash
+  python manage.py run_pipeline --run-id backfill_final \
+      --from 2025-01-01 --to 2026-02-13 \
+      --device cuda:0 --batch-days 30
+  ```
+- [ ] 监控: 每个 batch 的耗时、写入行数、GPU 内存使用
+
+**Step 4.2 — 提升为 live**
+- [ ] `python manage.py promote_run --from backfill_final --to live --keep-backup --confirm`
+- [ ] 验证: API 返回数据覆盖全部历史范围
+
+**Step 4.3 — 旧系统标记废弃**
+- [ ] `tasks/timestamp_alignment_task.py` 头部加 DEPRECATED 注释
+- [ ] `services/time_analysis_services.py` 头部加 DEPRECATED 注释
+- [ ] 停止旧 Celery 聚合任务的 Beat 调度（注释掉或删除 schedule 配置）
+- [ ] PG 聚合表 (OverallBar, CohortBar, FeatureSnapshot) 停止写入（不删除数据）
+
+**Step 4.4 — 文档收尾**
+- [ ] 更新本文档状态为「已完成」
+- [ ] 记录实际的性能数据（全量回写耗时、CH 磁盘占用等）
+
+---
+
+### 阶段依赖关系
+
+```
+Phase 1 (基础设施 + 对齐)
+   │
+   ▼
+Phase 2 (GPU 聚合 + 特征)
+   │
+   ▼
+Phase 3 (API 改造)        ← 可以与 Phase 2 后期并行
+   │
+   ▼
+Phase 4 (全量回写 + 上线)
+```
+
+---
+
+## 21. 断点恢复指引
+
+如果开发中断，按以下方式确认当前进度并继续：
+
+```bash
+# 1. 检查 CH 是否运行
+docker compose ps clickhouse
+
+# 2. 检查已创建的文件
+ls AppleStockChecker/engine/
+ls AppleStockChecker/clickhouse/
+ls AppleStockChecker/management/commands/run_pipeline.py
+
+# 3. 检查 CH 中已有的数据
+clickhouse-client -q "SELECT run_id, count() FROM price_aligned GROUP BY run_id"
+clickhouse-client -q "SELECT run_id, count() FROM features_wide GROUP BY run_id"
+
+# 4. 对照本文档的 Phase checklist 确认已完成的步骤
+```
+
+---
+
+## 22. 设计决策总览（完整版）
+
+| # | 议题 | 决策 | 备注 |
+|---|------|------|------|
+| 1 | GPU 框架 | PyTorch | 替代 CuPy |
+| 2 | 时序存储 | ClickHouse 单节点 Docker | 替代 PG 聚合表 |
+| 3 | CH 连接 | clickhouse-driver (Native TCP) | 最高吞吐 |
+| 4 | 触发方式 | Django management command | 非 Celery |
+| 5 | 数据摄入 | 不改动 | WebScraper → PG 保持原样 |
+| 6 | 时间桶 | 15min 整点对齐 | lookback=15min, quorum=use_anyway |
+| 7 | 特征窗口 | 120/900/1800 分钟 | 对应 8/60/120 个桶 |
+| 8 | features_wide | 列固定 | 后续可加 extra Map 扩展 |
+| 9 | API 改造 | 方案 A: ClickHouseService | ViewSet 直查 CH |
+| 10 | promote_run | INSERT SELECT | 先删旧 live → 复制 → 可选删源 |
+| 11 | 实时模式 | 后续实现 | 1 Celery Beat + pipeline incremental |
+| 12 | 备份 | 可重算 + keep-backup | promote 前保留旧 live 快照 |
+| 13 | 现有文件 | 保留 + 加注释 | 不删除，标注 DEPRECATED |
+| 14 | 回归对比 | 不做 | 无历史对比数据 |
+| 15 | 过渡方案 | 直接替换 | 无 feature flag，git revert 兜底 |
+
+---
+
+## 23. 全部设计讨论已完成，进入实施阶段
