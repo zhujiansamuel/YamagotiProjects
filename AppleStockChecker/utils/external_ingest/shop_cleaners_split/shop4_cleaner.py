@@ -206,12 +206,17 @@ def _parse_color_delta_shop4_regex(line: str) -> Optional[List[Tuple[str, int]]]
 # ----------------------------------------------------------------------
 # Step 5a: 正则收集（逐行扫描 block）
 # ----------------------------------------------------------------------
+# 按 円/ 或 円／ 分割，支持 "ディープブルー-2,000円/コズミックオレンジ-6,500円" 这类
+# 同一行多组「颜色±金额」的格式（2025-02 修复漏解析第二项及后续项）
+_SHOP4_LINE_SPLIT_BY_YEN_SLASH = re.compile(r"円\s*[／/]\s*")
+
 
 def _collect_adjustments_shop4_regex(
     df: pd.DataFrame, start_idx: int,
 ) -> Tuple[Dict[str, int], List[Tuple[str, int]], Dict[str, str]]:
     """
     纯正则版：逐行扫描 block 收集颜色差额。
+    若行内含 "円/色名±金额" 或 "円／色名±金额"，先按此模式分割再逐段解析。
     返回：(adjustments, delta_specs, color_delta_label_map)
       - adjustments: { _norm(label) | "ALL" : delta_int }
       - delta_specs: [(label_raw, delta)] 原始标签列表
@@ -234,18 +239,23 @@ def _collect_adjustments_shop4_regex(
             val = df["data"].iat[j]
             line = str(val) if val is not None else ""
 
-        parsed = _parse_color_delta_shop4_regex(line)
-        if not parsed:
-            continue
-
-        for label, delta in parsed:
-            delta_specs.append((label, int(delta)))
-            if "全色" in label:
-                result["ALL"] = int(delta)
-            else:
-                nk = _norm(label)
-                result[nk] = int(delta)
-                color_delta_label_map[nk] = label
+        # 按 円/ 或 円／ 分割，逐段解析（支持 "A-2000円/B-6500円" 格式）
+        segments = _SHOP4_LINE_SPLIT_BY_YEN_SLASH.split(line)
+        for seg in segments:
+            seg = seg.strip()
+            if not seg:
+                continue
+            parsed = _parse_color_delta_shop4_regex(seg)
+            if not parsed:
+                continue
+            for label, delta in parsed:
+                delta_specs.append((label, int(delta)))
+                if "全色" in label:
+                    result["ALL"] = int(delta)
+                else:
+                    nk = _norm(label)
+                    result[nk] = int(delta)
+                    color_delta_label_map[nk] = label
     return result, delta_specs, color_delta_label_map
 
 # ----------------------------------------------------------------------
