@@ -559,11 +559,92 @@ AppleStockChecker/
 
 ---
 
-## 15. 待讨论 / 后续
+## 15. features_wide 列策略（已确定：列固定）
 
-- [ ] `features_wide` 特征列是否需要扩展（列固定 vs Map 类型）
-- [x] ~~前端 API 改造~~ → 已确定：方案 A（ClickHouseService 层直接查 CH）
-- [ ] 实时模式恢复时的 Celery 最小化方案
-- [x] ~~promote_run 策略~~ → 已确定：INSERT SELECT（先删旧 live → 复制为 live → 可选删源 run）
-- [ ] ClickHouse 备份策略
-- [ ] Django settings 中 ClickHouse 连接配置的具体格式
+保持当前的列固定方案（每个特征一个列）。理由：
+- 当前特征集已明确（3 窗口 × 4 类指标 + 基础聚合 ≈ 25 列）
+- ClickHouse 的 `ALTER TABLE ADD COLUMN` 是零成本元数据操作，不重写数据
+- 后续如果 AutoML 需要动态特征，可以加一个 `extra Map(String, Float64)` 列作为扩展口
+
+---
+
+## 16. 实时模式方案（已确定：后续实现，1 Celery Beat 任务）
+
+本次重构先不实现实时模式。后续恢复时采用最小化方案：
+
+- 1 个 Celery Beat 定时任务，每 15 分钟触发
+- 1 个 Celery 队列 (`pipeline`)，1 个 worker
+- 复用 `engine/pipeline.py`，`mode='incremental'` 只更新最近 2 小时的桶
+
+```python
+# tasks/incremental_pipeline_task.py
+@shared_task(queue='pipeline')
+def incremental_pipeline():
+    from AppleStockChecker.engine.pipeline import run_pipeline
+    now = timezone.now()
+    run_pipeline(
+        run_id='live',
+        date_from=now - timedelta(hours=2),
+        date_to=now,
+        device='cuda:0',
+        mode='incremental',
+    )
+```
+
+---
+
+## 17. 备份策略（已确定：可重算 + keep-backup）
+
+CH 数据本质上可从 PG 重算，因此不做重度备份。
+
+- `promote_run` 加 `--keep-backup` 参数：promote 前先把当前 live INSERT SELECT 为 `backup_YYYYMMDD`
+- 保留最近 1~2 份 backup run
+- 如果 live 出问题，`promote_run --from backup_20260213 --to live` 秒级恢复
+- 极端情况（CH 数据全丢）：从 PG 重跑 `run_pipeline` 即可
+
+---
+
+## 18. Django Settings — ClickHouse 配置（已确定）
+
+```python
+# settings.py
+
+# ── ClickHouse ──
+CLICKHOUSE_HOST     = os.getenv('CLICKHOUSE_HOST', 'clickhouse')
+CLICKHOUSE_PORT     = int(os.getenv('CLICKHOUSE_PORT', 9000))
+CLICKHOUSE_DB       = os.getenv('CLICKHOUSE_DB', 'yamagoti')
+CLICKHOUSE_USER     = os.getenv('CLICKHOUSE_USER', 'default')
+CLICKHOUSE_PASSWORD = os.getenv('CLICKHOUSE_PASSWORD', '')
+
+# ── Pipeline 默认参数 ──
+PIPELINE_DEVICE     = os.getenv('PIPELINE_DEVICE', 'cuda:0')
+PIPELINE_BATCH_DAYS = int(os.getenv('PIPELINE_BATCH_DAYS', 30))
+```
+
+---
+
+## 19. 设计决策总览
+
+| # | 议题 | 决策 | 备注 |
+|---|------|------|------|
+| 1 | GPU 框架 | PyTorch | 替代 CuPy |
+| 2 | 时序存储 | ClickHouse 单节点 Docker | 替代 PG 聚合表 |
+| 3 | CH 连接 | clickhouse-driver (Native TCP) | 最高吞吐 |
+| 4 | 触发方式 | Django management command | 非 Celery |
+| 5 | 数据摄入 | 不改动 | WebScraper → PG 保持原样 |
+| 6 | 时间桶 | 15min 整点对齐 | lookback=15min, quorum=use_anyway |
+| 7 | 特征窗口 | 120/900/1800 分钟 | 对应 8/60/120 个桶 |
+| 8 | features_wide | 列固定 | 后续可加 extra Map 扩展 |
+| 9 | API 改造 | 方案 A: ClickHouseService | ViewSet 直查 CH |
+| 10 | promote_run | INSERT SELECT | 先删旧 live → 复制 → 可选删源 |
+| 11 | 实时模式 | 后续实现 | 1 Celery Beat + pipeline incremental |
+| 12 | 备份 | 可重算 + keep-backup | promote 前保留旧 live 快照 |
+| 13 | 现有文件 | 保留 + 加注释 | 不删除，标注 DEPRECATED |
+
+---
+
+## 20. 待讨论 / 后续
+
+- [ ] 实施阶段划分与优先级
+- [ ] 测试策略（单元测试 / 集成测试 / 回归对比）
+- [ ] 从旧系统切换到新系统的过渡方案
