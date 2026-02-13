@@ -1,6 +1,6 @@
 # GPU + ClickHouse 重构方案 V1
 
-> 状态: 讨论中
+> 状态: 设计基本确定，准备实施
 > 最后更新: 2026-02-13
 > 范围: 时间对齐 / 聚合 / 特征计算 pipeline 的全面重构
 > 不包含: 数据摄入层(WebScraper/cleaners)、AutoML 因果分析
@@ -394,10 +394,176 @@ psycopg2-binary          # PG 读取原始数据
 
 ---
 
-## 11. 待讨论 / 后续
+## 11. 前端 API 改造（已确定：方案 A — ClickHouse Service 层）
+
+### 11.1 改造策略
+
+不使用双写方案，直接让 ViewSet 通过 `ClickHouseService` 查询 CH。
+ViewSet 从 `ModelViewSet` 改为 `APIView` / `ViewSet`，手动组装 Response。
+返回的 JSON 结构对前端保持不变（透明迁移）。
+
+### 11.2 需要改造的 API
+
+| 现有 ViewSet | 原读 PG 表 | 改为读 CH |
+|---|---|---|
+| `PurchasingShopTimeAnalysisViewSet` | PurchasingShopTimeAnalysis | → `price_aligned` WHERE run_id='live' |
+| `PSTACompactViewSet` | PurchasingShopTimeAnalysis | → `price_aligned` WHERE run_id='live' |
+| `OverallBarViewSet` / `PointsViewSet` | OverallBar | → `features_wide` WHERE scope LIKE 'iphone:%' |
+| `CohortBarViewSet` / `PointsViewSet` | CohortBar | → `features_wide` WHERE scope LIKE 'cohort:%' |
+| `FeatureSnapshotViewSet` / `PointsViewSet` | FeatureSnapshot | → `features_wide` |
+
+### 11.3 不改造的 API（继续直接读 PG）
+
+- Trends API (`trends_model_colors`, `TrendsColorStdApiView`, `TrendsAvgOnlyApiView`) — 直接读 PG PriceRecord
+- 所有数据摄入相关 API
+- iPhone / Shop / InventoryRecord 等基础数据 API
+- AutoML 相关 API
+
+### 11.4 ClickHouseService 概要
+
+```python
+# AppleStockChecker/services/clickhouse_service.py
+
+class ClickHouseService:
+    """封装所有 CH 读写操作"""
+
+    def __init__(self):
+        self.client = clickhouse_driver.Client(
+            host=settings.CLICKHOUSE_HOST,
+            port=settings.CLICKHOUSE_PORT,
+            database=settings.CLICKHOUSE_DB,
+        )
+
+    # ── 读 ──
+    def query_price_aligned(self, run_id='live', filters=None, order='-bucket', limit=100): ...
+    def query_features(self, run_id='live', scope=None, bucket_gte=None, bucket_lte=None): ...
+
+    # ── 写 ──
+    def insert_price_aligned(self, data, run_id): ...
+    def insert_features(self, data, run_id): ...
+
+    # ── 管理 ──
+    def drop_run(self, run_id): ...
+    def promote_run(self, from_run, to_run): ...
+    def list_runs(self): ...
+```
+
+---
+
+## 12. promote_run 策略（已确定：INSERT SELECT）
+
+### 12.1 流程
+
+```bash
+# Step 1: 删掉旧 live 分区
+ALTER TABLE price_aligned DROP PARTITION ('live', 202501);
+ALTER TABLE price_aligned DROP PARTITION ('live', 202502);
+...
+ALTER TABLE features_wide DROP PARTITION ('live', 202501);
+...
+
+# Step 2: 把源 run 的数据复制为 live
+INSERT INTO price_aligned
+SELECT 'live' AS run_id, bucket, shop_id, iphone_id, price_new, price_a, price_b,
+       alignment_diff_sec, record_time, now() AS inserted_at
+FROM price_aligned
+WHERE run_id = 'backfill_v3';
+
+INSERT INTO features_wide
+SELECT 'live' AS run_id, bucket, scope,
+       mean, median, std, shop_count, dispersion,
+       ema_120, ema_900, ema_1800,
+       sma_120, sma_900, sma_1800,
+       wma_120, wma_900, wma_1800,
+       boll_mid_120, boll_up_120, boll_low_120, boll_width_120,
+       boll_mid_900, boll_up_900, boll_low_900, boll_width_900,
+       boll_mid_1800, boll_up_1800, boll_low_1800, boll_width_1800,
+       now() AS inserted_at
+FROM features_wide
+WHERE run_id = 'backfill_v3';
+
+# Step 3: (可选) 删掉源 run
+ALTER TABLE price_aligned DROP PARTITION ...  WHERE run_id = 'backfill_v3';
+```
+
+### 12.2 不使用 ALTER UPDATE 的原因
+
+ClickHouse 的 UPDATE 是异步 mutation，性能差且会破坏分区结构。
+INSERT SELECT 是原子性的写入操作，速度更快，与 ReplacingMergeTree 配合良好。
+
+---
+
+## 13. 新代码模块结构
+
+```
+AppleStockChecker/
+├── engine/                          # ★ 新增：GPU 计算引擎
+│   ├── __init__.py
+│   ├── config.py                    # BucketConfig, 窗口参数等
+│   ├── reader.py                    # PG 批量读取 PriceRecord → DataFrame
+│   ├── align.py                     # 时间对齐 (PriceRecord → price_aligned 格式)
+│   ├── aggregate.py                 # 跨店聚合 (mean/median/std/dispersion)
+│   ├── features.py                  # EMA/SMA/WMA/Bollinger 向量化计算
+│   ├── cohorts.py                   # Cohort 加权聚合
+│   └── pipeline.py                  # 串联以上步骤的主流程
+│
+├── services/
+│   ├── clickhouse_service.py        # ★ 新增：CH 连接 + 读写封装
+│   ├── auto_price_db.py             # 保留
+│   ├── external_ingest_service.py   # 保留
+│   └── time_analysis_services.py    # 保留（加注释说明已废弃，保留供参考）
+│
+├── management/commands/
+│   ├── run_pipeline.py              # ★ 新增：主命令
+│   ├── drop_run.py                  # ★ 新增：删除 run
+│   ├── compare_runs.py              # ★ 新增：对比两个 run
+│   ├── promote_run.py               # ★ 新增：提升 run 为 live
+│   └── ... (现有命令保留)
+│
+├── clickhouse/                      # ★ 新增：CH DDL
+│   └── init.sql                     # 建表语句 (price_aligned, features_wide)
+│
+├── tasks/
+│   ├── timestamp_alignment_task.py  # 保留 + 头部注释说明不再是主计算路径
+│   ├── webscraper_tasks.py          # 保留
+│   └── automl_tasks.py              # 保留
+│
+├── features/
+│   └── api.py                       # FeatureWriter — 保留（AutoML 可能仍引用）
+```
+
+### 13.1 各模块职责与估算
+
+| 文件 | 职责 | 估算行数 |
+|---|---|---|
+| `engine/config.py` | `BucketConfig` dataclass, 特征列定义, 设备选择 | ~50 |
+| `engine/reader.py` | `read_price_records(date_from, date_to)` → DataFrame | ~40 |
+| `engine/align.py` | DataFrame → 15min 桶对齐 → price_aligned 格式 | ~80 |
+| `engine/aggregate.py` | 3D tensor → 跨店 mean/median/std + 异常值过滤 | ~120 |
+| `engine/features.py` | `compute_ema_batch`, `compute_sma_batch`, `compute_bollinger_batch` 等 | ~150 |
+| `engine/cohorts.py` | 读 PG Cohort/CohortMember 配置 → 加权计算 | ~80 |
+| `engine/pipeline.py` | `run(run_id, date_from, date_to, device, steps)` 主流程 | ~100 |
+| `services/clickhouse_service.py` | ClickHouseService 类, 连接池, 批量 INSERT, DROP PARTITION | ~150 |
+
+---
+
+## 14. 现有文件处置策略
+
+| 文件 | 处置 | 说明 |
+|---|---|---|
+| `tasks/timestamp_alignment_task.py` | **保留 + 加注释** | 头部标注 `# DEPRECATED: 主计算路径已迁移至 engine/pipeline.py`，AutoML 可能仍引用其工具函数 |
+| `services/time_analysis_services.py` | **保留 + 加注释** | 同上，标注已废弃 |
+| `features/api.py` (FeatureWriter) | **保留** | AutoML 仍可能使用，后续视情况决定 |
+| PG Model (OverallBar, CohortBar, FeatureSnapshot) | **保留 Model 定义** | Django migration 不动，PG 表保留但不再写入新数据 |
+| 现有 Serializer (OverallBarSerializer 等) | **保留** | API 改造后不再使用，但不删除，避免 import 链断裂 |
+
+---
+
+## 15. 待讨论 / 后续
 
 - [ ] `features_wide` 特征列是否需要扩展（列固定 vs Map 类型）
-- [ ] 前端 API 改造（从 PG 读改为从 CH 读）
+- [x] ~~前端 API 改造~~ → 已确定：方案 A（ClickHouseService 层直接查 CH）
 - [ ] 实时模式恢复时的 Celery 最小化方案
-- [ ] promote_run 的具体策略（INSERT SELECT vs RENAME PARTITION）
+- [x] ~~promote_run 策略~~ → 已确定：INSERT SELECT（先删旧 live → 复制为 live → 可选删源 run）
 - [ ] ClickHouse 备份策略
+- [ ] Django settings 中 ClickHouse 连接配置的具体格式
