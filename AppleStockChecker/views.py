@@ -1561,56 +1561,465 @@ class PurchasingShopTimeAnalysisPSTACompactViewSet(
 #-----------------------------------------------------
 #--------------------------------------------------------
 #-----------------------------------------------------------
-#--------------统计信息数据提取----------------------------------
+#--------------统计信息数据提取 (CH-backed) ---------------------
 #-----------------------------------------------------------
 #--------------------------------------------------------
 #-----------------------------------------------------
 
-class OverallBarViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
-    queryset = OverallBar.objects.all().order_by("bucket")
-    serializer_class = OverallBarSerializer
-    filter_backends = [DjangoFilterBackend, OrderingFilter]
-    # 支持 ?bucket__gte=&bucket__lte=&iphone_id=&ordering=bucket
-    filterset_fields = {"bucket": ["gte", "lte", "gt", "lt", "exact"]}
-    ordering_fields = ["bucket", "updated_at"]
+# ── CH 通用基类 ──────────────────────────────────────────────────────────
 
-class OverallBarPointsViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
-    queryset = OverallBar.objects.all().order_by("bucket")
-    serializer_class = OverallBarPointSerializer
-    filter_backends = [DjangoFilterBackend, OrderingFilter]
-    filterset_fields = {"bucket": ["gte", "lte", "gt", "lt", "exact"]}
-    ordering_fields = ["bucket"]
+class _CHListViewSet(viewsets.ViewSet):
+    """ClickHouse 读取型 ViewSet 基类。
 
-class CohortBarViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
-    queryset = CohortBar.objects.select_related("cohort").all().order_by("bucket")
-    serializer_class = CohortBarSerializer
-    filter_backends = [DjangoFilterBackend, OrderingFilter]
-    filterset_fields = {"bucket": ["gte", "lte"], "cohort__slug": ["exact"], "cohort": ["exact"]}
-    ordering_fields = ["bucket", "updated_at"]
+    子类实现 _query_ch(request) → (list[dict], total_count) 和
+    _serialize_row(row_dict) → dict。
+    """
+    permission_classes = [IsAuthenticatedOrReadOnly]
 
-class CohortBarPointsViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
-    queryset = CohortBar.objects.select_related("cohort").all().order_by("bucket")
-    serializer_class = CohortBarPointSerializer
-    filter_backends = [DjangoFilterBackend, OrderingFilter]
-    filterset_fields = {"bucket": ["gte", "lte"], "cohort__slug": ["exact"], "cohort": ["exact"]}
-    ordering_fields = ["bucket"]
+    def _get_run_id(self, request):
+        return request.query_params.get("run_id", "live")
 
-class FeatureSnapshotViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
-    queryset = FeatureSnapshot.objects.all().order_by("bucket")
-    serializer_class = FeatureSnapshotSerializer
-    filter_backends = [DjangoFilterBackend, OrderingFilter]
-    # 支持 ?scope=shop:17|iphone:21&name=mean&bucket__gte=...
-    filterset_fields = {"bucket": ["gte", "lte"], "scope": ["exact", "in"], "name": ["exact", "in"], "version": ["exact"]}
-    ordering_fields = ["bucket", "name"]
+    def _get_limit_offset(self, request):
+        limit = min(int(request.query_params.get("limit", 200)), 10000)
+        offset = int(request.query_params.get("offset", 0))
+        return limit, offset
 
-class FeaturePointsViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
-    queryset = FeatureSnapshot.objects.all().order_by("bucket")
-    serializer_class = FeaturePointSerializer
-    filter_backends = [DjangoFilterBackend, OrderingFilter]
-    filterset_fields = {"bucket": ["gte", "lte"], "scope": ["exact"], "name": ["exact"], "version": ["exact"]}
-    ordering_fields = ["bucket"]
+    def _parse_dt(self, raw):
+        if raw is None:
+            return None
+        from django.utils.dateparse import parse_datetime as _pd
+        return _pd(raw)
 
-# 可选：组合列表（下拉）
+    def _ch_service(self):
+        from AppleStockChecker.services.clickhouse_service import ClickHouseService
+        return ClickHouseService()
+
+    def _respond(self, request, rows, total):
+        limit, offset = self._get_limit_offset(request)
+        return Response({
+            "count": total,
+            "next": None if (offset + limit >= total) else True,
+            "previous": None if offset == 0 else True,
+            "results": rows,
+        })
+
+    def _handle_ch_error(self, exc):
+        import logging
+        logging.getLogger(__name__).exception("ClickHouse query error")
+        return Response(
+            {"detail": "Data service unavailable, please retry later"},
+            status=503,
+        )
+
+    def list(self, request):
+        try:
+            rows, total = self._query_ch(request)
+            serialized = [self._serialize_row(r) for r in rows]
+            return self._respond(request, serialized, total)
+        except Exception as exc:
+            return self._handle_ch_error(exc)
+
+
+# ── OverallBar (from features_wide WHERE scope LIKE 'iphone:%') ──────────
+
+class OverallBarViewSet(_CHListViewSet):
+    def _query_ch(self, request):
+        ch = self._ch_service()
+        params = request.query_params
+        kwargs = {
+            "run_id": self._get_run_id(request),
+            "scope_prefix": "iphone:",
+            "bucket_gte": self._parse_dt(params.get("bucket__gte")),
+            "bucket_lte": self._parse_dt(params.get("bucket__lte")),
+            "ordering": params.get("ordering", "bucket"),
+        }
+        kwargs["limit"], kwargs["offset"] = self._get_limit_offset(request)
+
+        # 支持 ?iphone_id=XX → scope = 'iphone:XX'
+        iphone_id = params.get("iphone_id")
+        if iphone_id:
+            kwargs.pop("scope_prefix")
+            kwargs["scope"] = f"iphone:{iphone_id}"
+
+        return ch.query_features(**kwargs)
+
+    def _serialize_row(self, row):
+        scope = row.get("scope", "")
+        iphone_id = int(scope.split(":")[1]) if ":" in scope else None
+        bucket = row.get("bucket")
+        is_final = _derive_is_final(bucket)
+        return {
+            "bucket": bucket,
+            "iphone_id": iphone_id,
+            "mean": _round4(row.get("mean")),
+            "median": _round4(row.get("median")),
+            "std": _round4(row.get("std")),
+            "shop_count": _safe_int(row.get("shop_count")),
+            "dispersion": _round4(row.get("dispersion")),
+            "is_final": is_final,
+            "updated_at": row.get("inserted_at", bucket),
+        }
+
+
+class OverallBarPointsViewSet(_CHListViewSet):
+    def _query_ch(self, request):
+        return OverallBarViewSet._query_ch(self, request)
+
+    def _serialize_row(self, row):
+        scope = row.get("scope", "")
+        iphone_id = int(scope.split(":")[1]) if ":" in scope else None
+        bucket = row.get("bucket")
+        return {
+            "t": bucket,
+            "v": _round4(row.get("mean")),
+            "iphone_id": iphone_id,
+            "shop_count": _safe_int(row.get("shop_count")),
+            "is_final": _derive_is_final(bucket),
+        }
+
+
+# ── CohortBar (from features_wide WHERE scope LIKE 'cohort:%') ──────────
+
+class CohortBarViewSet(_CHListViewSet):
+    def _query_ch(self, request):
+        ch = self._ch_service()
+        params = request.query_params
+        kwargs = {
+            "run_id": self._get_run_id(request),
+            "scope_prefix": "cohort:",
+            "bucket_gte": self._parse_dt(params.get("bucket__gte")),
+            "bucket_lte": self._parse_dt(params.get("bucket__lte")),
+            "ordering": params.get("ordering", "bucket"),
+        }
+        kwargs["limit"], kwargs["offset"] = self._get_limit_offset(request)
+
+        # 支持 ?cohort__slug=xxx 或 ?cohort=id
+        slug = params.get("cohort__slug")
+        cohort_id = params.get("cohort")
+        if slug:
+            kwargs.pop("scope_prefix")
+            kwargs["scope"] = f"cohort:{slug}"
+        elif cohort_id:
+            cohort_obj = Cohort.objects.filter(id=cohort_id).first()
+            if cohort_obj:
+                kwargs.pop("scope_prefix")
+                kwargs["scope"] = f"cohort:{cohort_obj.slug}"
+
+        return ch.query_features(**kwargs)
+
+    def _serialize_row(self, row):
+        scope = row.get("scope", "")
+        slug = scope.split(":")[1] if ":" in scope else ""
+        cohort_map = self._get_cohort_map()
+        cohort_id = cohort_map.get(slug, {}).get("id")
+        bucket = row.get("bucket")
+        return {
+            "bucket": bucket,
+            "cohort_id": cohort_id,
+            "cohort_slug": slug,
+            "mean": _round4(row.get("mean")),
+            "median": _round4(row.get("median")),
+            "std": _round4(row.get("std")),
+            "dispersion": _round4(row.get("dispersion")),
+            "n_models": _safe_int(row.get("shop_count")),
+            "shop_count_agg": _safe_int(row.get("shop_count")),
+            "is_final": _derive_is_final(bucket),
+            "updated_at": row.get("inserted_at", bucket),
+        }
+
+    def _get_cohort_map(self):
+        if not hasattr(self, "_cohort_map_cache"):
+            self._cohort_map_cache = {
+                c.slug: {"id": c.id}
+                for c in Cohort.objects.all()
+            }
+        return self._cohort_map_cache
+
+
+class CohortBarPointsViewSet(_CHListViewSet):
+    def _query_ch(self, request):
+        return CohortBarViewSet._query_ch(self, request)
+
+    def _serialize_row(self, row):
+        scope = row.get("scope", "")
+        slug = scope.split(":")[1] if ":" in scope else ""
+        cohort_map = self._get_cohort_map()
+        cohort_id = cohort_map.get(slug, {}).get("id")
+        bucket = row.get("bucket")
+        return {
+            "t": bucket,
+            "v": _round4(row.get("mean")),
+            "cohort_id": cohort_id,
+            "cohort_slug": slug,
+            "n_models": _safe_int(row.get("shop_count")),
+            "is_final": _derive_is_final(bucket),
+        }
+
+    def _get_cohort_map(self):
+        if not hasattr(self, "_cohort_map_cache"):
+            self._cohort_map_cache = {
+                c.slug: {"id": c.id}
+                for c in Cohort.objects.all()
+            }
+        return self._cohort_map_cache
+
+
+# ── FeatureSnapshot (from features_wide, wide→tall pivot) ────────────────
+
+# 基础统计列不算 feature, 在 pivot 中过滤
+_STATS_COLS = frozenset({
+    "run_id", "bucket", "scope", "inserted_at",
+    "mean", "median", "std", "shop_count", "dispersion",
+})
+
+
+class FeatureSnapshotViewSet(_CHListViewSet):
+    """CH features_wide → 逐行 pivot 为 (bucket, scope, name, value) 格式。"""
+
+    def list(self, request):
+        try:
+            wide_rows, _ = self._query_ch_wide(request)
+            tall_rows = self._pivot_wide_to_tall(wide_rows, request)
+
+            # 分页 (对 tall rows)
+            limit, offset = self._get_limit_offset(request)
+            total = len(tall_rows)
+            page = tall_rows[offset:offset + limit]
+
+            return self._respond(request, page, total)
+        except Exception as exc:
+            return self._handle_ch_error(exc)
+
+    def _query_ch_wide(self, request):
+        ch = self._ch_service()
+        params = request.query_params
+
+        kwargs = {
+            "run_id": self._get_run_id(request),
+            "bucket_gte": self._parse_dt(params.get("bucket__gte")),
+            "bucket_lte": self._parse_dt(params.get("bucket__lte")),
+            "ordering": params.get("ordering", "bucket"),
+            "limit": 10000,
+            "offset": 0,
+        }
+
+        scope = params.get("scope")
+        scope_in = params.get("scope__in")
+        if scope:
+            kwargs["scope"] = scope
+        elif scope_in:
+            kwargs["scope_in"] = [s.strip() for s in scope_in.split(",")]
+
+        return ch.query_features(**kwargs)
+
+    def _pivot_wide_to_tall(self, wide_rows, request):
+        name_filter = request.query_params.get("name")
+        name_in = request.query_params.get("name__in")
+        allowed_names = None
+        if name_filter:
+            allowed_names = {name_filter}
+        elif name_in:
+            allowed_names = {n.strip() for n in name_in.split(",")}
+
+        tall = []
+        for row in wide_rows:
+            bucket = row.get("bucket")
+            scope = row.get("scope", "")
+            is_final = _derive_is_final(bucket)
+
+            for col, val in row.items():
+                if col in _STATS_COLS:
+                    continue
+                if val is None:
+                    continue
+                if allowed_names and col not in allowed_names:
+                    continue
+
+                tall.append({
+                    "bucket": bucket,
+                    "scope": scope,
+                    "name": col,
+                    "value": float(val) if val is not None else None,
+                    "version": "v1",
+                    "is_final": is_final,
+                })
+        return tall
+
+
+class FeaturePointsViewSet(FeatureSnapshotViewSet):
+    def _pivot_wide_to_tall(self, wide_rows, request):
+        rows = super()._pivot_wide_to_tall(wide_rows, request)
+        return [
+            {
+                "t": r["bucket"],
+                "v": r["value"],
+                "scope": r["scope"],
+                "name": r["name"],
+                "is_final": r["is_final"],
+            }
+            for r in rows
+        ]
+
+
+# ── PSTA CH-backed ViewSets (price_aligned) ──────────────────────────────
+
+class _PSTACHViewSet(_CHListViewSet):
+    """price_aligned → PSTA 格式兼容 ViewSet 基类。"""
+
+    def _query_ch(self, request):
+        ch = self._ch_service()
+        params = request.query_params
+        kwargs = {
+            "run_id": self._get_run_id(request),
+            "bucket_gte": self._parse_dt(
+                params.get("Timestamp_Time__gte") or params.get("start")
+            ),
+            "bucket_lte": self._parse_dt(
+                params.get("Timestamp_Time__lte") or params.get("end")
+            ),
+            "ordering": "-bucket",
+        }
+        kwargs["limit"], kwargs["offset"] = self._get_limit_offset(request)
+
+        shop_id = params.get("shop")
+        iphone_id = params.get("iphone")
+        if shop_id:
+            kwargs["shop_id"] = int(shop_id)
+        if iphone_id:
+            kwargs["iphone_id"] = int(iphone_id)
+
+        shop_in = params.get("shop__in")
+        iphone_in = params.get("iphone__in")
+        if shop_in:
+            kwargs["shop_ids"] = [int(x) for x in shop_in.split(",")]
+        if iphone_in:
+            kwargs["iphone_ids"] = [int(x) for x in iphone_in.split(",")]
+
+        return ch.query_price_aligned(**kwargs)
+
+
+class PSTACHFullViewSet(_PSTACHViewSet):
+    """CH price_aligned → 完整 PSTA JSON (带 shop/iphone 展开)。"""
+
+    def _serialize_row(self, row):
+        shop_id = row["shop_id"]
+        iphone_id = row["iphone_id"]
+        shop = self._get_shop_cache().get(shop_id, {})
+        iphone = self._get_iphone_cache().get(iphone_id, {})
+
+        return {
+            "id": None,
+            "Batch_ID": None,
+            "Job_ID": None,
+            "Timestamp_Time": row["bucket"],
+            "Record_Time": row.get("record_time"),
+            "Alignment_Time_Difference": row.get("alignment_diff_sec"),
+            "New_Product_Price": row["price_new"],
+            "Price_A": row.get("price_a"),
+            "Price_B": row.get("price_b"),
+            "shop_id": shop_id,
+            "iphone_id": iphone_id,
+            "shop": shop,
+            "iphone": iphone,
+        }
+
+    def _get_shop_cache(self):
+        if not hasattr(self, "_shop_cache"):
+            self._shop_cache = {
+                s.id: {
+                    "id": s.id, "name": s.name,
+                    "website": s.website, "address": s.address,
+                }
+                for s in SecondHandShop.objects.all()
+            }
+        return self._shop_cache
+
+    def _get_iphone_cache(self):
+        if not hasattr(self, "_iphone_cache"):
+            self._iphone_cache = {}
+            for p in Iphone.objects.all():
+                self._iphone_cache[p.id] = {
+                    "id": p.id,
+                    "part_number": p.part_number,
+                    "jan": p.jan,
+                    "model_name": p.model_name,
+                    "capacity_gb": p.capacity_gb,
+                    "color": p.color,
+                    "release_date": str(p.release_date) if p.release_date else None,
+                    "capacity_label": (
+                        f"{p.capacity_gb // 1024}TB"
+                        if p.capacity_gb % 1024 == 0
+                        else f"{p.capacity_gb}GB"
+                    ),
+                    "label": f"{p.model_name} {p.color}",
+                }
+        return self._iphone_cache
+
+
+class PSTACHCompactViewSet(_PSTACHViewSet):
+    """CH price_aligned → compact PSTA JSON。"""
+
+    def _serialize_row(self, row):
+        shop_id = row["shop_id"]
+        iphone_id = row["iphone_id"]
+        shop_cache = self._get_shop_cache()
+        iphone_cache = self._get_iphone_cache()
+
+        return {
+            "id": None,
+            "Timestamp_Time": row["bucket"],
+            "shop": shop_cache.get(shop_id, {}).get("name", ""),
+            "iphone": iphone_cache.get(iphone_id, {}).get("part_number", ""),
+            "shop_id": shop_id,
+            "iphone_id": iphone_id,
+            "New_Product_Price": row["price_new"],
+        }
+
+    def _get_shop_cache(self):
+        if not hasattr(self, "_shop_cache"):
+            self._shop_cache = {
+                s.id: {"name": s.name}
+                for s in SecondHandShop.objects.all()
+            }
+        return self._shop_cache
+
+    def _get_iphone_cache(self):
+        if not hasattr(self, "_iphone_cache"):
+            self._iphone_cache = {
+                p.id: {"part_number": p.part_number}
+                for p in Iphone.objects.all()
+            }
+        return self._iphone_cache
+
+
+# ── 工具函数 ─────────────────────────────────────────────────────────────
+
+def _derive_is_final(bucket) -> bool:
+    """bucket < now() - 5min → is_final。"""
+    if bucket is None:
+        return False
+    from django.utils import timezone as _tz
+    from datetime import timedelta as _td
+    now = _tz.now().replace(tzinfo=None) if hasattr(bucket, 'tzinfo') and bucket.tzinfo is None else _tz.now()
+    if hasattr(bucket, 'tzinfo') and bucket.tzinfo is None:
+        now = now.replace(tzinfo=None)
+    return bucket < (now - _td(minutes=5))
+
+
+def _round4(val):
+    if val is None:
+        return None
+    return round(float(val), 4)
+
+
+def _safe_int(val):
+    if val is None:
+        return 0
+    return int(val)
+
+
+# ── PG-backed 参考列表 (不变) ────────────────────────────────────────────
+
 class CohortListViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
     queryset = Cohort.objects.all().order_by("id")
     serializer_class = CohortSerializer

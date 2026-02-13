@@ -742,6 +742,20 @@ IPHONE_OFFICIAL_PRICES = {
 
 
 # ============================================================================
+# ClickHouse (GPU Pipeline 用)
+# 参考: docs/REFACTOR_PLAN_V1.md §18
+# ============================================================================
+CLICKHOUSE_HOST     = os.getenv('CLICKHOUSE_HOST', 'localhost')
+CLICKHOUSE_PORT     = int(os.getenv('CLICKHOUSE_PORT', '9000'))
+CLICKHOUSE_DB       = os.getenv('CLICKHOUSE_DB', 'yamagoti')
+CLICKHOUSE_USER     = os.getenv('CLICKHOUSE_USER', 'default')
+CLICKHOUSE_PASSWORD = os.getenv('CLICKHOUSE_PASSWORD', '')
+
+# Pipeline 默认参数
+PIPELINE_DEVICE     = os.getenv('PIPELINE_DEVICE', 'cuda:0')
+PIPELINE_BATCH_DAYS = int(os.getenv('PIPELINE_BATCH_DAYS', '30'))
+
+# ============================================================================
 # Logging Configuration
 # ============================================================================
 LOG_DIR = BASE_DIR / "logs"
