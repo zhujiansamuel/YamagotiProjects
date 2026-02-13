@@ -21,7 +21,7 @@ shop11 清洗器 — モバステ
     │       ├─ _lx_parse_color_deltas_shop11()        ← Step 6a: LLM 核心提取
     │       └─ Guardrails (delta 合理性检查)            ← Step 6b: 防幻觉过滤
     │
-    ├─ _label_matches_color_shop11()         ← Step 4: 标签→颜色匹配
+    ├─ _label_matches_color_unified()       ← Step 4: 标签→颜色匹配（cleaner_tools 统一）
     │
     └─ clean_shop11()                        ← Step 8: 主函数，生成输出行
 """
@@ -48,6 +48,7 @@ from ..cleaner_tools import (
     normalize_text_basic,
     PriceDecomposition,
     resolve_color_prices,
+    _label_matches_color_unified,
 )
 
 # ----------------------------------------------------------------------
@@ -66,7 +67,7 @@ SHOP_NAME = "モバステ"
 SHOP11_OLLAMA_URL = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 SHOP11_OLLAMA_MODEL_ID = os.getenv("SHOP11_OLLAMA_MODEL_ID", "gemma3:1b")
 
-SHOP11_EXTRACTION_MODE = "auto"  # "regex" | "llm" | "auto"
+SHOP11_EXTRACTION_MODE = "regex"  # "regex" | "llm" | "auto"
 
 # ----------------------------------------------------------------------
 # 辅助工具函数
@@ -322,63 +323,10 @@ def _lx_parse_storage_shop11(storage: str, valid_models: Tuple[str, ...]) -> Tup
     return model_norm, cap_gb, tuple(trace)
 
 # ----------------------------------------------------------------------
-# Step 4: 颜色标签匹配
+# Step 4: 标签→颜色匹配（2025-02 替换为 cleaner_tools 统一实现）
 # ----------------------------------------------------------------------
-
-_COLOR_SEP_SPLIT_RE = re.compile(r"[／/、，,・\s]+")
-
-FAMILY_SYNONYMS_shop11 = {
-    "blue": ["ブルー", "青", "blue"],
-    "silver": ["シルバー", "銀", "silver"],
-    "black": ["ブラック", "黒", "black"],
-    "white": ["ホワイト", "白", "white"],
-    "gold": ["ゴールド", "金", "gold"],
-    "orange": ["オレンジ", "橙"],
-}
-
-def _label_matches_color_shop11(label_raw: str, color_raw: str, color_norm: str) -> bool:
-    """
-    匹配策略（宽容）：
-      - 归一化后（去空白、半角/全角数字转换）相等；
-      - label_raw 为 color_raw 的子串；
-      - label 在常见家族词典里，家族任一词出现在 color_raw 即匹配。
-    """
-    if not label_raw or not color_raw:
-        return False
-    lbl = str(label_raw).strip()
-    cr = str(color_raw).strip()
-
-    # 规范化：半角化 + 去两端空白
-    lbl_norm = _norm(lbl)
-    cr_norm = color_norm  # 传入时应已是 _norm(color_raw)
-
-    # 1) 精确归一化相等
-    if lbl_norm == cr_norm:
-        return True
-
-    # 2) 原文子串（精确子串）
-    if lbl in cr:
-        return True
-
-    # 3) 分割后任一片段是 color_raw 的子串（处理 "シルバー SV" vs "シルバー" 之类）
-    for tok in _COLOR_SEP_SPLIT_RE.split(lbl):
-        tok = tok.strip()
-        if not tok:
-            continue
-        if tok in cr:
-            return True
-        if _norm(tok) == cr_norm:
-            return True
-
-    # 4) 家族同义词
-    k = lbl.strip().lower()
-    for fam_tokens in FAMILY_SYNONYMS_shop11.values():
-        if k in [t.lower() for t in fam_tokens] or any(tok in lbl for tok in fam_tokens):
-            for tok in fam_tokens:
-                if tok in cr:
-                    return True
-
-    return False
+# 原 shop11 独立实现已迁移至 cleaner_tools._label_matches_color_unified，
+# 合并 shop3/4/9/11/12/14/15/16/17 逻辑，供所有清洗器共用。
 
 # ----------------------------------------------------------------------
 # Step 5: 正则提取颜色差价
@@ -592,7 +540,7 @@ def _lx_parse_color_deltas_shop11(
 
         # fallback：用 label 匹配逻辑把 et 贴到合法颜色上
         for c in available_colors:
-            if _label_matches_color_shop11(et, c, _norm(c)):
+            if _label_matches_color_unified(et, c, _norm(c)):
                 tmp[c] = int(delta)
 
     return tuple(tmp.items()), tuple(trace)
@@ -644,7 +592,7 @@ def _extract_color_deltas_shop11_llm_with_guardrails(
         if deltas_fb:
             for col_norm, (pn, col_raw) in color_map.items():
                 for label_raw, delta in deltas_fb:
-                    if _label_matches_color_shop11(label_raw, col_raw, col_norm):
+                    if _label_matches_color_unified(label_raw, col_raw, col_norm):
                         color_deltas[col_norm] = int(delta)
 
     return color_deltas
@@ -678,7 +626,7 @@ def _extract_color_deltas_shop11_dispatch(
         cl: Dict[str, str] = {}
         for col_norm, (pn, col_raw) in color_map.items():
             for label_raw, delta in deltas_re:
-                if _label_matches_color_shop11(label_raw, col_raw, col_norm):
+                if _label_matches_color_unified(label_raw, col_raw, col_norm):
                     cd[col_norm] = int(delta)
                     cl[col_norm] = label_raw
         return cd, cl
@@ -836,7 +784,7 @@ def clean_shop11(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) ->
         new_rows, _log_seq = resolve_color_prices(
             decomp,
             color_map,
-            _label_matches_color_shop11,
+            _label_matches_color_unified,
             shop_name=SHOP_NAME,
             cleaner_name=CLEANER_NAME,
             recorded_at=rec_at,

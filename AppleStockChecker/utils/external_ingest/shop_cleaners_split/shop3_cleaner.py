@@ -21,7 +21,7 @@ shop3 清洗器 — 買取一丁目
     │       └─ Guardrails (_parse_delta_int_llm,          ← Step 5b: 防幻觉过滤
     │           _infer_default_sign_from_text)
     │
-    ├─ _label_matches_color_shop3()        ← Step 7: 标签→颜色匹配
+    ├─ _label_matches_color_unified()      ← Step 7: 标签→颜色匹配（cleaner_tools 统一）
     │
     └─ clean_shop3()                       ← Step 8: 主函数，生成输出行
 """
@@ -49,6 +49,7 @@ from ..cleaner_tools import (
     extract_price_yen,
     PriceDecomposition,
     resolve_color_prices,
+    _label_matches_color_unified,
 )
 
 # ----------------------------------------------------------------------
@@ -69,7 +70,7 @@ SHOP_NAME = "買取一丁目"
 
 SHOP3_OLLAMA_URL = os.getenv("SHOP3_OLLAMA_URL", "http://localhost:11434")
 SHOP3_OLLAMA_MODEL_ID = os.getenv("SHOP3_OLLAMA_MODEL_ID", "gemma3:1b")
-SHOP3_EXTRACTION_MODE = "auto"  # "regex" | "llm" | "auto"
+SHOP3_EXTRACTION_MODE = "regex"  # "regex" | "llm" | "auto"
 
 # --- LangExtract (LLM 抽取) ---
 try:
@@ -466,38 +467,10 @@ def _extract_color_deltas_shop3_dispatch(
     return llm_res, "llm"
 
 # ----------------------------------------------------------------------
-# Step 7: 颜色家族同义词 & 匹配
+# Step 7: 标签→颜色匹配（2025-02 替换为 cleaner_tools 统一实现）
 # ----------------------------------------------------------------------
-
-FAMILY_SYNONYMS_shop3 = {
-    "blue": ["ブルー", "青", "ディープブルー"],
-    "ブルー": ["ブルー", "青", "ディープブルー"],
-    "青": ["ブルー", "青", "ディープブルー"],
-    "ディープブルー": ["ディープブルー", "ブルー", "青"],
-    "silver": ["シルバー", "銀"],
-    "シルバー": ["シルバー", "銀"],
-    "銀": ["シルバー", "銀"],
-}
-
-def _label_matches_color_shop3(label_raw: str, color_raw: str, color_norm: str) -> bool:
-    """宽松匹配：归一等值 | 文本子串 | 家族词命中"""
-    label_norm = _norm(label_raw)
-    if label_norm == color_norm:
-        return True
-    if label_raw and str(label_raw) in str(color_raw):
-        return True
-
-    keys = {label_raw.strip(), label_raw.strip().lower(), label_norm}
-    candidates = set()
-    for k in keys:
-        if k in FAMILY_SYNONYMS_shop3:
-            candidates.update(FAMILY_SYNONYMS_shop3[k])
-    if not candidates:
-        for _, toks in FAMILY_SYNONYMS_shop3.items():
-            if any((t == label_raw) or (t == label_norm) or (t in str(label_raw)) for t in toks):
-                candidates.update(toks)
-                break
-    return any(tok in str(color_raw) for tok in candidates)
+# 原 shop3 独立实现已迁移至 cleaner_tools._label_matches_color_unified，
+# 合并 shop3/4/9/11/12/14/15/16/17 逻辑，供所有清洗器共用。
 
 # ----------------------------------------------------------------------
 # Step 8: 清洗主函数
@@ -615,7 +588,7 @@ def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
             source_text_raw=source_text_raw_full,
         )
         new_rows, _log_seq = resolve_color_prices(
-            decomp, cmap, _label_matches_color_shop3,
+            decomp, cmap, _label_matches_color_unified,
             shop_name=SHOP_NAME,
             cleaner_name=CLEANER_NAME,
             recorded_at=t,

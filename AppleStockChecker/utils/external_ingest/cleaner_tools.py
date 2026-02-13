@@ -225,8 +225,212 @@ def _truncate_for_log(s: str, n: int = 200) -> str:
 
 
 def _norm_strip(s: str) -> str:
-    """通用 strip 归一化，返回去除首尾空白的字符串"""
-    return (s or "").strip()
+    """颜色匹配用归一化：去空格 + 转小写（用于 shop3/4/7/9/11/12/14/15/16/17）"""
+    t = (s or "").strip()
+    t = re.sub(r"[\s\u3000]+", "", t)  # 去除所有空白（含全角空格）
+    return t.lower()
+
+
+# ----------------------------------------------------------------------
+# 颜色同义词表（合并各 shop，含带空格变体）
+# ----------------------------------------------------------------------
+
+FAMILY_SYNONYMS_COLOR: Dict[str, List[str]] = {
+    # blue 家族（含 ディープ ブルー / ディープブルー）
+    "blue": ["ブルー", "青", "ディープブルー", "ディープ ブルー", "ミッドナイト", "マリン", "ミストブルー"],
+    "ブルー": ["ブルー", "青", "ディープブルー", "ディープ ブルー", "ミッドナイト", "マリン", "ミストブルー"],
+    "青": ["ブルー", "青", "ディープブルー", "ディープ ブルー", "ミッドナイト", "マリン", "ミストブルー"],
+    "ディープブルー": ["ブルー", "青", "ディープブルー", "ディープ ブルー"],
+    "ディープ ブルー": ["ブルー", "青", "ディープブルー", "ディープ ブルー"],
+    "ミッドナイト": ["ブルー", "青", "ミッドナイト", "マリン", "ミストブルー"],
+    "マリン": ["ブルー", "青", "ミッドナイト", "マリン", "ミストブルー"],
+    "ミストブルー": ["ブルー", "青", "ミッドナイト", "マリン", "ミストブルー"],
+    # black（含 スペース ブラック / スペースブラック）
+    "black": ["ブラック", "黒", "スペースブラック", "スペース ブラック"],
+    "ブラック": ["ブラック", "黒", "スペースブラック", "スペース ブラック"],
+    "黒": ["ブラック", "黒", "スペースブラック", "スペース ブラック"],
+    "space black": ["スペースブラック", "スペース ブラック"],
+    "spaceblack": ["スペースブラック", "スペース ブラック"],
+    "スペースブラック": ["ブラック", "黒", "スペースブラック", "スペース ブラック"],
+    "スペース ブラック": ["ブラック", "黒", "スペースブラック", "スペース ブラック"],
+    # white / starlight
+    "white": ["ホワイト", "白", "スターライト", "starlight"],
+    "ホワイト": ["ホワイト", "白", "スターライト"],
+    "白": ["ホワイト", "白", "スターライト"],
+    "スターライト": ["ホワイト", "白", "スターライト"],
+    "starlight": ["ホワイト", "白", "スターライト"],
+    # silver
+    "silver": ["シルバー", "銀"],
+    "シルバー": ["シルバー", "銀"],
+    "銀": ["シルバー", "銀"],
+    # gold
+    "gold": ["ゴールド", "金", "ライトゴールド"],
+    "ゴールド": ["ゴールド", "金", "ライトゴールド"],
+    "金": ["ゴールド", "金", "ライトゴールド"],
+    "ライトゴールド": ["ゴールド", "金", "ライトゴールド"],
+    # orange
+    "orange": ["オレンジ", "橙", "コズミックオレンジ"],
+    "オレンジ": ["オレンジ", "橙", "コズミックオレンジ"],
+    "橙": ["オレンジ", "橙", "コズミックオレンジ"],
+    "コズミックオレンジ": ["オレンジ", "橙", "コズミックオレンジ"],
+    # green
+    "green": ["グリーン", "緑", "セージ"],
+    "グリーン": ["グリーン", "緑", "セージ"],
+    "緑": ["グリーン", "緑", "セージ"],
+    "セージ": ["グリーン", "緑", "セージ"],
+    # pink
+    "pink": ["ピンク"],
+    "ピンク": ["ピンク"],
+    # red
+    "red": ["レッド", "赤"],
+    "レッド": ["レッド", "赤"],
+    "赤": ["レッド", "赤"],
+    # yellow
+    "yellow": ["イエロー", "黄", "黄色"],
+    "イエロー": ["イエロー", "黄", "黄色"],
+    "黄": ["イエロー", "黄", "黄色"],
+    "黄色": ["イエロー", "黄", "黄色"],
+    # purple
+    "purple": ["パープル", "紫", "ラベンダー"],
+    "パープル": ["パープル", "紫", "ラベンダー"],
+    "紫": ["パープル", "紫", "ラベンダー"],
+    "ラベンダー": ["パープル", "紫", "ラベンダー"],
+    # natural
+    "natural": ["ナチュラル"],
+    "ナチュラル": ["ナチュラル"],
+    # gray
+    "gray": ["グレー", "グレイ", "灰"],
+    "グレー": ["グレー", "グレイ", "灰"],
+    "グレイ": ["グレー", "グレイ", "灰"],
+    "灰": ["グレー", "グレイ", "灰"],
+    # titanium
+    "チタン": ["チタン", "チタニウム"],
+    "チタニウム": ["チタン", "チタニウム"],
+}
+
+
+def build_synonym_lookup_norm(
+    family_synonyms: Dict[str, List[str]],
+    norm_fn: Optional[Callable[[str], str]] = None,
+) -> Dict[str, List[str]]:
+    """
+    从 FAMILY_SYNONYMS 构建归一化版本的同义词 lookup。
+
+    key 与 value 均经 norm_fn 变换（去空格、转小写），用于颜色匹配时以 _norm_strip 后的字符串查找。
+
+    参数:
+        family_synonyms: 原始同义词表 {key: [syn1, syn2, ...]}
+        norm_fn: 归一化函数，默认 _norm_strip
+
+    返回:
+        {norm_key: [norm_syn1, norm_syn2, ...]} 每个 key/value 归一化后均作为 key
+    """
+    norm = norm_fn or _norm_strip
+    out: Dict[str, List[str]] = {}
+
+    for k, vs in family_synonyms.items():
+        all_raw = list(dict.fromkeys([k] + vs))
+        all_norm = list(dict.fromkeys([norm(x) for x in all_raw]))
+        for x in all_raw:
+            nx = norm(x)
+            out.setdefault(nx, [])
+            out[nx] = list(dict.fromkeys(out[nx] + all_norm))
+    return out
+
+
+# 预构建的去除空格版本同义词 lookup（供各 shop 颜色匹配使用）
+SYNONYM_LOOKUP_NORM: Dict[str, List[str]] = build_synonym_lookup_norm(FAMILY_SYNONYMS_COLOR)
+
+
+# ----------------------------------------------------------------------
+# 统一标签→颜色匹配函数（2025-02 替换各 shop 独立实现）
+# ----------------------------------------------------------------------
+# 合并 shop3/4/9/11/12/14/15/16/17 的 _label_matches_color 逻辑：
+#   - shop3/4: 精确 + 原文子串 + color_raw_norm in candidates
+#   - shop9: 去空白/连字符后双向包含兜底
+#   - shop11: 分割多 token 匹配、分片同义词收集
+#   - shop12: 归一化双向包含兜底
+#   - shop14: 小写子串匹配 (label_norm in color_raw_l)
+#   - shop15/16/17: any(tok in color_raw for tok in candidates)
+_COLOR_SEP_SPLIT_RE = re.compile(r"[／/、，,・\s]+")
+
+
+def _label_matches_color_unified(label_raw: str, color_raw: str, color_norm: str) -> bool:
+    """
+    统一标签→颜色匹配（供 shop3/4/9/11/12/14/15/16/17 共用）。
+
+    匹配策略（按顺序）:
+      1. 精确归一化相等
+      2. label_raw 为 color_raw 原文子串
+      3. label_norm 为 color_raw 子串（小写，shop14）
+      4. 分割后任一分片匹配（shop11：复合 label / 带后缀）
+      5. SYNONYM 同义词：color_norm / color_raw_norm / candidates 子串
+      6. 归一化双向包含（shop12）
+      7. 去空白/连字符后双向包含（shop9）
+
+    注意：全色/ALL 由 resolve_color_prices 的 is_all 处理，此处不特殊返回。
+    """
+    if not label_raw:
+        return False
+
+    label_norm = _norm_strip(str(label_raw))
+    color_raw_s = str(color_raw or "")
+    color_raw_l = color_raw_s.lower()
+    color_raw_norm = _norm_strip(color_raw_s)
+
+    # 1. 精确
+    if label_norm == color_norm:
+        return True
+
+    # 2. 原文子串 (label in color)
+    lbl_stripped = str(label_raw).strip()
+    if lbl_stripped and lbl_stripped in color_raw_s:
+        return True
+
+    # 3. shop14: label_norm in color (小写)
+    if label_norm and label_norm in color_raw_l:
+        return True
+
+    # 4. shop11: 分割后任一分片匹配
+    for tok in _COLOR_SEP_SPLIT_RE.split(str(label_raw)):
+        tok = tok.strip()
+        if not tok:
+            continue
+        if tok in color_raw_s:
+            return True
+        if _norm_strip(tok) == color_norm:
+            return True
+
+    # 5. SYNONYM
+    candidates: set = set()
+    if label_norm in SYNONYM_LOOKUP_NORM:
+        candidates.update(SYNONYM_LOOKUP_NORM[label_norm])
+    for tok in _COLOR_SEP_SPLIT_RE.split(str(label_raw)):
+        tn = _norm_strip(tok.strip())
+        if tn and tn in SYNONYM_LOOKUP_NORM:
+            candidates.update(SYNONYM_LOOKUP_NORM[tn])
+    if candidates:
+        if color_norm in candidates:
+            return True
+        if color_raw_norm in candidates:
+            return True
+        if any(tok in color_raw_l for tok in candidates):
+            return True
+
+    # 6. shop12: 归一化双向包含
+    if label_norm and (label_norm in color_norm or color_norm in label_norm):
+        return True
+
+    # 7. shop9: 去空白/连字符后双向包含
+    lr_short = re.sub(r"[\s\u3000\-]+", "", label_norm)
+    cn_short = re.sub(r"[\s\u3000\-]+", "", color_norm)
+    cr_short = re.sub(r"[\s\u3000\-]+", "", color_raw_norm)
+    if lr_short and cn_short and (lr_short in cn_short or cn_short in lr_short):
+        return True
+    if lr_short and cr_short and (lr_short in cr_short or cr_short in lr_short):
+        return True
+
+    return False
 
 
 # 全角→半角 完整变换表（数字、标点、货币、日文符号）

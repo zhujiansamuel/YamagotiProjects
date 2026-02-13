@@ -5,10 +5,12 @@ from ..cleaner_tools import (
     _load_iphone17_info_df_from_db,
     _parse_capacity_gb,
     _normalize_model_generic,
+    _norm_strip,
     normalize_text_basic,
     extract_price_yen,
     PriceDecomposition,
     resolve_color_prices,
+    _label_matches_color_unified,
 )
 import os
 from functools import lru_cache
@@ -71,12 +73,16 @@ def _pick_unopened_section(text: str) -> str:
 def _normalize_color_text_shop17(s: str) -> str:
     """
     统一色減額文本里的全角数字/逗号/各种 dash，顺便清理空白。
-    使用通用规范化函数（全角→半角 + 去换行 + 合并空格）。
+    使用通用规范化函数（全角→半角）。
+    保留换行与空白结构（remove_newlines=False, collapse_spaces=False），
+    以便 SPLIT_TOKENS_RE 能按 \\n 正确切分多段。
     """
     if s is None:
         return ""
-    # 使用通用规范化（已包含全角→半角、换行处理、空格合并）
-    return normalize_text_basic(str(s))
+    # 色減額 split 前保留换行，否则「ブルー-1000」与「△減額なし」会合并到同一 part
+    return normalize_text_basic(
+        str(s), remove_newlines=False, collapse_spaces=False
+    )
 
 # ── Step 3: 归一化颜色标签（清除空白） ──
 def _normalize_label_shop17(lbl: str) -> str:
@@ -156,94 +162,13 @@ SHOP17_EXTRACTION_MODE = "auto"  # "regex" | "llm" | "auto"
 # ----------------------------------------------------------------------
 # 颜色匹配函数
 # ----------------------------------------------------------------------
+# ----------------------------------------------------------------------
+# 标签→颜色匹配（2025-02 替换为 cleaner_tools 统一实现）
+# ----------------------------------------------------------------------
+# 原 shop17 独立实现已迁移至 cleaner_tools._label_matches_color_unified，
+# 合并 shop3/4/9/11/12/14/15/16/17 逻辑，供所有清洗器共用。
 
-FAMILY_SYNONYMS_shop17 = {
-    # blue 家族
-    "blue": ["ブルー", "青", "ミッドナイト", "マリン", "ミストブルー"],
-    "ブルー": ["ブルー", "青", "ミッドナイト", "マリン", "ミストブルー"],
-    "青": ["ブルー", "青", "ミッドナイト", "マリン", "ミストブルー"],
-    "ミッドナイト": ["ブルー", "青", "ミッドナイト", "マリン", "ミストブルー"],
-    "マリン": ["ブルー", "青", "ミッドナイト", "マリン", "ミストブルー"],
-
-    # black
-    "black": ["ブラック", "黒"],
-    "ブラック": ["ブラック", "黒"],
-    "黒": ["ブラック", "黒"],
-
-    # white / starlight
-    "white": ["ホワイト", "白", "スターライト", "Starlight", "starlight"],
-    "ホワイト": ["ホワイト", "白", "スターライト"],
-    "白": ["ホワイト", "白", "スターライト"],
-    "スターライト": ["ホワイト", "白", "スターライト"],
-    "starlight": ["ホワイト", "白", "スターライト"],
-
-    # silver
-    "silver": ["シルバー", "銀"],
-    "シルバー": ["シルバー", "銀"],
-    "銀": ["シルバー", "銀"],
-
-    # gold / light gold
-    "gold": ["ゴールド", "金", "ライトゴールド"],
-    "ゴールド": ["ゴールド", "金", "ライトゴールド"],
-    "ライトゴールド": ["ゴールド", "金", "ライトゴールド"],
-
-    # orange
-    "orange": ["オレンジ", "橙"],
-    "オレンジ": ["オレンジ", "橙"],
-    "橙": ["オレンジ", "橙"],
-
-    # green / セージ
-    "green": ["グリーン", "緑", "セージ"],
-    "グリーン": ["グリーン", "緑", "セージ"],
-    "緑": ["グリーン", "緑", "セージ"],
-    "セージ": ["グリーン", "緑", "セージ"],
-
-    # pink
-    "pink": ["ピンク"],
-    "ピンク": ["ピンク"],
-
-    # yellow
-    "yellow": ["イエロー", "黄", "黄色"],
-    "イエロー": ["イエロー", "黄", "黄色"],
-    "黄": ["イエロー", "黄", "黄色"],
-    "黄色": ["イエロー", "黄", "黄色"],
-
-    # purple / lavender
-    "purple": ["パープル", "紫", "ラベンダー"],
-    "パープル": ["パープル", "紫", "ラベンダー"],
-    "紫": ["パープル", "紫", "ラベンダー"],
-    "ラベンダー": ["パープル", "紫", "ラベンダー"],
-
-    # natural
-    "natural": ["ナチュラル"],
-    "ナチュラル": ["ナチュラル"],
-
-    # space black
-    "spaceblack": ["スペースブラック"],
-    "スペースブラック": ["スペースブラック"],
-}
-
-def _norm(s: str) -> str:
-    return (s or "").strip()
-
-def _label_matches_color_shop17(label_raw: str, color_raw: str, color_norm: str) -> bool:
-    """宽松匹配：精确(归一) | 原文子串 | 颜色家族关键词命中"""
-    label_norm = _norm(label_raw)
-    if label_norm == color_norm:
-        return True
-    if label_raw and str(label_raw) in str(color_raw):
-        return True
-    keys = {label_raw.strip(), label_raw.strip().lower(), label_norm}
-    candidates = set()
-    for k in keys:
-        if k in FAMILY_SYNONYMS_shop17:
-            candidates.update(FAMILY_SYNONYMS_shop17[k])
-    if not candidates:
-        for _, toks in FAMILY_SYNONYMS_shop17.items():
-            if any((t == label_raw) or (t == label_norm) or (t in str(label_raw)) for t in toks):
-                candidates.update(toks)
-                break
-    return any(tok in str(color_raw) for tok in candidates)
+_norm = _norm_strip  # 颜色匹配用归一化（_build_color_map_shop17 等仍使用）
 
 def _build_color_map_shop17(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict[str, Tuple[str, str]]]:
     """(model_norm, cap_gb) -> { color_norm: (part_number, color_raw) }"""
@@ -642,7 +567,7 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
         new_rows, _log_seq = resolve_color_prices(
             decomp,
             color_map,
-            _label_matches_color_shop17,
+            _label_matches_color_unified,
             shop_name=shop_name,
             cleaner_name=CLEANER_NAME,
             recorded_at=rec_at,

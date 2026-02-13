@@ -18,7 +18,7 @@ shop15 清洗器 — 買取当番
     │
     ├─ _build_color_prices_from_specs_shop15()     ← Step 10: specs → 最终价格
     │
-    ├─ _label_matches_color()                      ← Step 4: 标签→颜色匹配
+    ├─ _label_matches_color_unified()               ← Step 4: 标签→颜色匹配（cleaner_tools 统一）
     │
     └─ clean_shop15()                              ← Step 11: 主函数，生成输出行
 """
@@ -37,8 +37,10 @@ from ..cleaner_tools import (
     _normalize_model_generic,
     _load_iphone17_info_df_from_db,
     _build_color_map,
+    _norm_strip,
     PriceDecomposition,
     resolve_color_prices,
+    _label_matches_color_unified,
 )
 
 # 初始化 logger
@@ -130,8 +132,8 @@ def _extract_base_price_at_start(text: object) -> Optional[int]:
 # Step 3: 标签归一化 & 拆分
 # ----------------------------------------------------------------------
 
-def _norm(s: str) -> str:
-    return (s or "").strip()
+_norm = _norm_strip  # 颜色匹配用归一化（去空格 + 转小写）
+
 
 def _clean_label_shop15(label: str) -> str:
     if not label:
@@ -154,44 +156,10 @@ def _split_color_labels_shop15(label_blob: str) -> List[str]:
     return parts or [s]
 
 # ----------------------------------------------------------------------
-# Step 4: 颜色家族同义词 & 匹配
+# Step 4: 标签→颜色匹配（2025-02 替换为 cleaner_tools 统一实现）
 # ----------------------------------------------------------------------
-
-FAMILY_SYNONYMS = {
-    "blue": ["ブルー"],
-    "black": ["ブラック", "黒"],
-    "white": ["ホワイト", "白"],
-    "green": ["グリーン", "緑"],
-    "red": ["レッド", "赤"],
-    "pink": ["ピンク"],
-    "purple": ["パープル", "紫"],
-    "yellow": ["イエロー", "黄"],
-    "gold": ["ゴールド"],
-    "silver": ["シルバー"],
-    "gray": ["グレー", "グレイ", "灰"],
-    "natural": ["ナチュラル"],
-}
-
-def _label_matches_color(label_raw: str, color_raw: str, color_norm: str) -> bool:
-    """
-    宽松匹配：精确(归一) | 原文子串 | 英文族名→日文家族词
-    """
-    label_norm = _norm(label_raw)
-    if label_norm == color_norm:
-        return True
-    if label_raw and str(label_raw) in str(color_raw):
-        return True
-    key = label_raw.strip().lower()
-    if key in FAMILY_SYNONYMS:
-        for jp in FAMILY_SYNONYMS[key]:
-            if jp in str(color_raw):
-                return True
-    # 也尝试 label_norm 的英文键
-    if label_norm in FAMILY_SYNONYMS:
-        for jp in FAMILY_SYNONYMS[label_norm]:
-            if jp in str(color_raw):
-                return True
-    return False
+# 原 shop15 独立实现已迁移至 cleaner_tools._label_matches_color_unified，
+# 合并 shop3/4/9/11/12/14/15/16/17 逻辑，供所有清洗器共用。
 
 # ----------------------------------------------------------------------
 # Step 5: 正则模式定义
@@ -804,7 +772,7 @@ def clean_shop15(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
         new_rows, _log_seq = resolve_color_prices(
             decomp,
             color_map,
-            _label_matches_color,
+            _label_matches_color_unified,
             shop_name=SHOP_NAME,
             cleaner_name=CLEANER_NAME,
             recorded_at=rec_at,

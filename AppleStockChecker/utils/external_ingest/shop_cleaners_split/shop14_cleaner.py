@@ -38,6 +38,7 @@ from ..cleaner_tools import (
     _norm_strip,
     PriceDecomposition,
     resolve_color_prices,
+    _label_matches_color_unified,
 )
 
 # ---------------------------------------------------------------------------
@@ -51,7 +52,7 @@ SHOP_NAME = "買取楽園"
 # ---------------------------------------------------------------------------
 # Step 1: 配置常量
 # ---------------------------------------------------------------------------
-SHOP14_EXTRACTION_MODE = os.getenv("SHOP14_EXTRACTION_MODE", "auto")  # "regex" | "llm" | "auto"
+SHOP14_EXTRACTION_MODE = os.getenv("SHOP14_EXTRACTION_MODE", "regex")  # "regex" | "llm" | "auto"
 
 SHOP14_OLLAMA_URL = os.getenv("SHOP14_OLLAMA_URL", "http://localhost:11434")
 SHOP14_LLM_MODEL_ID = os.getenv("SHOP14_LLM_MODEL_ID", "gemma3:1b")
@@ -200,63 +201,10 @@ PAIR_RE_MULTI = re.compile(
 )
 
 # ---------------------------------------------------------------------------
-# Step 4: 颜色家族同义词
+# Step 4: 标签→颜色匹配（2025-02 替换为 cleaner_tools 统一实现）
 # ---------------------------------------------------------------------------
-
-_FAMILY_TOKENS = {
-    "blue":   ["blue", "ブルー", "青"],
-    "black":  ["black", "ブラック", "黒"],
-    "white":  ["white", "ホワイト", "白"],
-    "green":  ["green", "グリーン", "緑"],
-    "red":    ["red", "レッド", "赤"],
-    "pink":   ["pink", "ピンク"],
-    "purple": ["purple", "パープル", "紫"],
-    "yellow": ["yellow", "イエロー", "黄"],
-    "orange": ["orange", "オレンジ", "橙"],
-    "silver": ["silver", "シルバー", "銀"],
-    "gold":   ["gold", "ゴールド", "金"],
-    "gray":   ["gray", "grey", "グレー", "グレイ", "灰"],
-    "natural":["natural", "ナチュラル"],
-}
-
-FAMILY_SYNONYMS_shop14: Dict[str, List[str]] = {}
-for _fam, _toks in _FAMILY_TOKENS.items():
-    for _t in _toks:
-        FAMILY_SYNONYMS_shop14[str(_t).lower()] = _toks
-
-
-def _label_matches_color_shop14(label_raw: str, color_raw: str, color_norm: str) -> bool:
-    label_norm = _norm(label_raw)
-    if not label_norm:
-        return False
-
-    color_raw_s = str(color_raw or "")
-    color_norm_s = str(color_norm or "")
-
-    label_l = label_norm.lower()
-    color_raw_l = color_raw_s.lower()
-    color_norm_l = color_norm_s.lower()
-
-    if label_l == color_norm_l:
-        return True
-
-    if label_l and (label_l in color_raw_l):
-        return True
-
-    keys = {label_raw.strip().lower(), label_norm, label_raw.strip()}
-    candidates = set()
-    for k in keys:
-        if k in FAMILY_SYNONYMS_shop14:
-            candidates.update(FAMILY_SYNONYMS_shop14[k])
-
-    if not candidates:
-        for k, toks in FAMILY_SYNONYMS_shop14.items():
-            if k and (k == label_l or k in label_l):
-                candidates.update(toks)
-                break
-
-    return any(str(tok).lower() in color_raw_l for tok in candidates)
-
+# 原 shop14 独立实现已迁移至 cleaner_tools._label_matches_color_unified，
+# 合并 shop3/4/9/11/12/14/15/16/17 逻辑，供所有清洗器共用。
 
 # ---------------------------------------------------------------------------
 # Step 5: remark列解析
@@ -811,7 +759,7 @@ def clean_shop14(df: "pd.DataFrame", debug: bool = True) -> "pd.DataFrame":
         new_rows, _log_seq = resolve_color_prices(
             decomp,
             color_map,
-            _label_matches_color_shop14,
+            _label_matches_color_unified,
             shop_name=SHOP_NAME,
             cleaner_name=CLEANER_NAME,
             recorded_at=rec_at,

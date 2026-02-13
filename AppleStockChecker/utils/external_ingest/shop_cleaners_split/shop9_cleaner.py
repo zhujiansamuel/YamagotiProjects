@@ -42,9 +42,11 @@ from ..cleaner_tools import (
     _load_iphone17_info_df_from_db,
     _build_color_map,
     _truncate_for_log,
+    _norm_strip,
     normalize_text_basic,
     PriceDecomposition,
     resolve_color_prices,
+    _label_matches_color_unified,
 )
 
 # 初始化 logger
@@ -64,7 +66,7 @@ OLLAMA_URL = os.getenv("SHOP9_OLLAMA_HOST") or os.getenv("OLLAMA_HOST") or "http
 LLM_MODEL_ID = os.getenv("SHOP9_LX_MODEL_ID") or os.getenv("SHOP9_LLM_MODEL_ID") or "gemma3:1b"
 LLM_TEMPERATURE = float(os.getenv("SHOP9_LLM_TEMPERATURE", "0.0") or "0.0")
 
-SHOP9_EXTRACTION_MODE = "auto"  # "regex" | "llm" | "auto"
+SHOP9_EXTRACTION_MODE = "regex"  # "regex" | "llm" | "auto"
 
 ABS_LIKE_MIN = int(os.getenv("SHOP9_ABS_LIKE_MIN", "50000"))  # iPhone17 绝对价量级阈值
 
@@ -77,16 +79,8 @@ COL_TIME  = "time-scraped"
 # 辅助工具函数
 # ----------------------------------------------------------------------
 
-def _norm(s: str) -> str:
-    """
-    shop9 专用的规范化：全角→半角 + 小写 + 去空白
-    """
-    if s is None:
-        return ""
-    # 使用通用规范化函数（全角→半角 + 去换行 + 合并空格 + strip）
-    t = normalize_text_basic(str(s))
-    # shop9 特有：转小写
-    return t.lower()
+_norm = _norm_strip  # 颜色匹配用归一化（去空格 + 转小写）
+
 
 def _norm_cls(x: str) -> str:
     # 容错：abs price / abs-price / ABS_PRICE 统一
@@ -176,40 +170,18 @@ def _bucket_amount(cls_norm: str, ex_text: str, amt: int) -> str:
 # ----------------------------------------------------------------------
 # Step 3: 颜色家族同义词 & マッチング
 # ----------------------------------------------------------------------
-
-FAMILY_SYNONYMS_SHOP9 = {
-    "blue": ["ブルー", "青", "ディープブルー", "ディープ ブルー"],
-    "ブルー": ["ブルー", "青", "ディープブルー"],
-    "青": ["ブルー", "青", "ディープブルー"],
-    "ディープブルー": ["ディープブルー", "ブルー", "青"],
-    "silver": ["シルバー", "銀"],
-    "シルバー": ["シルバー", "銀"],
-    "銀": ["シルバー", "銀"],
-    "black": ["ブラック", "黒"],
-    "ブラック": ["ブラック", "黒"],
-    "黒": ["ブラック", "黒"],
-    "orange": ["オレンジ", "橙", "コズミックオレンジ"],
-    "オレンジ": ["オレンジ", "橙", "コズミックオレンジ"],
-    "橙": ["オレンジ", "橙", "コズミックオレンジ"],
-    "コズミックオレンジ": ["コズミックオレンジ", "オレンジ", "橙", "orange"],
-    "white": ["ホワイト", "白"],
-    "ホワイト": ["ホワイト", "白"],
-}
-
-SYNONYM_LOOKUP: Dict[str, List[str]] = {}
-for _k, _vs in FAMILY_SYNONYMS_SHOP9.items():
-    SYNONYM_LOOKUP[_k] = list(dict.fromkeys(_vs))
-    for _v in _vs:
-        SYNONYM_LOOKUP.setdefault(_v, [])
-        SYNONYM_LOOKUP[_v] = list(dict.fromkeys(SYNONYM_LOOKUP[_v] + _vs + [_k]))
+# 原逻辑：FAMILY_SYNONYMS_SHOP9 = {...}; SYNONYM_LOOKUP 由 for _k,_vs 循环构建
+#   每个 key/val 映射到同族列表。现改用 cleaner_tools.SYNONYM_LOOKUP_NORM（去除空格版本）
 
 def _build_color_aliases(available_colors: List[str]) -> Dict[str, List[str]]:
+    # 原逻辑：syns = SYNONYM_LOOKUP.get(c0, []); out[c0]=[c0]+syns
     out = {}
     for c in available_colors:
         c0 = str(c).strip()
         if not c0:
             continue
-        syns = SYNONYM_LOOKUP.get(c0, [])
+        c0_norm = _norm(c0)
+        syns = SYNONYM_LOOKUP_NORM.get(c0_norm, [])
         out[c0] = list(dict.fromkeys([c0] + syns))[:20]
     return out
 
@@ -232,14 +204,11 @@ def _map_to_available_color(raw_color: str, available_set: set) -> Optional[str]
         if _norm(c) == rcn:
             return c
 
-    # 同义词兜底
-    if rc in SYNONYM_LOOKUP:
-        for syn in SYNONYM_LOOKUP[rc]:
-            if syn in available_set:
-                return syn
-            synn = _norm(syn)
+    # 同义词兜底（原逻辑：if rc in SYNONYM_LOOKUP: for syn in SYNONYM_LOOKUP[rc]: ...）
+    if rcn in SYNONYM_LOOKUP_NORM:
+        for syn_norm in SYNONYM_LOOKUP_NORM[rcn]:
             for c in available_set:
-                if _norm(c) == synn:
+                if _norm(c) == syn_norm:
                     return c
 
     # 包含关系兜底
@@ -250,49 +219,11 @@ def _map_to_available_color(raw_color: str, available_set: set) -> Optional[str]
 
     return None
 
-def _label_matches_color(label_raw: str, color_raw: str, color_norm: str) -> bool:
-    """
-    shop9 标签→颜色匹配函数（供 resolve_color_prices 使用）。
-
-    匹配策略：
-      1. "全色" / "ALL" → 匹配所有颜色
-      2. 精确匹配（normalize 后比较）
-      3. 同义词匹配（SYNONYM_LOOKUP）
-      4. 去空白后的包含关系兜底
-    """
-    if not label_raw:
-        return False
-    lr = str(label_raw).strip()
-
-    # "全色" / "ALL" → 匹配所有颜色
-    if lr == "全色" or lr.upper() == "ALL":
-        return True
-
-    lr_n = _norm(lr)
-    cr_n = _norm(color_raw)
-    cn_n = _norm(color_norm)
-
-    # 精确匹配
-    if lr_n == cr_n or lr_n == cn_n:
-        return True
-
-    # 同义词匹配
-    if lr_n in SYNONYM_LOOKUP:
-        for syn in SYNONYM_LOOKUP[lr_n]:
-            sn = _norm(syn)
-            if sn == cr_n or sn == cn_n:
-                return True
-
-    # 去空白/连字符后包含关系
-    lr_short = re.sub(r"[\s\u3000\-]+", "", lr_n)
-    cn_short = re.sub(r"[\s\u3000\-]+", "", cn_n)
-    cr_short = re.sub(r"[\s\u3000\-]+", "", cr_n)
-    if lr_short and cn_short and (lr_short in cn_short or cn_short in lr_short):
-        return True
-    if lr_short and cr_short and (lr_short in cr_short or cr_short in lr_short):
-        return True
-
-    return False
+# ----------------------------------------------------------------------
+# 标签→颜色匹配（2025-02 替换为 cleaner_tools 统一实现）
+# ----------------------------------------------------------------------
+# 原 shop9 独立实现已迁移至 cleaner_tools._label_matches_color_unified，
+# 合并 shop3/4/9/11/12/14/15/16/17 逻辑。全色/ALL 由 resolve_color_prices 的 is_all 处理。
 
 # ----------------------------------------------------------------------
 # Step 4: 正则模式定义
@@ -392,9 +323,9 @@ def _direct_abs_overrides_for_row(
 
     s = str(raw_color_text)
     for col_norm in color_to_pn.keys():
-        # 构建该颜色的别名集合：自身 + 同义词
+        # 构建该颜色的别名集合：自身 + 同义词（原逻辑：SYNONYM_LOOKUP.get(col_norm, [])）
         aliases = {col_norm}
-        for syn in SYNONYM_LOOKUP.get(col_norm, []):
+        for syn in SYNONYM_LOOKUP_NORM.get(col_norm, []):
             aliases.add(str(syn).strip())
         amt_for_color: Optional[int] = None
         for alias in aliases:
@@ -435,18 +366,17 @@ def _extract_price_parts_shop9_regex(
     delta_specs: List[Tuple[str, int]] = list(deltas)
 
     def _match_label_to_colnorm(tok: str) -> Optional[str]:
+        # 原逻辑：candidates = SYNONYM_LOOKUP.get(tok_norm,[])|{tok_norm}; for cand: candn=_norm(cand); if candn==cn or ...
         if not tok:
             return None
         tok_norm = _norm(tok)
         for col_norm in color_to_pn.keys():
             if tok_norm == col_norm:
                 return col_norm
-        candidates = set()
-        if tok_norm in SYNONYM_LOOKUP:
-            candidates.update(SYNONYM_LOOKUP[tok_norm])
+        candidates = set(SYNONYM_LOOKUP_NORM.get(tok_norm, []))
         candidates.add(tok_norm)
         for cand in candidates:
-            candn = _norm(cand)
+            candn = _norm(cand)  # cand 来自 SYNONYM_LOOKUP_NORM 已归一化，_norm 幂等
             for col_norm in color_to_pn.keys():
                 cn = _norm(col_norm)
                 if candn == cn or candn in cn or cn in candn:
@@ -972,7 +902,7 @@ def clean_shop9(
         new_rows, _log_seq = resolve_color_prices(
             decomp,
             color_to_pn,
-            _label_matches_color,
+            _label_matches_color_unified,
             shop_name=SHOP_NAME,
             cleaner_name=CLEANER_NAME,
             recorded_at=t,

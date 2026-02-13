@@ -19,7 +19,7 @@ shop12 清洗器 — トゥインクル
     │       └─ _extract_price_parts_shop12_llm_with_guardrails()  ← Step 4: LLM 提取 + 防幻觉
     │           └─ _parse_rules_with_langextract()    ← LLM 核心: effective_class 修正 + 去重
     │
-    ├─ _label_matches_color()                   ← Step 6: 标签→颜色匹配 (EN_TO_JP)
+    ├─ _label_matches_color_unified()           ← Step 6: 标签→颜色匹配（cleaner_tools 统一）
     │
     └─ clean_shop12()                           ← Step 7: 主函数，生成输出行
 """
@@ -45,6 +45,7 @@ from ..cleaner_tools import (
     normalize_text_basic,
     PriceDecomposition,
     resolve_color_prices,
+    _label_matches_color_unified,
 )
 
 # ----------------------------------------------------------------------
@@ -60,7 +61,7 @@ SHOP_NAME = "トゥインクル"
 # 配置
 # ----------------------------------------------------------------------
 
-SHOP12_EXTRACTION_MODE = "auto"  # "regex" | "llm" | "auto"
+SHOP12_EXTRACTION_MODE = "regex"  # "regex" | "llm" | "auto"
 
 # ----------------------------------------------------------------------
 # 辅助工具函数
@@ -480,50 +481,10 @@ def _extract_price_parts_shop12_dispatch(
     return abs_llm, delta_llm, "llm"
 
 # ----------------------------------------------------------------------
-# Step 6: 颜色匹配
+# Step 6: 标签→颜色匹配（2025-02 替换为 cleaner_tools 统一实现）
 # ----------------------------------------------------------------------
-
-EN_TO_JP = {
-    "silver": ["シルバー", "銀"],
-    "blue":   ["ブルー", "青", "ディープブルー"],
-    "black":  ["ブラック", "黒"],
-    "white":  ["ホワイト", "白"],
-    "gold":   ["ゴールド", "金"],
-    "green":  ["グリーン", "緑"],
-    "red":    ["レッド", "赤"],
-    "pink":   ["ピンク"],
-    "purple": ["パープル", "紫"],
-    "yellow": ["イエロー", "黄"],
-    "orange": ["オレンジ", "橙"],
-    "gray":   ["グレー", "グレイ", "灰"],
-    "natural":["ナチュラル"],
-}
-
-def _label_matches_color(label_raw: str, color_raw: str, color_norm: str) -> bool:
-    if not label_raw or not color_raw:
-        return False
-    lbl_raw = str(label_raw).strip()
-    cr_raw  = str(color_raw).strip()
-
-    # 英文直译
-    label_lower = lbl_raw.lower()
-    if label_lower in EN_TO_JP:
-        for jp in EN_TO_JP[label_lower]:
-            if jp in cr_raw:
-                return True
-            if _norm(jp) == color_norm:
-                return True
-
-    ln = _norm(lbl_raw)
-    cn = color_norm
-    if ln == cn:
-        return True
-    if lbl_raw in cr_raw or ln in cn or cn in ln:
-        return True
-
-    ln_short = re.sub(r"[\s\u3000]+", "", ln)
-    cn_short = re.sub(r"[\s\u3000]+", "", cn)
-    return bool(ln_short and (ln_short in cn_short or cn_short in ln_short))
+# 原 shop12 独立实现已迁移至 cleaner_tools._label_matches_color_unified，
+# 合并 shop3/4/9/11/12/14/15/16/17 逻辑，供所有清洗器共用。
 
 # ----------------------------------------------------------------------
 # Step 7: 清洗主函数
@@ -647,7 +608,7 @@ def clean_shop12(df: pd.DataFrame, debug: bool = False) -> pd.DataFrame:
             source_text_raw=source_text_raw_full,
         )
         new_rows, _log_seq = resolve_color_prices(
-            decomp, color_map, _label_matches_color,
+            decomp, color_map, _label_matches_color_unified,
             shop_name=SHOP_NAME,
             cleaner_name=CLEANER_NAME,
             recorded_at=rec_at,

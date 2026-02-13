@@ -20,7 +20,7 @@ shop4 清洗器 — モバイルミックス
     │       ├─ _collect_adjustments_shop4_llm()      ← Step 5b: LLM 核心提取
     │       └─ Guardrails (coerce + validate)        ← Step 6: 防幻觉过滤
     │
-    ├─ _label_matches_color_shop4()          ← Step 7: 标签→颜色匹配
+    ├─ _label_matches_color_unified()       ← Step 7: 标签→颜色匹配（cleaner_tools 统一）
     │
     └─ clean_shop4()                         ← Step 8: 主函数，生成输出行
 """
@@ -47,6 +47,7 @@ from ..cleaner_tools import (
     _norm_strip,
     _normalize_amount_text,
     normalize_text_basic,
+    _label_matches_color_unified,
 )
 
 # ----------------------------------------------------------------------
@@ -68,7 +69,7 @@ SHOP_NAME = "モバイルミックス"
 SHOP4_OLLAMA_URL = os.getenv("SHOP4_OLLAMA_URL", "http://localhost:11434")
 SHOP4_OLLAMA_MODEL_ID = os.getenv("SHOP4_OLLAMA_MODEL_ID", "gemma3:1b")
 
-SHOP4_EXTRACTION_MODE = "auto"  # "regex" | "llm" | "auto"
+SHOP4_EXTRACTION_MODE = "regex"  # "regex" | "llm" | "auto"
 
 # ----------------------------------------------------------------------
 # 辅助工具函数
@@ -197,76 +198,10 @@ def _parse_color_delta_shop4_regex(line: str) -> Optional[List[Tuple[str, int]]]
 # ----------------------------------------------------------------------
 # Step 4: 颜色家族同义词 & 匹配
 # ----------------------------------------------------------------------
-
-FAMILY_SYNONYMS_shop4 = {
-    # blue
-    "blue": ["ブルー", "青", "ディープブルー"],
-    "ブルー": ["ブルー", "青", "ディープブルー"],
-    "青": ["ブルー", "青", "ディープブルー"],
-    "ディープブルー": ["ブルー", "青", "ディープブルー"],
-    # black
-    "black": ["ブラック", "黒"],
-    "ブラック": ["ブラック", "黒"],
-    "黒": ["ブラック", "黒"],
-    # white / starlight
-    "white": ["ホワイト", "白", "スターライト"],
-    "ホワイト": ["ホワイト", "白", "スターライト"],
-    "白": ["ホワイト", "白", "スターライト"],
-    "スターライト": ["ホワイト", "白", "スターライト"],
-    # silver
-    "silver": ["シルバー", "銀"],
-    "シルバー": ["シルバー", "銀"],
-    "銀": ["シルバー", "銀"],
-    # gold
-    "gold": ["ゴールド", "金"],
-    "ゴールド": ["ゴールド", "金"],
-    "金": ["ゴールド", "金"],
-    # green
-    "green": ["グリーン", "緑"],
-    "グリーン": ["グリーン", "緑"],
-    "緑": ["グリーン", "緑"],
-    # pink
-    "pink": ["ピンク"],
-    "ピンク": ["ピンク"],
-    # red
-    "red": ["レッド", "赤"],
-    "レッド": ["レッド", "赤"],
-    "赤": ["レッド", "赤"],
-    # yellow
-    "yellow": ["イエロー", "黄"],
-    "イエロー": ["イエロー", "黄"],
-    "黄": ["イエロー", "黄"],
-    # purple
-    "purple": ["パープル", "紫"],
-    "パープル": ["パープル", "紫"],
-    "紫": ["パープル", "紫"],
-    # natural / titanium
-    "natural": ["ナチュラル"],
-    "ナチュラル": ["ナチュラル"],
-    "チタン": ["チタン", "チタニウム"],
-    "チタニウム": ["チタン", "チタニウム"],
-    # midnight
-    "ミッドナイト": ["ミッドナイト"],
-}
-
-def _label_matches_color_shop4(label_raw: str, color_raw: str, color_norm: str) -> bool:
-    """宽松匹配：精确(归一) | 原文子串 | 颜色家族关键词命中"""
-    label_norm = _norm(label_raw)
-    if label_norm == color_norm:
-        return True
-    if label_raw and str(label_raw) in str(color_raw):
-        return True
-    keys = {label_raw.strip(), label_raw.strip().lower(), label_norm}
-    candidates = set()
-    for k in keys:
-        if k in FAMILY_SYNONYMS_shop4:
-            candidates.update(FAMILY_SYNONYMS_shop4[k])
-    if not candidates:
-        for _, toks in FAMILY_SYNONYMS_shop4.items():
-            if any((t == label_raw) or (t == label_norm) or (t in str(label_raw)) for t in toks):
-                candidates.update(toks)
-                break
-    return any(tok in str(color_raw) for tok in candidates)
+# Step 4b: 标签→颜色匹配（2025-02 替换为 cleaner_tools 统一实现）
+# ----------------------------------------------------------------------
+# 原 shop4 独立实现已迁移至 cleaner_tools._label_matches_color_unified，
+# 合并 shop3/4/9/11/12/14/15/16/17 逻辑，供所有清洗器共用。
 
 # ----------------------------------------------------------------------
 # Step 5a: 正则收集（逐行扫描 block）
@@ -737,7 +672,7 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         new_rows, _log_seq = resolve_color_prices(
             decomp,
             color_to_pn,
-            _label_matches_color_shop4,
+            _label_matches_color_unified,
             shop_name=SHOP_NAME,
             cleaner_name=CLEANER_NAME,
             recorded_at=rec_at,

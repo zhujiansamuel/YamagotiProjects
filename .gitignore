@@ -71,3 +71,4 @@ htmlcov/
 # Project specific
 logs/
 simplepro.lic
+caddy-reload/

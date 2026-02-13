@@ -45,7 +45,6 @@ from ..cleaner_tools import (
     _parse_capacity_gb,
     _load_iphone17_info_df_from_db,
     _truncate_for_log,
-    _norm_strip,
     safe_to_text,
 )
 
@@ -65,7 +64,7 @@ SHOP_NAME = "海峡通信"
 # 配置
 # ----------------------------------------------------------------------
 
-SHOP2_EXTRACTION_MODE = "auto"  # "regex" | "llm" | "auto"
+SHOP2_EXTRACTION_MODE = "regex"  # "regex" | "llm" | "auto"
 
 # LangExtract + Ollama (本地 LLM) 集成
 try:
@@ -100,7 +99,11 @@ def _parse_yen(val) -> int | None:
     except Exception:
         return None
 
-_norm = _norm_strip
+
+def _norm(s: str) -> str:
+    """shop2 专用：strip 归一化，用于 model/color/part_number 等字段"""
+    return (s or "").strip()
+
 
 # ----------------------------------------------------------------------
 # Step 1: SIMfree+未開封 过滤
