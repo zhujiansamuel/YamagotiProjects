@@ -61,6 +61,9 @@ services:
       - EXTERNAL_GOODS_API_URL=${EXTERNAL_GOODS_API_URL}
       - EXTERNAL_GOODS_API_TOKEN=${EXTERNAL_GOODS_API_TOKEN}
       - EXTERNAL_GOODS_CATEGORY_FILTER=${EXTERNAL_GOODS_CATEGORY_FILTER}
+      - CLICKHOUSE_HOST=clickhouse
+      - CLICKHOUSE_PORT=9000
+      - CLICKHOUSE_DB=yamagoti
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -978,12 +981,35 @@ services:
       - celery
       - shop-workers
 
+  # ClickHouse 单节点 (GPU pipeline 用)
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    container_name: ypa_clickhouse
+    ports:
+      - "9000:9000"    # Native TCP (clickhouse-driver)
+      - "8123:8123"    # HTTP (备用/调试)
+    volumes:
+      - ypa_clickhouse_data:/var/lib/clickhouse
+      - ./AppleStockChecker/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql
+    environment:
+      - CLICKHOUSE_DB=yamagoti
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_PASSWORD=
+    networks:
+      - ypa_network
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+
 volumes:
   ypa_redis_data:
     driver: local
   ypa_static:
     driver: local
   ypa_media:
+    driver: local
+  ypa_clickhouse_data:
     driver: local
 
 networks:
