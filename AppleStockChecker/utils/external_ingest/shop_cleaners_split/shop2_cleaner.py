@@ -8,7 +8,7 @@ shop2 清洗器 — 海峡通信
     │
     ├─ _is_target()                          ← Step 1: SIMfree+未開封 过滤
     │
-    ├─ _normalize_amount_text()              ← Step 2: 基础价(data3)解析 (cleaner_tools)
+    ├─ extract_price_yen()                   ← Step 2: 基础价(data3)解析（cleaner_tools 统一）
     │
     ├─ _normalize_model_generic()            ← Step 3: 机型规范化（cleaner_tools 统一）
     │
@@ -41,9 +41,9 @@ from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
-from ...external_ingest.helpers import to_int_yen, parse_dt_aware
+from ...external_ingest.helpers import parse_dt_aware
 from ..cleaner_tools import (
-    _normalize_amount_text,
+    extract_price_yen,
     _parse_capacity_gb,
     _normalize_model_generic,
     _build_color_map,
@@ -671,7 +671,7 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
             )
             continue
 
-        base_price = _normalize_amount_text(raw_price)
+        base_price = extract_price_yen(raw_price)
         if base_price is None:
             logger.debug(
                 "Skipping row: base_price parse failed",

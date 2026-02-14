@@ -36,8 +36,9 @@ from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
-from ...external_ingest.helpers import to_int_yen, parse_dt_aware
+from ...external_ingest.helpers import parse_dt_aware
 from ..cleaner_tools import (
+    extract_price_yen,
     _parse_capacity_gb,
     _normalize_model_generic,
     _load_iphone17_info_df_from_db,
@@ -855,7 +856,7 @@ def clean_shop9(
         s_price = str(raw_price_cell) if raw_price_cell is not None else ""
 
         # base price：优先 price 列，其次 color 列（保留原逻辑）
-        base_price = to_int_yen(s_price) or to_int_yen(s_color)
+        base_price = extract_price_yen(s_price) or extract_price_yen(s_color)
 
         # source_text_raw_full：两列合并
         source_text_raw_full = f"{s_price} | {s_color}" if s_price and s_color else (s_price or s_color)

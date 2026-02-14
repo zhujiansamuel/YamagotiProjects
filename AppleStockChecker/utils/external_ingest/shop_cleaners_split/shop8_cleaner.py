@@ -5,13 +5,13 @@ shop8 清洗器 — 買取wiki
   原始 DataFrame（機種名 / 未開封 / time-scraped）
     │
     ├─ _extract_part_number()    ← Step 1: 型番抽取（型番: XXXJ/A or PN 正则）
-    ├─ to_int_yen()              ← Step 2: 价格解析
+    ├─ extract_price_yen()       ← Step 2: 价格解析（cleaner_tools 统一）
     ├─ parse_dt_aware()          ← Step 3: 时间解析
     └─ clean_shop8()             ← Step 4: 主函数，输出 part_number / price_new / recorded_at
 """
 from typing import Protocol, Dict, Callable, Optional,List
-from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import normalize_text_basic
+from ...external_ingest.helpers import parse_dt_aware
+from ..cleaner_tools import normalize_text_basic, extract_price_yen
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -51,7 +51,7 @@ def clean_shop8(df: pd.DataFrame) -> pd.DataFrame:
 
     # 解析
     part_numbers = df[col_model].map(_extract_part_number)
-    price_new = df[col_price_new].map(to_int_yen)
+    price_new = df[col_price_new].map(extract_price_yen)
     recorded_at = df[col_time].map(parse_dt_aware)
 
     out = pd.DataFrame({
