@@ -25,7 +25,7 @@ shop2 清洗器 — 海峡通信
     │       ├─ Guardrail B: amount 原文校验        ← Step 6b: 防幻觉过滤
     │       └─ _parse_adjust_rule_shop2_regex()   ← Step 6c: 正则补全
     │
-    ├─ _match_color_group()                  ← Step 8: 颜色组匹配
+    ├─ _label_matches_color_unified()         ← Step 8: 颜色匹配（cleaner_tools 统一）
     │
     ├─ _apply_adjust_with_trace()            ← Step 9: 应用减额规则
     │
@@ -49,6 +49,7 @@ from ..cleaner_tools import (
     _build_color_map,
     _load_iphone17_info_df_from_db,
     _truncate_for_log,
+    _label_matches_color_unified,
     safe_to_text,
     OLLAMA_URL,
     OLLAMA_MODEL_ID,
@@ -97,74 +98,22 @@ def _is_target(s: str) -> bool:
     return ("simfree" in s) and ("未開封" in s)
 
 # ----------------------------------------------------------------------
-# Step 3: 颜色组匹配逻辑（黒 -> ブラック 等）
+# Step 3: 颜色匹配（使用 cleaner_tools 统一实现）
 # ----------------------------------------------------------------------
 
-def _match_color_group(group: str, color_name: str) -> tuple[bool, str]:
-    """
-    返回 (is_match, reason)
-    集中管理 data5 里"组名"到实际颜色名的映射规则。
-    """
-    g = (group or "").strip()
-    c = color_name or ""
-
-    # 常见后缀清理：青系 / 橙色 / 黒色 等
-    # （避免 LLM 或简单解析把"色/系"也带进 group_label）
-    g = re.sub(r"(系|色)$", "", g).strip()
-
-    # Blue 系
-    if g in ("青", "ブルー", "ミストブルー", "ディープブルー", "スカイブルー"):
-        return ("ブルー" in c), "contains ブルー"
-
-    # Silver 系
-    if g in ("銀", "シルバー"):
-        return ("シルバー" in c), "contains シルバー"
-
-    # Black 系 —— 黒 也命中 スペースブラック
-    if g in ("黒", "ブラック"):
-        return (
-            ("ブラック" in c) or ("黒" in c) or ("ミッドナイト" in c),
-            "contains ブラック/黒/ミッドナイト",
-        )
-
-    # White 系（如果你不希望"白"覆盖银色，可以去掉 "シルバー"）
-    if g in ("白", "ホワイト"):
-        return (
-            ("ホワイト" in c) or ("白" in c) or ("シルバー" in c),
-            "contains ホワイト/白/シルバー",
-        )
-
-    # Gold 系（可选）
-    if g in ("金", "ゴールド"):
-        return ("ゴールド" in c), "contains ゴールド"
-
-    # Orange 系
-    if g in ("橙", "オレンジ"):
-        return (
-            ("オレンジ" in c) or ("橙" in c),
-            "contains オレンジ/橙",
-        )
-
-    # Fallback: 允许 data5 里直接写具体颜色（例如 "コズミックオレンジ-3000"）
-    if g:
-        return (g in c), "substring match"
-
-    return False, ""
-
-def _apply_adjust_with_trace(color_name: str, rules: dict) -> tuple[int, list[dict]]:
+def _apply_adjust_with_trace(color_raw: str, color_norm: str, rules: dict) -> tuple[int, list[dict]]:
     """
     返回：(adjust_sum, trace)
-    trace 项示例：{"group":"青","delta":-1000,"reason":"contains ブルー"}
+    trace 项示例：{"group":"青","delta":-1000,"reason":"unified_match"}
     """
-    c = color_name or ""
     adjust = 0
     trace: list[dict] = []
     for group, delta in (rules or {}).items():
-        ok, reason = _match_color_group(group, c)
+        ok = _label_matches_color_unified(group, color_raw, color_norm)
         if ok:
             adjust += int(delta)
             trace.append(
-                {"group": (group or "").strip(), "delta": int(delta), "reason": reason}
+                {"group": (group or "").strip(), "delta": int(delta), "reason": "unified_match"}
             )
     return adjust, trace
 
@@ -751,7 +700,7 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
                 )
                 continue
 
-            adj, trace = _apply_adjust_with_trace(color, rules)
+            adj, trace = _apply_adjust_with_trace(color, _color_norm, rules)
             for tr in trace:
                 used_groups.add(tr["group"])
 
