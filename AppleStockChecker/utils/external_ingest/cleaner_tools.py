@@ -664,6 +664,7 @@ def resolve_color_prices(
     cleaner_name: str,
     recorded_at: object,
     emit_default_rows: bool = True,
+    skip_non_positive: bool = False,
     logger: Optional[logging.Logger] = None,
     log_seq_start: int = 0,
     row_index: int = -1,
@@ -690,6 +691,7 @@ def resolve_color_prices(
         cleaner_name: 清洗器名（用于日志）
         recorded_at: 记录时间
         emit_default_rows: 未匹配颜色是否生成行（False → 仅输出有明确定价的颜色）
+        skip_non_positive: 最终价格 <= 0 时跳过该颜色（True → 不生成行，仅 warning 日志）
         logger: 日志器（None 则跳过所有日志）
         log_seq_start: 日志序号起始值
         row_index: 行号（用于日志）
@@ -897,6 +899,26 @@ def resolve_color_prices(
 
         # emit_default_rows=False → 未匹配颜色不生成行
         if not emit_default_rows and effective_source == "default_zero":
+            continue
+
+        # skip_non_positive → 价格 <= 0 跳过（shop2 等需要）
+        if skip_non_positive and final_price is not None and int(final_price) <= 0:
+            if logger:
+                _seq += 1
+                logger.warning(
+                    "Skipping item: price <= 0",
+                    extra={
+                        **_log_ctx,
+                        "event_type": "output_record",
+                        "log_seq": _seq,
+                        "part_number": pn,
+                        "color_norm": col_norm,
+                        "base_price": base_price,
+                        "spec_value": spec_value,
+                        "final_price": int(final_price),
+                        "skip_reason": "price <= 0",
+                    },
+                )
             continue
 
         output_rows.append({
