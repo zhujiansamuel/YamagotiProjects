@@ -10,8 +10,8 @@ shop14_cleaner  —  買取楽園
     ├─ Step 3  base_price 提取
     ├─ Step 4  remark文本归一化（3列合并）
     ├─ Step 5  价格规则抽取 dispatch（EXTRACTION_MODE: regex / llm / auto）
-    │           ├─ regex路径: _extract_rules_shop14_regex()
-    │           └─ llm路径:   _extract_rules_shop14_llm_with_guardrails()
+    │           ├─ regex路径: _extract_specs_shop14_regex()
+    │           └─ llm路径:   _extract_specs_shop14_llm()
     ├─ Step 6  全色处理（all_delta 快捷路径）
     ├─ Step 7  label → color 匹配（家族同义词）
     ├─ Step 8  价格计算（abs优先 > base+delta > base）
@@ -252,7 +252,7 @@ def _split_color_amount_pairs_multi(txt: str) -> List[Tuple[str, int]]:
 # Step 7-A: 纯正则抽取路径
 # ---------------------------------------------------------------------------
 
-def _extract_rules_shop14_regex(
+def _extract_specs_shop14_regex(
     text: str,
 ) -> Dict[str, Union[Optional[int], List[Tuple[str, int]]]]:
     """
@@ -321,7 +321,7 @@ def _extract_rules_shop14_regex(
 # ---------------------------------------------------------------------------
 
 @lru_cache(maxsize=1)
-def _shop14_lx_prompt_and_examples():
+def _extract_specs_shop14_lx_prompt():
     import langextract as lx
 
     prompt = textwrap.dedent(
@@ -429,7 +429,7 @@ def _shop14_lx_prompt_and_examples():
 
 
 @lru_cache(maxsize=4096)
-def _shop14_extract_rules_with_langextract(
+def _extract_specs_shop14_llm_core(
     text: str,
 ) -> Dict[str, Union[Optional[int], List[Tuple[str, int]], List[dict]]]:
     """
@@ -443,7 +443,7 @@ def _shop14_extract_rules_with_langextract(
 
     import langextract as lx
 
-    prompt, examples = _shop14_lx_prompt_and_examples()
+    prompt, examples = _extract_specs_shop14_lx_prompt()
 
     try:
         result = lx.extract(
@@ -568,12 +568,12 @@ def _shop14_extract_rules_with_langextract(
     return out
 
 
-def _extract_rules_shop14_llm_with_guardrails(
+def _extract_specs_shop14_llm(
     text: str,
 ) -> Dict[str, Union[Optional[int], List[Tuple[str, int]]]]:
     """LLM抽取 + Guardrails（仅LLM路径应用）"""
     try:
-        parsed = _shop14_extract_rules_with_langextract(text)
+        parsed = _extract_specs_shop14_llm_core(text)
     except Exception as exc:
         logger.warning(
             "LLM extraction failed, returning empty",
@@ -600,7 +600,7 @@ def _extract_rules_shop14_llm_with_guardrails(
 # Step 7-C: Dispatch（三模式路由）
 # ---------------------------------------------------------------------------
 
-def _extract_rules_shop14_dispatch(
+def _extract_specs_shop14_dispatch(
     text: str,
     mode: str = EXTRACTION_MODE,
 ) -> Tuple[Dict[str, Union[Optional[int], List[Tuple[str, int]]]], str]:
@@ -610,15 +610,15 @@ def _extract_rules_shop14_dispatch(
     parsed_dict = {"all_delta": ..., "abs": [...], "delta": [...]}
     """
     if mode == "regex":
-        parsed = _extract_rules_shop14_regex(text)
+        parsed = _extract_specs_shop14_regex(text)
         return parsed, "regex"
 
     if mode == "llm":
-        parsed = _extract_rules_shop14_llm_with_guardrails(text)
+        parsed = _extract_specs_shop14_llm(text)
         return parsed, "llm"
 
     # auto: regex first, LLM fallback
-    parsed = _extract_rules_shop14_regex(text)
+    parsed = _extract_specs_shop14_regex(text)
     has_results = (
         parsed.get("all_delta") is not None
         or parsed.get("abs")
@@ -627,7 +627,7 @@ def _extract_rules_shop14_dispatch(
     if has_results:
         return parsed, "regex"
 
-    parsed = _extract_rules_shop14_llm_with_guardrails(text)
+    parsed = _extract_specs_shop14_llm(text)
     return parsed, "llm"
 
 
@@ -720,7 +720,7 @@ def clean_shop14(df: "pd.DataFrame", debug: bool = True) -> "pd.DataFrame":
         for col, frag in frags.items():
             if not frag:
                 continue
-            parsed, method = _extract_rules_shop14_dispatch(frag)
+            parsed, method = _extract_specs_shop14_dispatch(frag)
 
             if parsed.get("all_delta") is not None:
                 agg_all_delta = int(parsed["all_delta"])
@@ -730,7 +730,7 @@ def clean_shop14(df: "pd.DataFrame", debug: bool = True) -> "pd.DataFrame":
 
         # 兜底：逐列都没抽到，合并串再跑一次
         if combined and (agg_all_delta is None) and (not agg_abs) and (not agg_delta):
-            parsed2, method2 = _extract_rules_shop14_dispatch(combined)
+            parsed2, method2 = _extract_specs_shop14_dispatch(combined)
             if parsed2.get("all_delta") is not None:
                 agg_all_delta = int(parsed2["all_delta"])
             agg_abs.extend(parsed2.get("abs") or [])
