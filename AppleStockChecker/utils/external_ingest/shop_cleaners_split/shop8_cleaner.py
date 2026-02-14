@@ -1,4 +1,14 @@
 from __future__ import annotations
+"""
+shop8 清洗器 — 買取wiki
+
+  原始 DataFrame（機種名 / 未開封 / time-scraped）
+    │
+    ├─ _extract_part_number()    ← Step 1: 型番抽取（型番: XXXJ/A or PN 正则）
+    ├─ to_int_yen()              ← Step 2: 价格解析
+    ├─ parse_dt_aware()          ← Step 3: 时间解析
+    └─ clean_shop8()             ← Step 4: 主函数，输出 part_number / price_new / recorded_at
+"""
 from typing import Protocol, Dict, Callable, Optional,List
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
 from ..cleaner_tools import normalize_text_basic

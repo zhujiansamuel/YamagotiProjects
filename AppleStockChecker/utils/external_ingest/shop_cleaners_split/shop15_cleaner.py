@@ -4,10 +4,11 @@ from __future__ import annotations
 shop15 清洗器 — 買取当番
 
   原始文本（price 列）
+    │ 配置: EXTRACTION_MODE / OLLAMA_URL / OLLAMA_MODEL_ID (cleaner_tools)
     │
     ├─ _extract_base_price_at_start()             ← Step 2: 提取基础价
     │
-    ├─ _extract_price_parts_shop15_dispatch()      ← Step 9: 模式调度
+    ├─ _extract_price_parts_shop15_dispatch()      ← Step 9: 模式调度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
     │   │   └─ _extract_price_parts_shop15_regex()       ← Step 6: 正则提取 specs
@@ -35,12 +36,17 @@ from ...external_ingest.helpers import to_int_yen, parse_dt_aware
 from ..cleaner_tools import (
     _parse_capacity_gb,
     _normalize_model_generic,
+    _truncate_for_log,
     _load_iphone17_info_df_from_db,
     _build_color_map,
     _norm_strip,
     PriceDecomposition,
     resolve_color_prices,
     _label_matches_color_unified,
+    LABEL_SPLIT_RE_shop15 as _LABEL_LIST_SPLIT_RE_shop15,
+    OLLAMA_URL,
+    OLLAMA_MODEL_ID,
+    EXTRACTION_MODE,
 )
 
 # 初始化 logger
@@ -60,26 +66,12 @@ except Exception:
     lx = None
     _LANGEXTRACT_OK = False
 
-SHOP15_OLLAMA_URL_DEFAULT = os.getenv("SHOP15_OLLAMA_URL", "http://localhost:11434")
-SHOP15_OLLAMA_MODEL_DEFAULT = os.getenv("SHOP15_OLLAMA_MODEL", "gemma3:1b")
-
-SHOP15_EXTRACTION_MODE = "regex"  # "regex" | "llm" | "auto"
-
 MODEL_COL = "data2"
 PRICE_COL = "price"
 
 # ----------------------------------------------------------------------
 # 辅助工具函数
 # ----------------------------------------------------------------------
-
-def _truncate_for_log(s: str, n: int = 200) -> str:
-    """截断长字符串，保留前 n 个字符，用于日志显示"""
-    if s is None:
-        return ""
-    t = str(s)
-    if len(t) <= n:
-        return t
-    return t[:n] + f"... (truncated, total_length={len(t)})"
 
 def _parse_signed_int_yen(s: object) -> Optional[int]:
     """
@@ -144,7 +136,7 @@ def _clean_label_shop15(label: str) -> str:
     s = s.strip(" 　:：-‐‑–—/／、,，・")
     return s
 
-_LABEL_LIST_SPLIT_RE_shop15 = re.compile(r"\s*(?:、|,|，|／|/|・|&|＆)\s*")
+# _LABEL_LIST_SPLIT_RE_shop15: 从 cleaner_tools.LABEL_SPLIT_RE_shop15 导入
 
 def _split_color_labels_shop15(label_blob: str) -> List[str]:
     if not label_blob:
@@ -607,8 +599,8 @@ def _extract_price_parts_shop15_llm_with_guardrails(
     try:
         base_price, specs = _parse_shop15_price_via_langextract_cached(
             str(price_text),
-            SHOP15_OLLAMA_MODEL_DEFAULT,
-            SHOP15_OLLAMA_URL_DEFAULT,
+            OLLAMA_MODEL_ID,
+            OLLAMA_URL,
         )
         llm_ok = True
     except Exception as e:
@@ -620,8 +612,8 @@ def _extract_price_parts_shop15_llm_with_guardrails(
                 "cleaner_name": "shop15",
                 "error": str(e),
                 "error_type": type(e).__name__,
-                "model_id": SHOP15_OLLAMA_MODEL_DEFAULT,
-                "model_url": SHOP15_OLLAMA_URL_DEFAULT,
+                "model_id": OLLAMA_MODEL_ID,
+                "model_url": OLLAMA_URL,
                 "row_index": idx,
                 "text_length": len(price_text),
                 "text_preview": _truncate_for_log(price_text, 100),
@@ -652,14 +644,14 @@ def _extract_price_parts_shop15_dispatch(
     price_text: str, idx: object = None,
 ) -> Tuple[Optional[int], List[Tuple[str, str, int]], str]:
     """
-    根据 SHOP15_EXTRACTION_MODE 决定提取方式：
+    根据 EXTRACTION_MODE 决定提取方式：
       - "regex": 只用正则
       - "llm":   只用 LLM + 纠错
       - "auto":  正则优先，正则无 specs 时 LLM 兜底
 
     返回 (base_price, specs, extraction_method)
     """
-    mode = SHOP15_EXTRACTION_MODE
+    mode = EXTRACTION_MODE
 
     if mode == "regex":
         bp, specs = _extract_price_parts_shop15_regex(price_text)
@@ -746,7 +738,7 @@ def clean_shop15(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
         price_text = row.get(PRICE_COL)
         price_text_s = "" if price_text is None else str(price_text)
 
-        # 根据 SHOP15_EXTRACTION_MODE 提取价格信息
+        # 根据 EXTRACTION_MODE 提取价格信息
         base_price, specs, extraction_method = _extract_price_parts_shop15_dispatch(
             price_text_s, idx=i,
         )

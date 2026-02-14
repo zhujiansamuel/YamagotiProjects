@@ -13,8 +13,8 @@
 flowchart TD
     A[输入: 爬取原始 DataFrame] --> B[校验必要列\nstorage_name / price_unopened / caution_empty / time-scraped]
     B -->|缺列| B1[抛出 ValueError]
-    B -->|通过| C[加载 iphone17_info 参考表\n_load_iphone17_info_df_for_shop2]
-    C --> D[构建颜色映射表\n_build_color_map_shop11]
+    B -->|通过| C[加载 iphone17_info 参考表\n_load_iphone17_info_df_from_db]
+    C --> D[构建颜色映射表\n_build_color_map]
     D --> D2[推导 valid_models 列表\n约束 LLM 输出范围]
     D2 --> E[逐行遍历 DataFrame]
 
@@ -42,7 +42,7 @@ flowchart TD
 
     M --> N{LLM 结果\n是否为空?}
     N -->|非空| O[使用 LLM 结果]
-    N -->|空且有文本| P["正则回退\n_extract_color_deltas_shop11\n+ _label_matches_color_shop11"]
+    N -->|空且有文本| P["正则回退\n_extract_color_deltas_shop11\n+ _label_matches_color_unified"]
     P --> O
 
     O --> Q[计算每个颜色的最终价格\nprice = base_price + delta]
@@ -64,15 +64,15 @@ flowchart TD
 flowchart LR
     clean["clean_shop11(df, debug, debug_limit)"]
 
-    clean --> load["_load_iphone17_info_df_for_shop2()"]
-    clean --> buildcm["_build_color_map_shop11(info_df)"]
+    clean --> load["_load_iphone17_info_df_from_db()"]
+    clean --> buildcm["_build_color_map(info_df)"]
     clean --> lxstorage["_lx_parse_storage_shop11(storage, valid_models)"]
     clean --> normmod["_normalize_model_generic(text)\n(回退)"]
     clean --> parsecap["_parse_capacity_gb(text)\n(回退)"]
     clean --> toint["to_int_yen_shop11(val)"]
     clean --> lxcolor["_lx_parse_color_deltas_shop11(caution, avail_colors)"]
     clean --> regexdelta["_extract_color_deltas_shop11(text)\n(回退)"]
-    clean --> labelmatch["_label_matches_color_shop11(label, color_raw, color_norm)"]
+    clean --> labelmatch["_label_matches_color_unified(label, color_raw, color_norm)"]
     clean --> normnum["_normalize_number_text(txt)"]
 
     lxstorage --> storemats["_shop11_lx_storage_materials(valid_models)"]
@@ -154,7 +154,7 @@ flowchart TD
     J -->|否| G
     J -->|是| K{extraction_text\n在 available_colors 中?}
     K -->|是| L["直接记录 (color, delta)"]
-    K -->|否| M["遍历 available_colors\n用 _label_matches_color_shop11 匹配"]
+    K -->|否| M["遍历 available_colors\n用 _label_matches_color_unified 匹配"]
     M --> L
     L --> G
     G -->|遍历完| N["返回 (deltas_items, trace)\n同色多次取最后值"]
@@ -231,7 +231,7 @@ flowchart TD
     J --> K["返回 [(label, delta), ...]"]
 ```
 
-#### `_label_matches_color_shop11(label_raw, color_raw, color_norm) -> bool`
+#### `_label_matches_color_unified(label_raw, color_raw, color_norm) -> bool`
 - **作用**: 判断提取到的颜色标签是否匹配 info 表中的某个颜色
 - **匹配策略** (四级宽松匹配):
 
@@ -254,7 +254,7 @@ flowchart TD
     J -->|否| Y[返回 False]
 ```
 
-#### `_build_color_map_shop11(info_df) -> Dict`
+#### `_build_color_map(info_df) -> Dict`
 - **作用**: 构建 `(model_norm, capacity_gb) -> {color_norm: (part_number, color_raw)}` 映射
 - **数据源**: iphone17_info 参考表
 
@@ -344,7 +344,7 @@ flowchart TD
     subgraph Step4["Step 4: LLM 颜色差额解析"]
         T8["caution: 'シルバー・ブルー：-1,000円(未開封)'\navailable_colors: ('ブラックチタニウム', 'ホワイトチタニウム', ...)"]
         T8 -->|"_lx_parse_color_deltas_shop11\n输入: 'CAUTION: ...\nAVAILABLE_COLORS: ...'"|T9["LLM 返回:\ncolor_delta: 'シルバー' delta_yen=-1000\ncolor_delta: 'ブルー' delta_yen=-1000"]
-        T9 -->|"_label_matches_color_shop11\n将 'シルバー' 匹配到对应 available_color"| T10["color_deltas = {\n  'ホワイトチタニウム': -1000,\n  ...matched colors...\n}"]
+        T9 -->|"_label_matches_color_unified\n将 'シルバー' 匹配到对应 available_color"| T10["color_deltas = {\n  'ホワイトチタニウム': -1000,\n  ...matched colors...\n}"]
     end
 
     subgraph Step5["Step 5: 价格计算 (每色一行)"]
@@ -402,7 +402,7 @@ flowchart TD
     INPUT --> LLM["LLM 解析器 (优先)\n_lx_parse_color_deltas_shop11"]
     LLM --> CHECK{结果非空?}
     CHECK -->|是| USE_LLM["使用 LLM 结果\n(处理全色/全角/复杂格式)"]
-    CHECK -->|空且有文本| REGEX["正则回退\n_extract_color_deltas_shop11\n+ _label_matches_color_shop11"]
+    CHECK -->|空且有文本| REGEX["正则回退\n_extract_color_deltas_shop11\n+ _label_matches_color_unified"]
     REGEX --> USE_REGEX["使用正则结果"]
 
     subgraph LLM解析器详细
@@ -418,7 +418,7 @@ flowchart TD
         R1["_COLOR_GROUP_RE: 匹配 'labels：+/-amount'\n(带冒号的主匹配)"]
         R2["_COLOR_GROUP_FALLBACK_RE: 匹配 'labels +/-amount'\n(无冒号的回退匹配)"]
         R3["_COLOR_SEP_SPLIT_RE: 拆分多颜色标签\n/ 、 ・ 空格 等"]
-        R4["结果通过 _label_matches_color_shop11\n匹配到 color_map 中的合法颜色"]
+        R4["结果通过 _label_matches_color_unified\n匹配到 color_map 中的合法颜色"]
     end
 ```
 
@@ -451,11 +451,14 @@ flowchart LR
 
 ## 四、配置项说明
 
+OLLAMA 与 EXTRACTION_MODE 配置已统一迁移至 `cleaner_tools.py`。shop11 专用 LLM 参数保留。
+
 | 环境变量 | 默认值 | 说明 |
 |---------|--------|------|
-| `OLLAMA_HOST` | `"http://localhost:11434"` | Ollama 服务地址 (赋给 `SHOP11_OLLAMA_URL`) |
-| `SHOP11_OLLAMA_MODEL_ID` | `"gemma3:1b"` | Ollama 模型 ID |
-| `SHOP11_OLLAMA_TEMPERATURE` | `"0.0"` | LLM 推理温度 (确定性输出) |
+| `EXTRACTION_MODE` | `"regex"` | regex / llm / auto（cleaner_tools） |
+| `OLLAMA_URL` / `OLLAMA_HOST` | `"http://localhost:11434"` | Ollama 服务地址（cleaner_tools） |
+| `OLLAMA_MODEL_ID` | `"gemma3:1b"` | Ollama 模型 ID（cleaner_tools） |
+| `SHOP11_OLLAMA_TEMPERATURE` | `"0.0"` | LLM 推理温度 |
 | `SHOP11_OLLAMA_TIMEOUT` | `"180"` | LLM 请求超时时间 (秒) |
 | `SHOP11_OLLAMA_MAX_TOKENS` | `"512"` | LLM 最大输出 token 数 |
 | `IPHONE17_INFO_CSV` | 自动推断路径 (`data/iphone17_info.csv`) | iphone17_info 文件路径 |

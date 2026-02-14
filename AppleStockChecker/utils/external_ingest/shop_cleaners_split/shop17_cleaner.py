@@ -4,13 +4,18 @@ from ...external_ingest.helpers import to_int_yen, parse_dt_aware
 from ..cleaner_tools import (
     _load_iphone17_info_df_from_db,
     _parse_capacity_gb,
+    _truncate_for_log,
     _normalize_model_generic,
-    _norm_strip,
+    _build_color_map,
     normalize_text_basic,
     extract_price_yen,
     PriceDecomposition,
     resolve_color_prices,
     _label_matches_color_unified,
+    LABEL_SPLIT_RE_shop17 as SPLIT_TOKENS_RE_shop17,
+    OLLAMA_URL,
+    OLLAMA_MODEL_ID,
+    EXTRACTION_MODE,
 )
 import os
 from functools import lru_cache
@@ -27,25 +32,29 @@ import logging
 
 
 """
-  原始文本
+shop17 清洗器 — ゲストモバイル
+
+  原始文本（type / 新未開封品 / 色減額）
+    │ 配置: EXTRACTION_MODE / OLLAMA_URL / OLLAMA_MODEL_ID (cleaner_tools)
     │
-    ├─ _pick_unopened_section()    ← 正则2: 提取【未開封】段
+    ├─ _normalize_model_generic() / _parse_capacity_gb()  ← Step 1: 机型・容量解析（cleaner_tools）
     │
-    ├─ _normalize_color_text_shop17()  ← translate + 正则1: 归一化
+    ├─ extract_price_yen()         ← Step 2: 基础价提取（cleaner_tools）
     │
-    ├─ "色減額" 分割               ← 字符串split（非正则）
+    ├─ _extract_color_deltas_shop17()  ← Step 3: 模式调度（EXTRACTION_MODE）
+    │   │
+    │   ├─ regex 路径:
+    │   │   ├─ _pick_unopened_section()     ← 提取【未開封】段
+    │   │   ├─ _normalize_color_text_shop17()  ← 归一化
+    │   │   ├─ SPLIT_TOKENS_RE 拆分          ← 分割多条目
+    │   │   └─ COLOR_NONE_RE / COLOR_DELTA_RE  ← なし模式・金额模式
+    │   │
+    │   └─ llm 路径:
+    │       └─ _extract_color_deltas_shop17_llm()  ← LangExtract 核心提取
     │
-    ├─ fullmatch "なし"            ← 正则4: 全文なし早退
+    ├─ _label_matches_color_unified()  ← Step 4: 标签→颜色匹配（cleaner_tools 统一）
     │
-    ├─ SPLIT_TOKENS_RE 拆分        ← 核心正则: 分割多条目
-    │
-    └─ 逐段匹配:
-        ├─ COLOR_NONE_RE           ← 核心正则: なし模式
-        │   └─ _normalize_label    ← 正则5: 清除空白
-        │   └─ _is_plausible       ← 正则3: 过滤含数字
-        │
-        └─ COLOR_DELTA_RE          ← 核心正则: 金额模式
-            └─ 同上验证
+    └─ clean_shop17()              ← Step 5: 主函数，生成输出行
 """
 
 # 初始化 logger
@@ -107,7 +116,7 @@ def _is_plausible_color_label_shop17(label: str) -> bool:
     return True
 
 # ── Step 5: 分割多颜色条目 ──
-SPLIT_TOKENS_RE_shop17 = re.compile(r"[／/、]|(?:\s*;\s*)|\n")
+# SPLIT_TOKENS_RE_shop17: 从 cleaner_tools.LABEL_SPLIT_RE_shop17 导入
 
 # ── Step 6: 匹配无减额颜色（なし模式） ──
 COLOR_NONE_RE_shop17 = re.compile(
@@ -129,19 +138,6 @@ COLOR_DELTA_RE_shop17 = re.compile(
 )
 
 # ----------------------------------------------------------------------
-# 辅助工具函数
-# ----------------------------------------------------------------------
-
-def _truncate_for_log(s: str, n: int = 200) -> str:
-    """截断长字符串，保留前 n 个字符，用于日志显示"""
-    if s is None:
-        return ""
-    t = str(s)
-    if len(t) <= n:
-        return t
-    return t[:n] + f"... (truncated, total_length={len(t)})"
-
-# ----------------------------------------------------------------------
 # LangExtract / Ollama 集成配置
 # ----------------------------------------------------------------------
 
@@ -155,10 +151,6 @@ except Exception:
     Extraction = None
     _HAS_LANGEXTRACT = False
 
-LX_SHOP17_MODEL_ID = os.getenv("SHOP17_LX_MODEL_ID", "gemma3:1b")
-LX_SHOP17_MODEL_URL = os.getenv("SHOP17_LX_MODEL_URL", "http://localhost:11434")
-SHOP17_EXTRACTION_MODE = "auto"  # "regex" | "llm" | "auto"
-
 # ----------------------------------------------------------------------
 # 颜色匹配函数
 # ----------------------------------------------------------------------
@@ -167,25 +159,6 @@ SHOP17_EXTRACTION_MODE = "auto"  # "regex" | "llm" | "auto"
 # ----------------------------------------------------------------------
 # 原 shop17 独立实现已迁移至 cleaner_tools._label_matches_color_unified，
 # 合并 shop3/4/9/11/12/14/15/16/17 逻辑，供所有清洗器共用。
-
-_norm = _norm_strip  # 颜色匹配用归一化（_build_color_map_shop17 等仍使用）
-
-def _build_color_map_shop17(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict[str, Tuple[str, str]]]:
-    """(model_norm, cap_gb) -> { color_norm: (part_number, color_raw) }"""
-    df = info_df.copy()
-    df["model_name_norm"] = df["model_name"].map(_normalize_model_generic)
-    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
-    df["color_norm"] = df["color"].map(lambda x: _norm(str(x)))
-    cmap: Dict[Tuple[str, int], Dict[str, Tuple[str, str]]] = {}
-    for _, r in df.iterrows():
-        m = r["model_name_norm"]
-        cap = r["capacity_gb"]
-        if not m or pd.isna(cap):
-            continue
-        key = (m, int(cap))
-        cmap.setdefault(key, {})
-        cmap[key][_norm(str(r["color"]))] = (str(r["part_number"]), str(r["color"]))
-    return cmap
 
 def _extract_color_deltas_shop17_regex(text: str) -> List[Tuple[str, int]]:
     """
@@ -384,8 +357,8 @@ def _extract_color_deltas_shop17_llm(
             text_or_documents=s,
             prompt_description=COLOR_DELTA_PROMPT_SHOP17,
             examples=_get_color_delta_examples_shop17(),
-            model_id=LX_SHOP17_MODEL_ID,
-            model_url=LX_SHOP17_MODEL_URL,
+            model_id=OLLAMA_MODEL_ID,
+            model_url=OLLAMA_URL,
             temperature=0.0,
             fence_output=False,
             use_schema_constraints=False,
@@ -398,8 +371,8 @@ def _extract_color_deltas_shop17_llm(
             "event_type": "llm_extraction_error",
             "error": str(e),
             "error_type": type(e).__name__,
-            "model_id": LX_SHOP17_MODEL_ID,
-            "model_url": LX_SHOP17_MODEL_URL,
+            "model_id": OLLAMA_MODEL_ID,
+            "model_url": OLLAMA_URL,
             "text_length": len(s),
             "text_preview": _truncate_for_log(s, 100),
         }
@@ -449,14 +422,14 @@ def _extract_color_deltas_shop17(
     row_context: Optional[Dict] = None
 ) -> List[Tuple[str, int]]:
     """
-    根据 SHOP17_EXTRACTION_MODE 决定提取方式：
+    根据 EXTRACTION_MODE 决定提取方式：
     - "regex": 只用正则
     - "llm":   只用 LLM
     - "auto":  正则优先，正则无结果时 LLM 兜底
     """
-    if SHOP17_EXTRACTION_MODE == "regex":
+    if EXTRACTION_MODE == "regex":
         return _extract_color_deltas_shop17_regex(text)
-    elif SHOP17_EXTRACTION_MODE == "llm":
+    elif EXTRACTION_MODE == "llm":
         return _extract_color_deltas_shop17_llm(text, shop_name, cleaner_name, row_context)
     else:  # auto
         regex_res = _extract_color_deltas_shop17_regex(text)
@@ -500,7 +473,7 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
             raise ValueError(f"shop17 清洗器缺少必要列：{c}")
 
     info_df = _load_iphone17_info_df_from_db()
-    cmap_all = _build_color_map_shop17(info_df)
+    cmap_all = _build_color_map(info_df)
     rows: List[dict] = []
 
     for idx, row in df.iterrows():
@@ -547,8 +520,8 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
         # 判断使用的提取方法
         if not labels_and_deltas:
             extraction_method = "none"
-        elif SHOP17_EXTRACTION_MODE in ("regex", "llm"):
-            extraction_method = SHOP17_EXTRACTION_MODE
+        elif EXTRACTION_MODE in ("regex", "llm"):
+            extraction_method = EXTRACTION_MODE
         else:  # auto: 需要判断结果来自哪个方法
             regex_result = _extract_color_deltas_shop17_regex(raw_color_s)
             extraction_method = "regex" if regex_result else "llm"

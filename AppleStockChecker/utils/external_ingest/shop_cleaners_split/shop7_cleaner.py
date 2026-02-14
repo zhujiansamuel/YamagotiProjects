@@ -13,6 +13,7 @@ from ..cleaner_tools import (
     extract_price_yen,
     PriceDecomposition,
     resolve_color_prices,
+    LABEL_SPLIT_RE_shop7,
 )
 import re
 import time
@@ -21,30 +22,29 @@ import pandas as pd
 
 
 """
-  shop7（買取ホムラ）清洗器 — 数据处理流程
-  ============================================
+shop7 清洗器 — 買取ホムラ
 
-    原始 DataFrame (data, data2, data3, time-scraped)
-      │
-      ├─ Step 1: 输入验证 & 过滤
-      │   └─ 必要列检查、time-scraped 非空过滤
-      │
-      ├─ Step 2: 批量解析字段
-      │   ├─ _norm_model_for_shop7()    ← 短写扩展 + _normalize_model_generic
-      │   ├─ _parse_capacity_gb()       ← 容量解析
-      │   ├─ extract_price_yen()         ← 去掉"新品/未開封"后取价格（公共函数）
-      │   └─ parse_dt_aware()           ← 时间解析
-      │
-      ├─ Step 3: 颜色减价解析（下一行检测）
-      │   └─ _parse_color_deltas_shop7()
-      │       ├─ DELTA_RE               ← 核心正则: 标签+金额
-      │       └─ _normalize_amount_text()  ← 金额文本 → int（公共函数）
-      │
-      ├─ Step 4: label → color 匹配
-      │   └─ _label_matches_color_shop7()  ← 精确 | 子串匹配
-      │
-      └─ Step 5: part_number 输出
-          └─ base_price + color delta → final price
+  原始 DataFrame (data, data2, data3, time-scraped)
+    │
+    ├─ Step 1: 输入验证 & 过滤
+    │   └─ 必要列检查、time-scraped 非空过滤
+    │
+    ├─ Step 2: 批量解析字段
+    │   ├─ _norm_model_for_shop7()    ← 短写扩展 + _normalize_model_generic (cleaner_tools)
+    │   ├─ _parse_capacity_gb()       ← 容量解析（cleaner_tools）
+    │   ├─ extract_price_yen()         ← 基础价提取（cleaner_tools）
+    │   └─ parse_dt_aware()           ← 时间解析
+    │
+    ├─ Step 3: 颜色减价解析（下一行检测）
+    │   └─ _parse_color_deltas_shop7()
+    │       ├─ DELTA_RE               ← 核心正则: 标签+金额
+    │       └─ _normalize_amount_text()  ← 金额文本 → int（cleaner_tools）
+    │
+    ├─ Step 4: label → color 匹配
+    │   └─ _label_matches_color_shop7()  ← 精确 | 子串匹配（shop7 专用）
+    │
+    └─ Step 5: part_number 输出
+        └─ base_price + color delta → final price
 """
 
 # 初始化 logger
@@ -105,7 +105,7 @@ def _parse_color_deltas_shop7(text: str) -> List[Tuple[str, int]]:
         if amt is None:
             continue
         delta = -int(amt) if sign in ("-", "−", "－") else int(amt)
-        for tok in re.split(r"[／/、，,・\s]+", labels_part):
+        for tok in LABEL_SPLIT_RE_shop7.split(labels_part):
             tok = tok.strip()
             if tok:
                 res.append((_norm_strip(tok), delta))
@@ -120,7 +120,7 @@ def _parse_color_deltas_shop7(text: str) -> List[Tuple[str, int]]:
             amt = _normalize_amount_text(amt_txt)
             if amt is not None:
                 delta = -int(amt) if sign in ("-", "−", "－") else int(amt)
-                for tok in re.split(r"[／/、，,・\s]+", labels_part):
+                for tok in LABEL_SPLIT_RE_shop7.split(labels_part):
                     tok = tok.strip()
                     if tok:
                         res.append((_norm_strip(tok), delta))

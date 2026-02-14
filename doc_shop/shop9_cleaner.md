@@ -13,7 +13,7 @@
 flowchart TD
     A[输入: 爬取原始 DataFrame] --> B[校验必要列\n機種名 / 買取価格 / 色・詳細等 / time-scraped]
     B -->|缺列| B1[抛出 ValueError]
-    B -->|通过| C[加载 iphone17_info 参考表\n_load_iphone17_info_df_for_shop2]
+    B -->|通过| C[加载 iphone17_info 参考表\n_load_iphone17_info_df_from_db]
     C --> D[构建 pn_map\nmodel_norm + cap_gb → color_to_pn]
     D --> E[逐行遍历 DataFrame]
 
@@ -56,7 +56,7 @@ flowchart TD
 flowchart LR
     clean["clean_shop9(df, debug, debug_limit)"]
 
-    clean --> load["_load_iphone17_info_df_for_shop2()"]
+    clean --> load["_load_iphone17_info_df_from_db()"]
     clean --> normmod["_normalize_model_generic(text)"]
     clean --> parsecap["_parse_capacity_gb(text)"]
     clean --> toint["to_int_yen(val)"]
@@ -426,12 +426,14 @@ flowchart LR
 
 ## 四、配置项说明
 
+OLLAMA 与 EXTRACTION_MODE 配置已统一迁移至 `cleaner_tools.py`。shop9 专用配置保留。
+
 | 环境变量 | 默认值 | 说明 |
 |---------|--------|------|
-| `SHOP9_USE_LLM` | `"1"` (启用) | 是否启用 LLM 抽取；设为 `"0"` / `"false"` / `"no"` 则关闭 |
-| `SHOP9_OLLAMA_HOST` | `"http://localhost:11434"` | Ollama 服务地址 (回退到 `OLLAMA_HOST`) |
-| `SHOP9_LX_MODEL_ID` | `"gemma3:1b"` | LangExtract 使用的 Ollama 模型 ID (回退到 `SHOP9_LLM_MODEL_ID`) |
-| `SHOP9_LLM_TEMPERATURE` | `"0.0"` | LLM 温度参数，0.0 为确定性输出 |
+| `EXTRACTION_MODE` | `"regex"` | regex / llm / auto（cleaner_tools） |
+| `OLLAMA_URL` / `OLLAMA_HOST` | `"http://localhost:11434"` | Ollama 服务地址（cleaner_tools） |
+| `OLLAMA_MODEL_ID` | `"gemma3:1b"` | Ollama 模型 ID（cleaner_tools） |
+| `SHOP9_LLM_TEMPERATURE` | `"0.0"` | LLM 温度参数（shop9 专用） |
 | `SHOP9_ABS_LIKE_MIN` | `"50000"` | 绝对价量级阈值：金额 >= 此值且无 delta 线索则分类为 abs |
 | `SHOP9_ALLOW_REGEX_FALLBACK` | `"1"` (启用) | LLM 无结果时是否允许正则回退；设为 `"0"` / `"false"` 则禁用 |
 | `IPHONE17_INFO_CSV` | 自动推断路径 | iphone17_info 文件路径 |

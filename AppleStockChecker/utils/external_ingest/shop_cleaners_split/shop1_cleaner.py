@@ -1,4 +1,15 @@
 from __future__ import annotations
+"""
+shop1 清洗器 — 買取商店
+
+  原始 DataFrame（JAN / price / time-scraped 或 JSON 列）
+    │
+    ├─ _iter_records()           ← Step 1: 规范化记录（直列 or JSON 拉平）
+    ├─ _extract_jan_digits()     ← Step 2: JAN 提取（cleaner_tools）
+    ├─ _build_jan_map()           ← Step 3: JAN → part_number 映射（cleaner_tools）
+    ├─ to_int_yen()              ← Step 4: 价格解析
+    └─ clean_shop1()              ← Step 5: 主函数，输出 part_number / price_new / recorded_at
+"""
 from typing import Dict, Optional, List, Iterable, Union
 from ..helpers import to_int_yen, parse_dt_aware
 from ..cleaner_tools import _load_iphone17_info_df_from_db, _extract_jan_digits, _build_jan_map

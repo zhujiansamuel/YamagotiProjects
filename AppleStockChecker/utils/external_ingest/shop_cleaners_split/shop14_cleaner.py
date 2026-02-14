@@ -3,12 +3,13 @@ shop14_cleaner  —  買取楽園
 
 数据处理流程:
   raw DataFrame
+    │ 配置: EXTRACTION_MODE / OLLAMA_URL / OLLAMA_MODEL_ID (cleaner_tools)
     │
     ├─ Step 1  列校验 & remark列解析
     ├─ Step 2  行级过滤（未開封 + model/cap/color_map 匹配）
     ├─ Step 3  base_price 提取
     ├─ Step 4  remark文本归一化（3列合并）
-    ├─ Step 5  价格规则抽取 dispatch（regex / llm / auto）
+    ├─ Step 5  价格规则抽取 dispatch（EXTRACTION_MODE: regex / llm / auto）
     │           ├─ regex路径: _extract_rules_shop14_regex()
     │           └─ llm路径:   _extract_rules_shop14_llm_with_guardrails()
     ├─ Step 6  全色处理（all_delta 快捷路径）
@@ -39,6 +40,10 @@ from ..cleaner_tools import (
     PriceDecomposition,
     resolve_color_prices,
     _label_matches_color_unified,
+    LABEL_SPLIT_RE_shop14,
+    OLLAMA_URL,
+    OLLAMA_MODEL_ID,
+    EXTRACTION_MODE,
 )
 
 # ---------------------------------------------------------------------------
@@ -48,14 +53,6 @@ logger = logging.getLogger(__name__)
 
 CLEANER_NAME = "shop14"
 SHOP_NAME = "買取楽園"
-
-# ---------------------------------------------------------------------------
-# Step 1: 配置常量
-# ---------------------------------------------------------------------------
-SHOP14_EXTRACTION_MODE = os.getenv("SHOP14_EXTRACTION_MODE", "regex")  # "regex" | "llm" | "auto"
-
-SHOP14_OLLAMA_URL = os.getenv("SHOP14_OLLAMA_URL", "http://localhost:11434")
-SHOP14_LLM_MODEL_ID = os.getenv("SHOP14_LLM_MODEL_ID", "gemma3:1b")
 
 # ---------------------------------------------------------------------------
 # Step 2: 文本归一化 helpers
@@ -98,7 +95,7 @@ def _split_labels(labels: str) -> List[str]:
     s = str(labels or "").strip()
     if not s:
         return []
-    parts = re.split(r"[／/、，,;；\s]+", s)
+    parts = LABEL_SPLIT_RE_shop14.split(s)
     return [p.strip() for p in parts if p and p.strip()]
 
 
@@ -454,8 +451,8 @@ def _shop14_extract_rules_with_langextract(
             prompt_description=prompt,
             examples=examples,
             language_model_type=lx.inference.OllamaLanguageModel,
-            model_id=SHOP14_LLM_MODEL_ID,
-            model_url=SHOP14_OLLAMA_URL,
+            model_id=OLLAMA_MODEL_ID,
+            model_url=OLLAMA_URL,
             fence_output=False,
             use_schema_constraints=False,
         )
@@ -464,8 +461,8 @@ def _shop14_extract_rules_with_langextract(
             text_or_documents=s,
             prompt_description=prompt,
             examples=examples,
-            model_id=SHOP14_LLM_MODEL_ID,
-            model_url=SHOP14_OLLAMA_URL,
+            model_id=OLLAMA_MODEL_ID,
+            model_url=OLLAMA_URL,
             fence_output=False,
             use_schema_constraints=False,
         )
@@ -586,8 +583,8 @@ def _extract_rules_shop14_llm_with_guardrails(
                 "cleaner_name": CLEANER_NAME,
                 "error": str(exc),
                 "text_snippet": _truncate_for_log(text, 120),
-                "model_id": SHOP14_LLM_MODEL_ID,
-                "model_url": SHOP14_OLLAMA_URL,
+                "model_id": OLLAMA_MODEL_ID,
+                "model_url": OLLAMA_URL,
             },
         )
         return {"all_delta": None, "abs": [], "delta": []}
@@ -605,7 +602,7 @@ def _extract_rules_shop14_llm_with_guardrails(
 
 def _extract_rules_shop14_dispatch(
     text: str,
-    mode: str = SHOP14_EXTRACTION_MODE,
+    mode: str = EXTRACTION_MODE,
 ) -> Tuple[Dict[str, Union[Optional[int], List[Tuple[str, int]]]], str]:
     """
     三模式路由。
@@ -650,7 +647,7 @@ def clean_shop14(df: "pd.DataFrame", debug: bool = True) -> "pd.DataFrame":
             "cleaner_name": CLEANER_NAME,
             "log_seq": _log_seq,
             "input_rows": len(df),
-            "extraction_mode": SHOP14_EXTRACTION_MODE,
+            "extraction_mode": EXTRACTION_MODE,
         },
     )
     _log_seq += 1

@@ -7,10 +7,19 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 import logging
+import os
 import pandas as pd
 import re
 
 from .helpers import to_int_yen
+
+
+# ----------------------------------------------------------------------
+# LLM/Ollama 与抽取模式配置（各 shop 通用）
+# ----------------------------------------------------------------------
+OLLAMA_URL = os.getenv("OLLAMA_URL") or os.getenv("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_MODEL_ID = os.getenv("OLLAMA_MODEL_ID") or os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
+EXTRACTION_MODE = os.getenv("EXTRACTION_MODE", "regex")  # "regex" | "llm" | "auto"
 
 
 # ----------------------------------------------------------------------
@@ -179,11 +188,11 @@ def _build_color_map(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict[str, T
     构建 (model_norm, cap_gb) -> { color_norm: (part_number, color_raw) } 查找字典。
 
     各 shop 清洗器共用，用于按 (机型, 容量) 快速查找所有颜色变体及其 part_number。
+    color_norm 使用 _norm_strip 归一化（去空白 + 转小写），与 _label_matches_color_unified 匹配逻辑一致。
     """
     df = info_df.copy()
     df["model_name_norm"] = df["model_name"].map(_normalize_model_generic)
     df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
-    df["color_norm"] = df["color"].map(lambda x: (str(x) or "").strip())
     cmap: Dict[Tuple[str, int], Dict[str, Tuple[str, str]]] = {}
     for _, r in df.iterrows():
         m = r["model_name_norm"]
@@ -192,7 +201,8 @@ def _build_color_map(info_df: pd.DataFrame) -> Dict[Tuple[str, int], Dict[str, T
             continue
         key = (m, int(cap))
         cmap.setdefault(key, {})
-        cmap[key][(str(r["color"]) or "").strip()] = (str(r["part_number"]), str(r["color"]))
+        color_norm = _norm_strip(str(r["color"]))
+        cmap[key][color_norm] = (str(r["part_number"]), str(r["color"]))
     return cmap
 
 
@@ -344,6 +354,26 @@ SYNONYM_LOOKUP_NORM: Dict[str, List[str]] = build_synonym_lookup_norm(FAMILY_SYN
 
 
 # ----------------------------------------------------------------------
+# 拆分逻辑正则（按店铺号命名，便于对比）
+# ----------------------------------------------------------------------
+# 说明：各店铺用不同分隔符拆分复合颜色标签（如 "シルバー/ディープブルー" → ['シルバー','ディープブルー']）
+# 分隔符差异：shop3/14 含 ;；；shop9/12 含 ;；；shop15 含 &＆；shop16/17 不含 ・
+LABEL_SPLIT_RE_shop3 = re.compile(r"[／/、，,・\s；;]+")
+LABEL_SPLIT_RE_shop4 = re.compile(r"[／/、，,・\s]+")
+LABEL_SPLIT_RE_shop7 = re.compile(r"[／/、，,・\s]+")
+LABEL_SPLIT_RE_shop9 = re.compile(r"[/／、，,;；\s]+")
+LABEL_SPLIT_RE_shop11 = re.compile(r"[／/、，,・\s]+")
+LABEL_SPLIT_RE_shop12 = re.compile(r"[／/、，,・\s]+")
+LABEL_SPLIT_RE_shop14 = re.compile(r"[／/、，,;；\s]+")
+LABEL_SPLIT_RE_shop15 = re.compile(r"\s*(?:、|,|，|／|/|・|&|＆)\s*")
+LABEL_SPLIT_RE_shop16 = re.compile(r"[／/、，,]|(?:\s*;\s*)")
+LABEL_SPLIT_RE_shop16_SIMPLE = re.compile(r"[／/、，,]")
+LABEL_SPLIT_RE_shop17 = re.compile(r"[／/、]|(?:\s*;\s*)|\n")
+
+# _label_matches_color_unified 等共用，与 shop4 相同
+_COLOR_SEP_SPLIT_RE = LABEL_SPLIT_RE_shop4
+
+# ----------------------------------------------------------------------
 # 统一标签→颜色匹配函数（2025-02 替换各 shop 独立实现）
 # ----------------------------------------------------------------------
 # 合并 shop3/4/9/11/12/14/15/16/17 的 _label_matches_color 逻辑：
@@ -353,7 +383,6 @@ SYNONYM_LOOKUP_NORM: Dict[str, List[str]] = build_synonym_lookup_norm(FAMILY_SYN
 #   - shop12: 归一化双向包含兜底
 #   - shop14: 小写子串匹配 (label_norm in color_raw_l)
 #   - shop15/16/17: any(tok in color_raw for tok in candidates)
-_COLOR_SEP_SPLIT_RE = re.compile(r"[／/、，,・\s]+")
 
 
 def _label_matches_color_unified(label_raw: str, color_raw: str, color_norm: str) -> bool:

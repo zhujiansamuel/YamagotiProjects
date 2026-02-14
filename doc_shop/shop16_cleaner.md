@@ -13,8 +13,8 @@
 flowchart TD
     A[输入: 爬取原始 DataFrame] --> B[校验必要列\niPhone 17 Pro Max / 説明1 / 買取価格 / time-scraped]
     B -->|缺列| B1[抛出 ValueError]
-    B -->|通过| C[加载 iphone17_info 参考表\n_load_iphone17_info_df_for_shop2]
-    C --> D[构建颜色映射表\n_build_color_map_shop16]
+    B -->|通过| C[加载 iphone17_info 参考表\n_load_iphone17_info_df_from_db]
+    C --> D[构建颜色映射表\n_build_color_map]
     D --> E[逐行遍历 DataFrame]
 
     E --> F{説明1 或 型号列\n包含 未開封?}
@@ -43,7 +43,7 @@ flowchart TD
     O --> P[Guardrail C: 证据过滤\nlabel+金额必须在原文出现]
     P --> Q{llm_ok=False 且\n无颜色信息?}
     Q -->|是| Q1[正则回退\n_extract_color_deltas_shop16\n_extract_color_abs_prices_shop16]
-    Q -->|否| R[标签映射到 color_norm\n_label_matches_color_shop16]
+    Q -->|否| R[标签映射到 color_norm\n_label_matches_color_unified]
     Q1 --> R
 
     R --> S[计算每个颜色的最终价格\nabs优先 否则 base + delta]
@@ -65,15 +65,15 @@ flowchart TD
 flowchart LR
     clean["clean_shop16(df, debug)"]
 
-    clean --> load["_load_iphone17_info_df_for_shop2()"]
-    clean --> buildcm["_build_color_map_shop16(info_df)"]
+    clean --> load["_load_iphone17_info_df_from_db()"]
+    clean --> buildcm["_build_color_map(info_df)"]
     clean --> normmod["_normalize_model_generic(text)"]
     clean --> parsecap["_parse_capacity_gb(text)"]
     clean --> normprice["_normalize_price_text_shop16(s)"]
     clean --> lxextract["_lx_extract_price_parts_shop16(price_text)"]
     clean --> baseonly["_is_base_only_price_text(text)"]
     clean --> shareddelta["_extract_shared_delta_map_shop16(text)"]
-    clean --> labelmatch["_label_matches_color_shop16(label, color_raw, color_norm)"]
+    clean --> labelmatch["_label_matches_color_unified(label, color_raw, color_norm)"]
     clean --> parsedt["parse_dt_aware(val)"]
     clean --> normlbl["_normalize_label_shop16(lbl)"]
 
@@ -93,7 +93,7 @@ flowchart LR
     shareddelta --> toint
 
     buildcm --> normmod
-    labelmatch --> familysyn["FAMILY_SYNONYMS_shop16 字典查表"]
+    labelmatch --> familysyn["cleaner_tools 颜色家族同义词"]
     splitlbl --> normlbl
 ```
 
@@ -198,7 +198,7 @@ flowchart TD
     E --> F["返回 Dict\n如 {オレンジ: -1500, 青: -1500}"]
 ```
 
-#### `_label_matches_color_shop16(label_raw, color_raw, color_norm) -> bool`
+#### `_label_matches_color_unified(label_raw, color_raw, color_norm) -> bool`
 - **作用**: 判断提取到的颜色标签是否匹配 info 表中的某个颜色
 - **匹配策略** (三级宽松匹配):
 
@@ -218,7 +218,7 @@ flowchart TD
     H -->|否| Y[返回 False]
 ```
 
-#### `_build_color_map_shop16(info_df) -> Dict`
+#### `_build_color_map(info_df) -> Dict`
 - **作用**: 构建 `(model_norm, capacity_gb) -> {color_norm: (part_number, color_raw)}` 映射
 - **数据源**: iphone17_info 参考表
 
@@ -441,10 +441,13 @@ flowchart LR
 
 ## 四、配置项说明
 
+OLLAMA 与 EXTRACTION_MODE 配置已统一迁移至 `cleaner_tools.py`，各 shop 通用。
+
 | 环境变量 / 常量 | 默认值 | 说明 |
 |---------|--------|------|
-| `OLLAMA_URL` | `"http://localhost:11434"` | Ollama 服务地址（环境变量 `OLLAMA_URL`） |
-| `OLLAMA_MODEL_ID` | `"gemma3:1b"` | Ollama 模型 ID（环境变量 `OLLAMA_MODEL_ID`） |
+| `OLLAMA_URL` / `OLLAMA_HOST` | `"http://localhost:11434"` | Ollama 服务地址（cleaner_tools） |
+| `OLLAMA_MODEL_ID` / `OLLAMA_MODEL` | `"gemma3:1b"` | Ollama 模型 ID（cleaner_tools） |
+| `EXTRACTION_MODE` | `"regex"` | 抽取模式：regex / llm / auto（cleaner_tools） |
 | `MODEL_COL` | `"iPhone 17 Pro Max"` | 输入 DataFrame 的型号列名 |
 | `DESC_COL` | `"説明1"` | 输入 DataFrame 的描述/备注列名 |
 | `PRICE_COL` | `"買取価格"` | 输入 DataFrame 的价格列名 |

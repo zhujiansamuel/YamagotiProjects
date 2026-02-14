@@ -4,12 +4,13 @@ from __future__ import annotations
 shop16 清洗器 — 携帯空間
 
   原始文本（買取価格列）
+    │ 配置: EXTRACTION_MODE / OLLAMA_URL / OLLAMA_MODEL_ID (cleaner_tools)
     │
     ├─ _normalize_price_text_shop16()     ← Step 1: 归一化（换行→/、压缩空白）
     │
     ├─ _extract_base_price_shop16()       ← Step 2: 提取基础价
     │
-    ├─ _extract_price_parts_shop16_dispatch()  ← Step 9: 模式调度
+    ├─ _extract_price_parts_shop16_dispatch()  ← Step 9: 模式调度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
     │   │   ├─ _extract_color_deltas_shop16()      ← Step 6a: 正则提取差价
@@ -37,12 +38,18 @@ from ...external_ingest.helpers import to_int_yen, parse_dt_aware
 from ..cleaner_tools import (
     _parse_capacity_gb,
     _normalize_model_generic,
+    _truncate_for_log,
     _load_iphone17_info_df_from_db,
     _build_color_map,
     _norm_strip,
     PriceDecomposition,
     resolve_color_prices,
     _label_matches_color_unified,
+    LABEL_SPLIT_RE_shop16 as SPLIT_TOKENS_RE,
+    LABEL_SPLIT_RE_shop16_SIMPLE,
+    OLLAMA_URL,
+    OLLAMA_MODEL_ID,
+    EXTRACTION_MODE,
 )
 
 # 初始化 logger
@@ -52,30 +59,12 @@ logger = logging.getLogger(__name__)
 # 控制台显示 INFO 级别（简洁），文件记录 DEBUG 级别（详细）
 
 # ----------------------------------------------------------------------
-# 配置
+# 配置 (OLLAMA / EXTRACTION_MODE 见 cleaner_tools)
 # ----------------------------------------------------------------------
-
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL_ID = os.getenv("OLLAMA_MODEL_ID", "gemma3:1b")
-
-SHOP16_EXTRACTION_MODE = "regex"  # "regex" | "llm" | "auto"
 
 MODEL_COL = "iPhone 17 Pro Max"
 DESC_COL  = "説明1"
 PRICE_COL = "買取価格"
-
-# ----------------------------------------------------------------------
-# 辅助工具函数
-# ----------------------------------------------------------------------
-
-def _truncate_for_log(s: str, n: int = 200) -> str:
-    """截断长字符串，保留前 n 个字符，用于日志显示"""
-    if s is None:
-        return ""
-    t = str(s)
-    if len(t) <= n:
-        return t
-    return t[:n] + f"... (truncated, total_length={len(t)})"
 
 # ----------------------------------------------------------------------
 # Step 1: 价格文本归一化
@@ -133,7 +122,7 @@ def _normalize_label_shop16(lbl: str) -> str:
 def _split_labels_shop16(lbl: str) -> List[str]:
     # 兼容 "青/オレンジ""黒、白""blue/black" 等
     raw = _normalize_label_shop16(lbl)
-    parts = re.split(r"[／/、，,]", raw)
+    parts = LABEL_SPLIT_RE_shop16_SIMPLE.split(raw)
     return [p for p in (_normalize_label_shop16(x) for x in parts) if p]
 
 # ----------------------------------------------------------------------
@@ -159,8 +148,7 @@ COLOR_ABS_RE = re.compile(
     r"""(?P<label>[^\d：:\-\s/、／￥円]+)\s*￥\s*(?P<amount>\d[\d,]*)""",
     re.UNICODE
 )
-
-SPLIT_TOKENS_RE = re.compile(r"[／/、，,]|(?:\s*;\s*)")
+# SPLIT_TOKENS_RE: 从 cleaner_tools.LABEL_SPLIT_RE_shop16 导入
 
 _GROUP_SHARED_DELTA_RE = re.compile(
     r"""
@@ -225,7 +213,7 @@ def _extract_color_deltas_shop16(text: str) -> List[Tuple[str, int]]:
 
         # 否则，这是"只有标签没有金额"的片段（如 '青'）；缓存它，等待后面的金额
         # 如果是 '青/橙' 没被上层 split 掉，也进一步按斜杠切一下
-        for tok in re.split(r"[／/]", part):
+        for tok in LABEL_SPLIT_RE_shop16_SIMPLE.split(part):
             tok = _normalize_label(tok)
             if tok:
                 pending_labels.append(tok)
@@ -264,7 +252,7 @@ def _extract_shared_delta_map_shop16(price_text_norm: str) -> Dict[str, int]:
         delta = -int(amt) if sign in ("-", "−", "－") else int(amt)
 
         # 拆分 labels（/、，等）
-        for lb in re.split(r"[／/、，,]", labels_raw):
+        for lb in LABEL_SPLIT_RE_shop16_SIMPLE.split(labels_raw):
             lb = _normalize_label_shop16(lb)
             if lb:
                 out[lb] = delta
@@ -639,14 +627,14 @@ def _extract_price_parts_shop16_dispatch(
     price_text: str, idx: object = None,
 ) -> Tuple[Optional[int], List[Tuple[str, int]], List[Tuple[str, int]], str]:
     """
-    根据 SHOP16_EXTRACTION_MODE 决定提取方式：
+    根据 EXTRACTION_MODE 决定提取方式：
       - "regex": 只用正则
       - "llm":   只用 LLM + Guardrail A/B/C
       - "auto":  正则优先，正则无颜色结果时 LLM + Guardrail 兜底
 
     返回 (base_price, deltas, abs_prices, extraction_method)
     """
-    mode = SHOP16_EXTRACTION_MODE
+    mode = EXTRACTION_MODE
 
     if mode == "regex":
         bp, deltas, absps = _extract_price_parts_shop16_regex(price_text)
@@ -737,7 +725,7 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
         price_raw = "" if price_cell is None else str(price_cell)
         price_text = _normalize_price_text_shop16(price_raw)
 
-        # 根据 SHOP16_EXTRACTION_MODE 提取价格信息（regex / llm / auto）
+        # 根据 EXTRACTION_MODE 提取价格信息（regex / llm / auto）
         base_price, deltas, absps, extraction_method = _extract_price_parts_shop16_dispatch(
             price_text, idx=idx,
         )

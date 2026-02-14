@@ -1,4 +1,15 @@
 from __future__ import annotations
+"""
+shop13 清洗器 — 家電市場
+
+  原始 DataFrame（新品価格 / 買取商品2 / time-scraped）
+    │
+    ├─ _normalize_model_generic()  ← Step 1: 机型归一化（cleaner_tools）
+    ├─ _parse_capacity_gb()        ← Step 2: 容量解析（cleaner_tools）
+    ├─ extract_price_yen()         ← Step 3: 价格提取（cleaner_tools）
+    ├─ _load_iphone17_info_df_from_db()  ← Step 4: 机型信息（cleaner_tools）
+    └─ clean_shop13()              ← Step 5: 主函数，输出 part_number / price_new / recorded_at
+"""
 from typing import Protocol, Dict, Callable, Optional,List
 from ...external_ingest.helpers import parse_dt_aware
 from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db, extract_price_yen

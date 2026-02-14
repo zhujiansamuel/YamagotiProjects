@@ -15,7 +15,7 @@ flowchart TD
     B -->|缺列| B1[自动补 None 保持兼容]
     B -->|通过| C[过滤目标行\ndata2-2 含 simfree AND 未開封]
     C -->|无匹配行| C1[返回空 DataFrame]
-    C -->|有匹配行| D[加载 iphone17_info 参考表\n_load_iphone17_info_df_for_shop2]
+    C -->|有匹配行| D[加载 iphone17_info 参考表\n_load_iphone17_info_df_from_db]
 
     D --> E[逐行遍历 DataFrame]
 
@@ -62,7 +62,7 @@ flowchart TD
 flowchart LR
     clean["clean_shop2(shop2_df, debug, debug_limit)"]
 
-    clean --> load["_load_iphone17_info_df_for_shop2()"]
+    clean --> load["_load_iphone17_info_df_from_db()"]
     clean --> parsecap["_parse_capacity_gb(text)"]
     clean --> pickmodel["_pick_model_name_loose(model_token, iphone17_df)"]
     clean --> parseyen["_parse_yen(val)"]
@@ -204,7 +204,7 @@ flowchart TD
 - **作用**: 从文本中提取容量 (GB)
 - **处理**: 支持 TB->GB 换算 (1TB=1024GB)，支持 `"256GB"`, `"1TB"` 等格式
 
-#### `_load_iphone17_info_df_for_shop2() -> pd.DataFrame`
+#### `_load_iphone17_info_df_from_db() -> pd.DataFrame`
 - **作用**: 读取 iphone17_info 参考表
 - **数据源**: Django settings / 环境变量 `IPHONE17_INFO_CSV` / 自动推断路径
 - **输出列**: `part_number`, `model_name`, `capacity_gb`, `color`，若检测到 jan 列则额外返回
@@ -378,10 +378,13 @@ flowchart LR
 
 ## 四、配置项说明
 
+OLLAMA 与 EXTRACTION_MODE 配置已统一迁移至 `cleaner_tools.py`。
+
 | 配置项 | 值 | 类型 | 说明 |
 |--------|-----|------|------|
-| `_LANGEXTRACT_MODEL_ID` | `"gemma3:1b"` | 硬编码 | Ollama 本地 LLM 模型名 |
-| `_LANGEXTRACT_MODEL_URL` | `"http://localhost:11434"` | 硬编码 | Ollama 服务地址 |
+| `OLLAMA_MODEL_ID` | `"gemma3:1b"` | cleaner_tools | Ollama 本地 LLM 模型名 |
+| `OLLAMA_URL` | `"http://localhost:11434"` | cleaner_tools | Ollama 服务地址 |
+| `EXTRACTION_MODE` | `"regex"` | cleaner_tools | regex / llm / auto |
 | `@lru_cache(maxsize=1024)` | 1024 | 硬编码 | `_parse_adjust_rule_llm` 的缓存大小 |
 | `SHOP` | `"海峡通信"` | 硬编码 | 输出 DataFrame 的 shop_name 值 |
 | `debug` | `True` | 函数参数 | 是否输出调试信息 |

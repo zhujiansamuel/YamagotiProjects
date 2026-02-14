@@ -1,4 +1,15 @@
 from __future__ import annotations
+"""
+shop18 清洗器 — 買取オク
+
+  原始 DataFrame（jan / type / price / time-scraped）
+    │
+    ├─ _extract_jan_digits()       ← Step 1: JAN 提取（cleaner_tools）
+    ├─ _build_jan_map()             ← Step 2: JAN → part_number 映射（cleaner_tools）
+    ├─ _match_by_type()             ← Step 3: JAN 无法匹配时 type 回退（model/cap/color）
+    ├─ to_int_yen()                 ← Step 4: 价格解析
+    └─ clean_shop18()               ← Step 5: 主函数，输出 part_number / price_new / recorded_at
+"""
 from typing import Dict, Optional, List, Tuple
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
 from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db, _extract_jan_digits, _build_jan_map

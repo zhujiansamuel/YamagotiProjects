@@ -14,8 +14,8 @@ flowchart TD
     A[输入: 爬取原始 DataFrame] --> B[校验必要列\ntitle / data5 / time-scraped]
     B -->|缺列| B1[抛出 ValueError]
     B -->|通过| B2[过滤 time-scraped 为空的行]
-    B2 --> C[加载 iphone17_info 参考表\n_load_iphone17_info_df_for_shop2]
-    C --> D[构建颜色映射表\n_build_color_map_shop3]
+    B2 --> C[加载 iphone17_info 参考表\n_load_iphone17_info_df_from_db]
+    C --> D[构建颜色映射表\n_build_color_map]
     D --> E0[批量预处理列\nmodel_norm / cap_gb / base_price / recorded_at]
     E0 --> E1{减价1 列\n是否存在?}
     E1 -->|是| E2[对 unique 减价1 文本\n批量调用 _extract_color_deltas_shop3\n构建 delta_map]
@@ -37,7 +37,7 @@ flowchart TD
     J -->|否| E
     J -->|是| K[取该行已提取的 deltas]
 
-    K --> L[颜色标签匹配\n_label_matches_color_shop3\n构建 per_color_delta]
+    K --> L[颜色标签匹配\n_label_matches_color_unified\n构建 per_color_delta]
     L --> M[对 color_map 中每个颜色\nprice = base_price + delta]
     M --> N[生成输出行\npart_number / shop_name / price_new / recorded_at]
     N --> E
@@ -57,13 +57,13 @@ flowchart TD
 flowchart LR
     clean["clean_shop3(df, debug, debug_limit)"]
 
-    clean --> load["_load_iphone17_info_df_for_shop2()"]
-    clean --> buildcm["_build_color_map_shop3(info_df)"]
+    clean --> load["_load_iphone17_info_df_from_db()"]
+    clean --> buildcm["_build_color_map(info_df)"]
     clean --> normmod["_normalize_model_generic(text)"]
     clean --> parsecap["_parse_capacity_gb(text)"]
-    clean --> pricefn["_price_from_shop3(x)"]
+    clean --> pricefn["extract_price_yen(x)"]
     clean --> extract["_extract_color_deltas_shop3(text)"]
-    clean --> labelmatch["_label_matches_color_shop3(label, color_raw, color_norm)"]
+    clean --> labelmatch["_label_matches_color_unified(label, color_raw, color_norm)"]
     clean --> parsedt["parse_dt_aware(val)"]
 
     extract --> llm["_extract_color_deltas_shop3_llm_cached(text)"]
@@ -106,7 +106,7 @@ flowchart LR
 - **作用**: 从文本中提取容量 (GB)
 - **处理**: 支持 TB→GB 换算 (1TB=1024GB)，支持 `"256GB"`, `"1TB"` 等格式
 
-#### `_price_from_shop3(x: object) -> Optional[int]`
+#### `extract_price_yen(x: object) -> Optional[int]`
 - **作用**: 将 data5 列的原始价格文本转为整数 (JPY)
 - **处理**: 预期形如 `'¥177,000'`；兼容 `'～177,000円'` / `'10.5万'` 等；去除修饰词（"新品/未開封"等），然后调用 `to_int_yen` 取区间最大值
 
@@ -115,7 +115,7 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    A["_extract_color_deltas_shop3(text)"] --> B{SHOP3_USE_LANGEXTRACT\n已启用 且 lx 可用?}
+    A["_extract_color_deltas_shop3(text)"] --> B{EXTRACTION_MODE\n已启用 且 lx 可用?}
     B -->|否| C["_extract_color_deltas_shop3_regex(text)"]
     B -->|是| D["try: _extract_color_deltas_shop3_llm_cached(text)"]
     D --> E{调用成功?}
@@ -173,7 +173,7 @@ flowchart TD
     J --> K["返回 [(label, delta), ...]"]
 ```
 
-#### `_label_matches_color_shop3(label_raw, color_raw, color_norm) -> bool`
+#### `_label_matches_color_unified(label_raw, color_raw, color_norm) -> bool`
 - **作用**: 判断提取到的颜色标签是否匹配 info 表中的某个颜色
 - **匹配策略** (三级宽松匹配):
 
@@ -193,12 +193,12 @@ flowchart TD
     H -->|否| Y[返回 False]
 ```
 
-#### `_build_color_map_shop3(info_df) -> Dict`
+#### `_build_color_map(info_df) -> Dict`
 - **作用**: 构建 `(model_norm, capacity_gb) -> {color_norm: (part_number, color_raw)}` 映射
 - **数据源**: iphone17_info 参考表
 - **处理**: 对 model_name 做 `_normalize_model_generic`，对 color 做 `_norm`
 
-#### `_price_from_shop3(x: object) -> Optional[int]`
+#### `extract_price_yen(x: object) -> Optional[int]`
 - **作用**: 从 data5 列解析基准价格
 - **处理**: 去除修饰词 (新品/未開封 等)，然后调用 `to_int_yen`
 
@@ -250,7 +250,7 @@ flowchart TD
         direction TB
         B1["title → model_norm (via _normalize_model_generic)"]
         B2["title → cap_gb (via _parse_capacity_gb)"]
-        B3["data5 → base_price (via _price_from_shop3)"]
+        B3["data5 → base_price (via extract_price_yen)"]
         B4["time-scraped → recorded_at (via parse_dt_aware)"]
         B5["减价1 → deltas_series (via _extract_color_deltas_shop3)"]
     end
@@ -298,7 +298,7 @@ flowchart TD
 
     subgraph Step3["Step 3: 基准价格 (data5 列)"]
         T6["'¥177,000'"]
-        T6 -->|"_price_from_shop3 → to_int_yen"| T7["177000"]
+        T6 -->|"extract_price_yen → to_int_yen"| T7["177000"]
     end
 
     subgraph Step4["Step 4: 颜色差额提取 (减价1 列)"]
@@ -334,7 +334,7 @@ flowchart TD
 flowchart TD
     INPUT["减价1 原始文本"]
 
-    INPUT --> CHECK1{SHOP3_USE_LANGEXTRACT\n开启 且 lx 可用?}
+    INPUT --> CHECK1{EXTRACTION_MODE\n开启 且 lx 可用?}
     CHECK1 -->|否| REGEX["正则解析器\n_extract_color_deltas_shop3_regex"]
     CHECK1 -->|是| LLM["LLM 解析器\n_extract_color_deltas_shop3_llm_cached\n(带 @lru_cache maxsize=4096)"]
     LLM --> CHECK2{调用成功?}
@@ -409,9 +409,9 @@ flowchart LR
 
 | 环境变量 | 默认值 | 说明 |
 |---------|--------|------|
-| `SHOP3_USE_LANGEXTRACT` | `"1"` (启用) | 是否启用 LLM（LangExtract+Ollama）作为主解析器；关闭后仅用正则 |
-| `SHOP3_OLLAMA_MODEL_ID` | `"gemma3:1b"` | Ollama 模型 ID |
-| `SHOP3_OLLAMA_URL` | `"http://localhost:11434"` | Ollama 服务地址 |
+| `EXTRACTION_MODE` | `"regex"` | regex / llm / auto（cleaner_tools） |
+| `OLLAMA_MODEL_ID` | `"gemma3:1b"` | Ollama 模型 ID（cleaner_tools） |
+| `OLLAMA_URL` | `"http://localhost:11434"` | Ollama 服务地址（cleaner_tools） |
 | `IPHONE17_INFO_CSV` | 自动推断路径 (`data/iphone17_info.csv`) | iphone17_info 参考文件路径 |
 
 | 函数参数 | 默认值 | 说明 |

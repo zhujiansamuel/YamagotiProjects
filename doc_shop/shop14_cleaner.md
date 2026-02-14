@@ -14,8 +14,8 @@ flowchart TD
     A[输入: 爬取原始 DataFrame] --> B[校验必要列\nname / data6 / price2 / time-scraped]
     B -->|缺列| B1[抛出 ValueError]
     B -->|通过| B2[模糊解析备注列名\n_resolve_remark_cols\n减价条件 / 减价条件2 / 23432]
-    B2 --> C[加载 iphone17_info 参考表\n_load_iphone17_info_df_for_shop2]
-    C --> D[构建颜色映射表\n_build_color_map_shop14]
+    B2 --> C[加载 iphone17_info 参考表\n_load_iphone17_info_df_from_db]
+    C --> D[构建颜色映射表\n_build_color_map]
     D --> E[逐行遍历 DataFrame]
 
     E --> F{data6 列\n是否含未開封?}
@@ -43,7 +43,7 @@ flowchart TD
     P1 --> Q
 
     Q -->|是| R[所有颜色统一价格\nprice = base + all_delta]
-    Q -->|否| S[逐颜色匹配 abs/delta\n_label_matches_color_shop14]
+    Q -->|否| S[逐颜色匹配 abs/delta\n_label_matches_color_unified]
 
     S --> T[计算每个颜色的最终价格\n绝对价优先 > base+delta > base]
     R --> U[生成输出行\npart_number / shop_name / price_new / recorded_at]
@@ -66,14 +66,14 @@ flowchart LR
     clean["clean_shop14(df)"]
 
     clean --> resolve["_resolve_remark_cols(df)"]
-    clean --> load["_load_iphone17_info_df_for_shop2()"]
-    clean --> buildcm["_build_color_map_shop14(info_df)"]
+    clean --> load["_load_iphone17_info_df_from_db()"]
+    clean --> buildcm["_build_color_map(info_df)"]
     clean --> normmod["_normalize_model_generic(text)"]
     clean --> parsecap["_parse_capacity_gb(text)"]
     clean --> toint["to_int_yen(val)"]
     clean --> cleanfrag["_clean_remark_frag(val)"]
     clean --> lxrules["_shop14_extract_rules_with_langextract(text)"]
-    clean --> labelmatch["_label_matches_color_shop14(label, color_raw, color_norm)"]
+    clean --> labelmatch["_label_matches_color_unified(label, color_raw, color_norm)"]
     clean --> parsedt["parse_dt_aware(val)"]
 
     lxrules --> prompt["_shop14_lx_prompt_and_examples()"]
@@ -209,7 +209,7 @@ flowchart TD
 - **作用**: 检测文本是否包含"全色"关键词
 - **返回**: 含金额返回 delta 整数，仅含"全色"返回 0，未出现返回 None
 
-#### `_label_matches_color_shop14(label_raw, color_raw, color_norm) -> bool`
+#### `_label_matches_color_unified(label_raw, color_raw, color_norm) -> bool`
 - **作用**: 判断提取到的颜色标签是否匹配 info 表中的某个颜色
 - **匹配策略** (三级宽松匹配):
 
@@ -229,7 +229,7 @@ flowchart TD
     H -->|否| Y[返回 False]
 ```
 
-#### `_build_color_map_shop14(info_df) -> Dict`
+#### `_build_color_map(info_df) -> Dict`
 - **作用**: 构建 `(model_norm, capacity_gb) -> {color_norm: (part_number, color_raw)}` 映射
 - **数据源**: iphone17_info 参考表
 
@@ -397,7 +397,7 @@ flowchart TD
 
     Q1 -->|是| ALL["全色统一价格\n对 color_map 中所有颜色:\nprice = base_price + all_delta"]
 
-    Q1 -->|否| Q2["逐颜色匹配\n_label_matches_color_shop14"]
+    Q1 -->|否| Q2["逐颜色匹配\n_label_matches_color_unified"]
 
     Q2 --> MATCH["对 color_map 中每个颜色:"]
     MATCH --> Q3{color_norm\n在 color_abs 中?}
@@ -436,11 +436,14 @@ flowchart LR
 
 ## 四、配置项说明
 
+OLLAMA 与 EXTRACTION_MODE 配置已统一迁移至 `cleaner_tools.py`。
+
 | 配置项/环境变量 | 默认值 | 说明 |
 |---------|--------|------|
+| `EXTRACTION_MODE` | `"regex"` | regex / llm / auto（cleaner_tools） |
+| `OLLAMA_URL` | `"http://localhost:11434"` | Ollama 服务地址（cleaner_tools） |
+| `OLLAMA_MODEL_ID` | `"gemma3:1b"` | Ollama 模型 ID（cleaner_tools） |
 | `SHOP14_DEBUG` | `"True"` (启用) | 是否启用 debug 打印输出 |
-| `SHOP14_OLLAMA_URL` | `"http://localhost:11434"` | Ollama 服务地址 |
-| `SHOP14_LLM_MODEL_ID` | `"gemma3:1b"` | Ollama 模型 ID |
 | `IPHONE17_INFO_CSV` | 自动推断路径 (从 `__file__` 往上两级的 `data/iphone17_info.csv`) | iphone17_info 参考文件路径 |
 | `lru_cache(maxsize=4096)` | 4096 | `_shop14_extract_rules_with_langextract` 的缓存大小 |
 | `lru_cache(maxsize=1)` | 1 | `_shop14_lx_prompt_and_examples` 的缓存大小（只初始化一次） |

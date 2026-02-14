@@ -4,12 +4,13 @@ from __future__ import annotations
 shop9 清洗器 — アキモバ
 
   原始文本（買取価格 + 色・詳細等）
+    │ 配置: EXTRACTION_MODE / OLLAMA_URL / OLLAMA_MODEL_ID (cleaner_tools)
     │
     ├─ _coerce_signed_int()                  ← Step 1: 金額解析（全角→半角、符号処理）
     │
     ├─ _bucket_amount()                      ← Step 2: abs/delta 分類（量級・符号ヒント）
     │
-    ├─ _extract_price_parts_shop9_dispatch()  ← Step 7: モード調度
+    ├─ _extract_price_parts_shop9_dispatch()  ← Step 7: モード調度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
     │   │   ├─ _extract_abs_prices_regex()        ← Step 5a: 正則提取絶対価
@@ -20,7 +21,7 @@ shop9 清洗器 — アキモバ
     │       ├─ _llm_extract_rules_cached()        ← Step 6a: LLM 核心提取
     │       └─ _bucket_amount() guardrail         ← Step 6b: abs/delta 防幻觉過濾
     │
-    ├─ _map_to_available_color()             ← Step 3: ラベル→カラーマッチング
+    ├─ _map_to_available_color()             ← Step 3: ラベル→カラーマッチング（cleaner_tools 统一）
     │
     └─ clean_shop9()                         ← Step 8: 主函数、出力行生成
 """
@@ -47,6 +48,10 @@ from ..cleaner_tools import (
     PriceDecomposition,
     resolve_color_prices,
     _label_matches_color_unified,
+    LABEL_SPLIT_RE_shop9,
+    OLLAMA_URL,
+    OLLAMA_MODEL_ID,
+    EXTRACTION_MODE,
 )
 
 # 初始化 logger
@@ -62,11 +67,7 @@ SHOP_NAME = "アキモバ"
 # 配置
 # ----------------------------------------------------------------------
 
-OLLAMA_URL = os.getenv("SHOP9_OLLAMA_HOST") or os.getenv("OLLAMA_HOST") or "http://localhost:11434"
-LLM_MODEL_ID = os.getenv("SHOP9_LX_MODEL_ID") or os.getenv("SHOP9_LLM_MODEL_ID") or "gemma3:1b"
 LLM_TEMPERATURE = float(os.getenv("SHOP9_LLM_TEMPERATURE", "0.0") or "0.0")
-
-SHOP9_EXTRACTION_MODE = "regex"  # "regex" | "llm" | "auto"
 
 ABS_LIKE_MIN = int(os.getenv("SHOP9_ABS_LIKE_MIN", "50000"))  # iPhone17 绝对价量级阈值
 
@@ -228,8 +229,7 @@ def _map_to_available_color(raw_color: str, available_set: set) -> Optional[str]
 # ----------------------------------------------------------------------
 # Step 4: 正则模式定义
 # ----------------------------------------------------------------------
-
-SPLIT_SEPS = r"[/／、，,;；\s]+"
+# LABEL_SPLIT_RE_shop9: 从 cleaner_tools 导入
 
 ABS_PRICE_RE = re.compile(
     r"(?P<labels>[^0-9０-９¥￥円]+?)\s*(?:¥|￥)?\s*(?P<amount>[０-９0-9][０-９0-9,，]*)\s*(?:円)?",
@@ -261,7 +261,7 @@ def _extract_abs_prices_regex(text: str) -> List[Tuple[str, int]]:
         amt = _norm_amount_to_int(m.group("amount"))
         if amt is None:
             continue
-        toks = [t.strip() for t in re.split(SPLIT_SEPS, labels_part) if t.strip()]
+        toks = [t.strip() for t in LABEL_SPLIT_RE_shop9.split(labels_part) if t.strip()]
         for tok in toks:
             if _is_pure_number_token(tok):
                 continue
@@ -280,7 +280,7 @@ def _extract_deltas_regex(text: str) -> List[Tuple[str, int]]:
         if amt is None:
             continue
         delta = -int(amt) if sign in ("-", "−", "－") else int(amt)
-        toks = [t.strip() for t in re.split(SPLIT_SEPS, labels_part) if t.strip()]
+        toks = [t.strip() for t in LABEL_SPLIT_RE_shop9.split(labels_part) if t.strip()]
         for tok in toks:
             if _is_pure_number_token(tok):
                 continue
@@ -389,7 +389,7 @@ def _extract_price_parts_shop9_regex(
         return None
 
     for label_raw, amt in abs_list:
-        toks = [t.strip() for t in re.split(SPLIT_SEPS, label_raw) if t.strip()]
+        toks = [t.strip() for t in LABEL_SPLIT_RE_shop9.split(label_raw) if t.strip()]
         for tok in toks:
             if _is_pure_number_token(tok):
                 continue
@@ -402,7 +402,7 @@ def _extract_price_parts_shop9_regex(
         if label_raw == "全色":
             delta_map["ALL"] = int(delta)
             continue
-        toks = [t.strip() for t in re.split(SPLIT_SEPS, label_raw) if t.strip()]
+        toks = [t.strip() for t in LABEL_SPLIT_RE_shop9.split(label_raw) if t.strip()]
         for tok in toks:
             if _is_pure_number_token(tok):
                 continue
@@ -567,7 +567,7 @@ def _llm_extract_rules_cached(
         text_or_documents=input_text,
         prompt_description=prompt,
         examples=_shop9_lx_examples(),
-        model_id=LLM_MODEL_ID,
+        model_id=OLLAMA_MODEL_ID,
         model_url=OLLAMA_URL,
         fence_output=False,
         use_schema_constraints=False,
@@ -667,7 +667,7 @@ def _extract_price_parts_shop9_llm_with_guardrails(
                 "cleaner_name": CLEANER_NAME,
                 "error": str(e),
                 "error_type": type(e).__name__,
-                "model_id": LLM_MODEL_ID,
+                "model_id": OLLAMA_MODEL_ID,
                 "model_url": OLLAMA_URL,
                 "row_index": row_index,
                 "text_length": len(s_color),
@@ -701,7 +701,7 @@ def _extract_price_parts_shop9_dispatch(
            List[Tuple[str, int]], List[Tuple[str, int]],
            Dict[str, str], Dict[str, str]]:
     """
-    根据 SHOP9_EXTRACTION_MODE 决定提取方式：
+    根据 EXTRACTION_MODE 决定提取方式：
       - "regex": 只用正则
       - "llm":   只用 LLM + Guardrail
       - "auto":  regex 优先，regex 无颜色结果时 LLM + Guardrail 兜底
@@ -710,7 +710,7 @@ def _extract_price_parts_shop9_dispatch(
           abs_specs, delta_specs,
           color_abs_label_map, color_delta_label_map)
     """
-    mode = SHOP9_EXTRACTION_MODE
+    mode = EXTRACTION_MODE
 
     if mode == "regex":
         abs_map, delta_map, abs_specs, delta_specs, cal, cdl = \
@@ -776,7 +776,7 @@ def clean_shop9(
             "cleaner_name": CLEANER_NAME,
             "log_seq": _log_seq,
             "input_rows": len(df),
-            "extraction_mode": SHOP9_EXTRACTION_MODE,
+            "extraction_mode": EXTRACTION_MODE,
         },
     )
     _log_seq += 1

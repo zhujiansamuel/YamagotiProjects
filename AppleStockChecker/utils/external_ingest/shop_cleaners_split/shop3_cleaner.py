@@ -4,14 +4,15 @@ from __future__ import annotations
 shop3 清洗器 — 買取一丁目
 
   原始文本（title / data5 / 减价1）
+    │ 配置: EXTRACTION_MODE / OLLAMA_URL / OLLAMA_MODEL_ID (cleaner_tools)
     │
-    ├─ _normalize_model_generic()          ← Step 1: 机型归一化（外部工具）
+    ├─ _normalize_model_generic()          ← Step 1: 机型归一化（cleaner_tools）
     │
-    ├─ _parse_capacity_gb()                ← Step 2: 容量解析（外部工具）
+    ├─ _parse_capacity_gb()                ← Step 2: 容量解析（cleaner_tools）
     │
-    ├─ extract_price_yen()                 ← Step 3: 基础价提取（公共函数）
+    ├─ extract_price_yen()                 ← Step 3: 基础价提取（cleaner_tools）
     │
-    ├─ _extract_color_deltas_shop3_dispatch()  ← Step 6: 模式调度
+    ├─ _extract_color_deltas_shop3_dispatch()  ← Step 6: 模式调度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
     │   │   └─ _extract_color_deltas_shop3_regex()   ← Step 4: 正则提取差价
@@ -50,6 +51,10 @@ from ..cleaner_tools import (
     PriceDecomposition,
     resolve_color_prices,
     _label_matches_color_unified,
+    LABEL_SPLIT_RE_shop3 as _LABEL_SPLIT_RE,
+    OLLAMA_URL,
+    OLLAMA_MODEL_ID,
+    EXTRACTION_MODE,
 )
 
 # ----------------------------------------------------------------------
@@ -63,14 +68,6 @@ SHOP_NAME = "買取一丁目"
 
 # DEBUG 功能现在由 logging 级别控制（在 settings.py 的 LOGGING 配置中）
 # 控制台显示 INFO 级别（简洁），文件记录 DEBUG 级别（详细）
-
-# ----------------------------------------------------------------------
-# 配置
-# ----------------------------------------------------------------------
-
-SHOP3_OLLAMA_URL = os.getenv("SHOP3_OLLAMA_URL", "http://localhost:11434")
-SHOP3_OLLAMA_MODEL_ID = os.getenv("SHOP3_OLLAMA_MODEL_ID", "gemma3:1b")
-SHOP3_EXTRACTION_MODE = "regex"  # "regex" | "llm" | "auto"
 
 # --- LangExtract (LLM 抽取) ---
 try:
@@ -101,8 +98,7 @@ def _clean_label_token(tok: str) -> str:
 # ----------------------------------------------------------------------
 # Step 4: 正则提取差价
 # ----------------------------------------------------------------------
-
-_LABEL_SPLIT_RE = re.compile(r"[／/、，,・\s；;]+")
+# _LABEL_SPLIT_RE: 从 cleaner_tools.LABEL_SPLIT_RE_shop3 导入
 
 _SIGNED_AMOUNT_PAT = re.compile(r"([+\-−－])\s*([0-9０-９][0-9０-９,，]*)")
 
@@ -354,8 +350,8 @@ def _extract_color_deltas_shop3_llm_cached(text: str) -> Tuple[Tuple[str, int], 
         text_or_documents=s,
         prompt_description=_SHOP3_COLOR_DELTA_PROMPT,
         examples=_SHOP3_COLOR_DELTA_EXAMPLES,
-        model_id=SHOP3_OLLAMA_MODEL_ID,
-        model_url=SHOP3_OLLAMA_URL,
+        model_id=OLLAMA_MODEL_ID,
+        model_url=OLLAMA_URL,
         fence_output=False,
         use_schema_constraints=False,
     )
@@ -418,8 +414,8 @@ def _extract_color_deltas_shop3_llm_with_guardrails(
                 "cleaner_name": CLEANER_NAME,
                 "error": str(e),
                 "error_type": type(e).__name__,
-                "model_id": SHOP3_OLLAMA_MODEL_ID,
-                "model_url": SHOP3_OLLAMA_URL,
+                "model_id": OLLAMA_MODEL_ID,
+                "model_url": OLLAMA_URL,
                 "row_index": row_index,
                 "text_length": len(s),
                 "text_preview": _truncate_for_log(s, 100),
@@ -438,14 +434,14 @@ def _extract_color_deltas_shop3_dispatch(
     row_index: object = None,
 ) -> Tuple[List[Tuple[str, int]], str]:
     """
-    根据 SHOP3_EXTRACTION_MODE 决定提取方式：
+    根据 EXTRACTION_MODE 决定提取方式：
       - "regex": 只用正则
       - "llm":   只用 LLM + Guardrails
       - "auto":  正则优先，正则无颜色结果时 LLM + Guardrails 兜底
 
     返回 (labels_and_deltas, extraction_method)
     """
-    mode = SHOP3_EXTRACTION_MODE
+    mode = EXTRACTION_MODE
 
     if mode == "regex":
         return _extract_color_deltas_shop3_regex(text), "regex"
@@ -488,7 +484,7 @@ def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
             "cleaner_name": CLEANER_NAME,
             "log_seq": _log_seq,
             "input_rows": len(df),
-            "extraction_mode": SHOP3_EXTRACTION_MODE,
+            "extraction_mode": EXTRACTION_MODE,
         },
     )
     _log_seq += 1

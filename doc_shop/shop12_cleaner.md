@@ -13,7 +13,7 @@
 flowchart TD
     A[输入: 爬取原始 DataFrame] --> B[校验必要列\nモデルナンバー / 備考1 / 買取価格 / time-scraped]
     B -->|缺列| B1[抛出 ValueError]
-    B -->|通过| C[加载 iphone17_info 参考表\n_load_iphone17_info_df_for_shop2]
+    B -->|通过| C[加载 iphone17_info 参考表\n_load_iphone17_info_df_from_db]
     C --> D[构建颜色映射表 cmap_all\n逐行归一化 model_name / capacity / color]
     D --> E[逐行遍历 DataFrame]
 
@@ -32,7 +32,7 @@ flowchart TD
     K --> L[LLM 规则提取\n_parse_rules_with_langextract]
     L --> M{abs_list 和 delta_list\n是否都为空?}
     M -->|是且有备注| N[正则回退\n_fallback_parse_rules]
-    M -->|否| O[颜色标签匹配\n_label_matches_color]
+    M -->|否| O[颜色标签匹配\n_label_matches_color_unified]
     N --> O
 
     O --> P{有 ALL 差额?}
@@ -61,14 +61,14 @@ flowchart TD
 flowchart LR
     clean["clean_shop12(df)"]
 
-    clean --> load["_load_iphone17_info_df_for_shop2()"]
+    clean --> load["_load_iphone17_info_df_from_db()"]
     clean --> normmod["_normalize_model_generic(text)"]
     clean --> parsecap["_parse_capacity_gb(text)"]
     clean --> toint["to_int_yen(val)"]
     clean --> normremark["_normalize_remark_for_llm(remark_raw)"]
     clean --> llm["_parse_rules_with_langextract(remark)"]
     clean --> fallback["_fallback_parse_rules(text)"]
-    clean --> labelmatch["_label_matches_color(label, color_raw, color_norm)"]
+    clean --> labelmatch["_label_matches_color_unified(label, color_raw, color_norm)"]
     clean --> parsedt["parse_dt_aware(val)"]
 
     llm --> lxextract["langextract.extract()"]
@@ -191,7 +191,7 @@ flowchart TD
     C -->|遍历完| I["返回 abs_list, delta_list"]
 ```
 
-#### `_label_matches_color(label_raw, color_raw, color_norm) -> bool`
+#### `_label_matches_color_unified(label_raw, color_raw, color_norm) -> bool`
 - **作用**: 判断提取到的颜色标签是否匹配 info 表中的某个颜色
 - **匹配策略** (多级宽松匹配):
 
@@ -218,7 +218,7 @@ flowchart TD
 - **作用**: 将包含全角数字、货币符号的金额字符串统一转为整数
 - **处理**: 全角→半角 / 去除 ¥/￥ 符号 / 去除逗号 / 提取数字
 
-#### `_load_iphone17_info_df_for_shop2() -> pd.DataFrame`
+#### `_load_iphone17_info_df_from_db() -> pd.DataFrame`
 - **作用**: 加载 iphone17_info 参考表 (CSV 或 Excel)
 - **数据源**: Django settings 路径 > 环境变量 `IPHONE17_INFO_CSV` > 默认推断路径
 
@@ -421,13 +421,14 @@ flowchart LR
 
 ## 四、配置项说明
 
+OLLAMA 与 EXTRACTION_MODE 配置已统一迁移至 `cleaner_tools.py`。
+
 | 环境变量 | 默认值 | 说明 |
 |---------|--------|------|
-| `SHOP12_DEBUG` | `"1"` (启用) | 是否启用 debug 打印 (`_dprint`) |
-| `SHOP12_OLLAMA_MODEL_ID` | `"gemma3:1b"` (经 fallback) | Ollama 模型 ID，优先读取此变量 |
-| `OLLAMA_MODEL_ID` | `"gemma3:1b"` | Ollama 模型 ID 通用 fallback |
-| `SHOP12_OLLAMA_HOST` | `"http://localhost:11434"` (经 fallback) | Ollama 服务地址，优先读取此变量 |
-| `OLLAMA_HOST` | `"http://localhost:11434"` | Ollama 服务地址通用 fallback |
+| `EXTRACTION_MODE` | `"regex"` | regex / llm / auto（cleaner_tools） |
+| `OLLAMA_MODEL_ID` | `"gemma3:1b"` | Ollama 模型 ID（cleaner_tools） |
+| `OLLAMA_URL` / `OLLAMA_HOST` | `"http://localhost:11434"` | Ollama 服务地址（cleaner_tools） |
+| `SHOP12_DEBUG` | `"1"` (启用) | 是否启用 debug 打印 |
 | `SHOP12_LLM_TEMPERATURE` | `"0.0"` | LLM 推理温度 (确定性输出) |
 | `SHOP12_LLM_TIMEOUT` | `"120"` | LLM 请求超时秒数 |
 | `SHOP12_LLM_NUM_CTX` | `"4096"` | LLM 上下文窗口大小 |

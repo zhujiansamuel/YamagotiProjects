@@ -4,12 +4,13 @@ from __future__ import annotations
 shop12 清洗器 — トゥインクル
 
   原始文本（備考1 + 買取価格）
+    │ 配置: EXTRACTION_MODE / OLLAMA_URL / OLLAMA_MODEL_ID (cleaner_tools)
     │
     ├─ _normalize_remark_for_llm()              ← Step 1: 去除開封行，预处理備考1
     │
     ├─ _norm_amount_to_int()                    ← Step 2: 统一全角数字→int
     │
-    ├─ _extract_price_parts_shop12_dispatch()   ← Step 5: 模式调度
+    ├─ _extract_price_parts_shop12_dispatch()   ← Step 5: 模式调度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
     │   │   └─ _extract_price_parts_shop12_regex()    ← Step 3: 正则提取 (abs + delta)
@@ -46,6 +47,10 @@ from ..cleaner_tools import (
     PriceDecomposition,
     resolve_color_prices,
     _label_matches_color_unified,
+    LABEL_SPLIT_RE_shop12,
+    OLLAMA_URL,
+    OLLAMA_MODEL_ID,
+    EXTRACTION_MODE,
 )
 
 # ----------------------------------------------------------------------
@@ -56,12 +61,6 @@ logger = logging.getLogger(__name__)
 
 CLEANER_NAME = "shop12"
 SHOP_NAME = "トゥインクル"
-
-# ----------------------------------------------------------------------
-# 配置
-# ----------------------------------------------------------------------
-
-SHOP12_EXTRACTION_MODE = "regex"  # "regex" | "llm" | "auto"
 
 # ----------------------------------------------------------------------
 # 辅助工具函数
@@ -126,7 +125,7 @@ _FALLBACK_DELTA_RE = re.compile(
     r"""(?P<labels>[^+\-−－\d¥￥円/、，,;；※]+?)\s*(?P<sign>[+\-−－])\s*(?P<amount>[０-９0-9][０-９0-9,，]*)\s*(?:円)?""",
     re.UNICODE | re.VERBOSE,
 )
-_SPLIT_SEPS = r"[／/、，,・\s]+"
+# LABEL_SPLIT_RE_shop12: 从 cleaner_tools 导入
 
 def _fallback_parse_rules(text: str) -> Tuple[List[Tuple[str, int]], List[Tuple[str, int]]]:
     abs_list: List[Tuple[str, int]] = []
@@ -155,7 +154,7 @@ def _fallback_parse_rules(text: str) -> Tuple[List[Tuple[str, int]], List[Tuple[
             if amt is None:
                 continue
             labels_part = m.group("labels") or ""
-            toks = [t.strip() for t in re.split(_SPLIT_SEPS, labels_part) if t.strip()]
+            toks = [t.strip() for t in LABEL_SPLIT_RE_shop12.split(labels_part) if t.strip()]
             for tok in toks:
                 if tok:
                     abs_list.append((tok, int(amt)))
@@ -167,7 +166,7 @@ def _fallback_parse_rules(text: str) -> Tuple[List[Tuple[str, int]], List[Tuple[
             sign = m.group("sign") or "+"
             delta = -int(amt) if sign in ("-", "−", "－") else int(amt)
             labels_part = m.group("labels") or ""
-            toks = [t.strip() for t in re.split(_SPLIT_SEPS, labels_part) if t.strip()]
+            toks = [t.strip() for t in LABEL_SPLIT_RE_shop12.split(labels_part) if t.strip()]
             for tok in toks:
                 if tok:
                     delta_list.append((tok, delta))
@@ -279,17 +278,14 @@ def _parse_rules_with_langextract(remark_for_llm: str) -> Tuple[List[Tuple[str, 
     try:
         import langextract as lx
 
-        model_id = os.getenv("SHOP12_OLLAMA_MODEL_ID") or os.getenv("OLLAMA_MODEL_ID") or "gemma3:1b"
-        model_url = os.getenv("SHOP12_OLLAMA_HOST") or os.getenv("OLLAMA_HOST") or "http://localhost:11434"
-
         llm_input = "色別価格ルール:\n" + remark_for_llm
 
         res = lx.extract(
             text_or_documents=llm_input,
             prompt_description=_LX_PROMPT,
             examples=_lx_examples(),
-            model_id=model_id,
-            model_url=model_url,
+            model_id=OLLAMA_MODEL_ID,
+            model_url=OLLAMA_URL,
             temperature=float(os.getenv("SHOP12_LLM_TEMPERATURE", "0.0")),
             fence_output=False,
             use_schema_constraints=False,
@@ -451,14 +447,14 @@ def _extract_price_parts_shop12_dispatch(
     remark_for_llm: str, idx: object = None,
 ) -> Tuple[List[Tuple[str, int]], List[Tuple[str, int]], str]:
     """
-    根据 SHOP12_EXTRACTION_MODE 决定提取方式：
+    根据 EXTRACTION_MODE 决定提取方式：
       - "regex": 只用正则
       - "llm":   只用 LLM + Guardrails
       - "auto":  正则优先，正则无颜色结果时 LLM + Guardrails 兜底
 
     返回 (abs_list, delta_list, extraction_method)
     """
-    mode = SHOP12_EXTRACTION_MODE
+    mode = EXTRACTION_MODE
 
     if mode == "regex":
         abs_list, delta_list = _extract_price_parts_shop12_regex(remark_for_llm)
@@ -502,7 +498,7 @@ def clean_shop12(df: pd.DataFrame, debug: bool = False) -> pd.DataFrame:
             "cleaner_name": CLEANER_NAME,
             "log_seq": _log_seq,
             "input_rows": len(df),
-            "extraction_mode": SHOP12_EXTRACTION_MODE,
+            "extraction_mode": EXTRACTION_MODE,
         },
     )
     _log_seq += 1

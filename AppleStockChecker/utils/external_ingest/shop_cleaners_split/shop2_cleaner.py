@@ -4,6 +4,7 @@ from __future__ import annotations
 shop2 清洗器 — 海峡通信
 
   原始文本（data2-1 / data2-2 / data3 / data5）
+    │ 配置: EXTRACTION_MODE / OLLAMA_URL / OLLAMA_MODEL_ID (cleaner_tools)
     │
     ├─ _is_target()                          ← Step 1: SIMfree+未開封 过滤
     │
@@ -13,7 +14,7 @@ shop2 清洗器 — 海峡通信
     │
     ├─ _parse_capacity_gb()                  ← Step 4: 容量解析
     │
-    ├─ _parse_adjust_rule_shop2_dispatch()   ← Step 7: 模式调度
+    ├─ _parse_adjust_rule_shop2_dispatch()   ← Step 7: 模式调度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
     │   │   └─ _parse_adjust_rule_shop2_regex()   ← Step 5: 正则提取规则
@@ -46,6 +47,9 @@ from ..cleaner_tools import (
     _load_iphone17_info_df_from_db,
     _truncate_for_log,
     safe_to_text,
+    OLLAMA_URL,
+    OLLAMA_MODEL_ID,
+    EXTRACTION_MODE,
 )
 
 # ----------------------------------------------------------------------
@@ -64,18 +68,13 @@ SHOP_NAME = "海峡通信"
 # 配置
 # ----------------------------------------------------------------------
 
-SHOP2_EXTRACTION_MODE = "regex"  # "regex" | "llm" | "auto"
-
-# LangExtract + Ollama (本地 LLM) 集成
+# LangExtract + Ollama (本地 LLM) 集成，OLLAMA 配置见 cleaner_tools
 try:
     import langextract as lx
     _HAS_LANGEXTRACT = True
 except Exception:
     lx = None
     _HAS_LANGEXTRACT = False
-
-_LANGEXTRACT_MODEL_ID = os.getenv("SHOP2_LX_MODEL_ID", "gemma3:1b")
-_LANGEXTRACT_MODEL_URL = os.getenv("SHOP2_LX_MODEL_URL", "http://localhost:11434")
 
 # ----------------------------------------------------------------------
 # 辅助工具函数
@@ -429,8 +428,8 @@ def _parse_adjust_rule_llm_core(rule_text: str) -> dict:
             text_or_documents=s,
             prompt_description=_COLOR_RULE_PROMPT,
             examples=_COLOR_RULE_EXAMPLES,
-            model_id=_LANGEXTRACT_MODEL_ID,
-            model_url=_LANGEXTRACT_MODEL_URL,
+            model_id=OLLAMA_MODEL_ID,
+            model_url=OLLAMA_URL,
             fence_output=False,
             use_schema_constraints=False,
         )
@@ -497,8 +496,8 @@ def _parse_adjust_rule_shop2_llm(
                 "cleaner_name": CLEANER_NAME,
                 "error": str(e),
                 "error_type": type(e).__name__,
-                "model_id": _LANGEXTRACT_MODEL_ID,
-                "model_url": _LANGEXTRACT_MODEL_URL,
+                "model_id": OLLAMA_MODEL_ID,
+                "model_url": OLLAMA_URL,
                 "row_index": row_index,
                 "text_length": len(s),
                 "text_preview": _truncate_for_log(s, 100),
@@ -538,14 +537,14 @@ def _parse_adjust_rule_shop2_dispatch(
     row_index: object = None,
 ) -> Tuple[dict, str]:
     """
-    根据 SHOP2_EXTRACTION_MODE 决定提取方式：
+    根据 EXTRACTION_MODE 决定提取方式：
       - "regex": 只用正则
       - "llm":   只用 LLM + Guardrails
       - "auto":  正则优先，正则无结果时 LLM + Guardrails 兜底
 
     返回 (rules, extraction_method)
     """
-    mode = SHOP2_EXTRACTION_MODE
+    mode = EXTRACTION_MODE
 
     if mode == "regex":
         rules = _parse_adjust_rule_shop2_regex(val)
@@ -579,7 +578,7 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
             "cleaner_name": CLEANER_NAME,
             "log_seq": _log_seq,
             "input_rows": len(shop2_df),
-            "extraction_mode": SHOP2_EXTRACTION_MODE,
+            "extraction_mode": EXTRACTION_MODE,
         },
     )
     _log_seq += 1

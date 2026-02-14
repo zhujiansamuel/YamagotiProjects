@@ -4,15 +4,16 @@ from __future__ import annotations
 shop11 清洗器 — モバステ
 
   原始文本（storage_name / price_unopened / caution_empty）
+    │ 配置: EXTRACTION_MODE / OLLAMA_URL / OLLAMA_MODEL_ID (cleaner_tools)
     │
-    ├─ normalize_text_basic()              ← Step 1: 全角→半角归一化
+    ├─ normalize_text_basic()              ← Step 1: 全角→半角归一化（cleaner_tools）
     │
     ├─ to_int_yen_shop11()                   ← Step 2: 日元价格解析
     │
     ├─ _lx_parse_storage_shop11()            ← Step 3: LLM 机型/容量解析
     │   └─ fallback: _normalize_model_generic + _parse_capacity_gb
     │
-    ├─ _extract_color_deltas_shop11_dispatch()  ← Step 7: 模式调度
+    ├─ _extract_color_deltas_shop11_dispatch()  ← Step 7: 模式调度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
     │   │   └─ _extract_color_deltas_shop11_regex()   ← Step 5: 正则提取差价
@@ -49,6 +50,10 @@ from ..cleaner_tools import (
     PriceDecomposition,
     resolve_color_prices,
     _label_matches_color_unified,
+    LABEL_SPLIT_RE_shop11,
+    OLLAMA_URL,
+    OLLAMA_MODEL_ID,
+    EXTRACTION_MODE,
 )
 
 # ----------------------------------------------------------------------
@@ -59,15 +64,6 @@ logger = logging.getLogger(__name__)
 
 CLEANER_NAME = "shop11"
 SHOP_NAME = "モバステ"
-
-# ----------------------------------------------------------------------
-# 配置
-# ----------------------------------------------------------------------
-
-SHOP11_OLLAMA_URL = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-SHOP11_OLLAMA_MODEL_ID = os.getenv("SHOP11_OLLAMA_MODEL_ID", "gemma3:1b")
-
-SHOP11_EXTRACTION_MODE = "regex"  # "regex" | "llm" | "auto"
 
 # ----------------------------------------------------------------------
 # 辅助工具函数
@@ -154,7 +150,7 @@ def _shop11_model_config():
     if lx is None:
         return None
     provider_kwargs = {
-        "model_url": SHOP11_OLLAMA_URL,
+        "model_url": OLLAMA_URL,
         "temperature": float(os.getenv("SHOP11_OLLAMA_TEMPERATURE", "0.0")),
         "timeout": int(os.getenv("SHOP11_OLLAMA_TIMEOUT", "180")),
         "max_tokens": int(os.getenv("SHOP11_OLLAMA_MAX_TOKENS", "512")),
@@ -165,7 +161,7 @@ def _shop11_model_config():
     except Exception:
         pass
     try:
-        return lx.factory.ModelConfig(model_id=SHOP11_OLLAMA_MODEL_ID, provider_kwargs=provider_kwargs)
+        return lx.factory.ModelConfig(model_id=OLLAMA_MODEL_ID, provider_kwargs=provider_kwargs)
     except Exception:
         return None
 
@@ -201,8 +197,8 @@ def _lx_extract_ollama(text: str, prompt: str, examples: list):
             prompt_description=prompt,
             examples=examples,
             language_model_type=lx.inference.OllamaLanguageModel,
-            model_id=SHOP11_OLLAMA_MODEL_ID,
-            model_url=SHOP11_OLLAMA_URL,
+            model_id=OLLAMA_MODEL_ID,
+            model_url=OLLAMA_URL,
             fence_output=False,
             use_schema_constraints=False,
         )
@@ -385,7 +381,7 @@ def _extract_color_deltas_shop11_regex(text: str) -> List[Tuple[str, int]]:
         if sign in ("-", "−", "－"):
             amt = -amt
         # 把 labels 按常见分隔符拆成多个 label
-        for lbl in _COLOR_SEP_SPLIT_RE.split(labels):
+        for lbl in LABEL_SPLIT_RE_shop11.split(labels):
             lbl = lbl.strip()
             if lbl:
                 out.append((lbl, int(amt)))
@@ -402,7 +398,7 @@ def _extract_color_deltas_shop11_regex(text: str) -> List[Tuple[str, int]]:
         amt = int(amt_digits)
         if sign in ("-", "−", "－"):
             amt = -amt
-        for lbl in _COLOR_SEP_SPLIT_RE.split(labels):
+        for lbl in LABEL_SPLIT_RE_shop11.split(labels):
             lbl = lbl.strip()
             if lbl:
                 out.append((lbl, int(amt)))
@@ -571,8 +567,8 @@ def _extract_color_deltas_shop11_llm_with_guardrails(
                 "cleaner_name": CLEANER_NAME,
                 "error": str(e),
                 "error_type": type(e).__name__,
-                "model_id": SHOP11_OLLAMA_MODEL_ID,
-                "model_url": SHOP11_OLLAMA_URL,
+                "model_id": OLLAMA_MODEL_ID,
+                "model_url": OLLAMA_URL,
                 "text_length": len(caution_txt),
                 "text_preview": _truncate_for_log(caution_txt, 100),
             },
@@ -607,7 +603,7 @@ def _extract_color_deltas_shop11_dispatch(
     color_map: Dict[str, Tuple[str, str]],
 ) -> Tuple[Dict[str, int], str, List[Tuple[str, int]], Dict[str, str]]:
     """
-    根据 SHOP11_EXTRACTION_MODE 决定颜色差价提取方式：
+    根据 EXTRACTION_MODE 决定颜色差价提取方式：
       - "regex": 只用正则
       - "llm":   只用 LLM + Guardrails
       - "auto":  正则优先，正则无颜色结果时 LLM + Guardrails 兜底
@@ -617,7 +613,7 @@ def _extract_color_deltas_shop11_dispatch(
       - delta_specs: [(label_raw, delta)] — 原始提取结果，用于日志
       - color_delta_label_map: {color_norm: label_raw} — 标签追踪
     """
-    mode = SHOP11_EXTRACTION_MODE
+    mode = EXTRACTION_MODE
 
     def _match_regex_deltas(
         deltas_re: List[Tuple[str, int]],
@@ -675,7 +671,7 @@ def clean_shop11(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) ->
             "cleaner_name": CLEANER_NAME,
             "log_seq": _log_seq,
             "input_rows": len(df),
-            "extraction_mode": SHOP11_EXTRACTION_MODE,
+            "extraction_mode": EXTRACTION_MODE,
         },
     )
     _log_seq += 1
@@ -761,7 +757,7 @@ def clean_shop11(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) ->
         except Exception:
             rec_at = rec_at_raw
 
-        # 2) 颜色差额：根据 SHOP11_EXTRACTION_MODE 调度
+        # 2) 颜色差额：根据 EXTRACTION_MODE 调度
         avail_colors = tuple(color_map.keys())
         caution_txt = normalize_text_basic(str(caution_raw or ""))
         source_text_raw_full = str(caution_raw or "")

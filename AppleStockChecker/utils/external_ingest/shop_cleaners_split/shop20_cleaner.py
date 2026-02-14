@@ -1,4 +1,13 @@
 from __future__ import annotations
+"""
+shop20 清洗器
+
+  原始 DataFrame
+    │
+    ├─ _load_iphone17_info_df_for_shop20()  ← Step 1: 机型信息（part_number, model, capacity, color, jan）
+    ├─ _extract_jan_digits()                ← Step 2: JAN 提取
+    └─ clean_shop20()                       ← Step 3: 主函数，输出 part_number / price_new / recorded_at
+"""
 from typing import Protocol, Dict, Callable, Optional,List
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
 import os

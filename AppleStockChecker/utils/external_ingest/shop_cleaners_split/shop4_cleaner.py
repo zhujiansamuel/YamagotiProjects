@@ -4,6 +4,7 @@ from __future__ import annotations
 shop4 清洗器 — モバイルミックス
 
   原始 DataFrame（data / data11 列）
+    │ 配置: EXTRACTION_MODE / OLLAMA_URL / OLLAMA_MODEL_ID (cleaner_tools)
     │
     ├─ _find_base_price()                    ← Step 1: 回溯查找基准价
     │
@@ -11,7 +12,7 @@ shop4 清洗器 — モバイルミックス
     │
     ├─ _parse_color_delta_shop4_regex()      ← Step 3: 正则提取单行色差
     │
-    ├─ _collect_adjustments_shop4_dispatch() ← Step 4: 模式调度
+    ├─ _collect_adjustments_shop4_dispatch() ← Step 4: 模式调度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
     │   │   └─ _collect_adjustments_shop4_regex()   ← Step 5a: 正则逐行收集
@@ -48,6 +49,10 @@ from ..cleaner_tools import (
     _normalize_amount_text,
     normalize_text_basic,
     _label_matches_color_unified,
+    LABEL_SPLIT_RE_shop4 as LABEL_SPLIT_RE,
+    OLLAMA_URL,
+    OLLAMA_MODEL_ID,
+    EXTRACTION_MODE,
 )
 
 # ----------------------------------------------------------------------
@@ -63,15 +68,6 @@ SHOP_NAME = "モバイルミックス"
 # 控制台显示 INFO 级别（简洁），文件记录 DEBUG 级别（详细）
 
 # ----------------------------------------------------------------------
-# 配置
-# ----------------------------------------------------------------------
-
-SHOP4_OLLAMA_URL = os.getenv("SHOP4_OLLAMA_URL", "http://localhost:11434")
-SHOP4_OLLAMA_MODEL_ID = os.getenv("SHOP4_OLLAMA_MODEL_ID", "gemma3:1b")
-
-SHOP4_EXTRACTION_MODE = "regex"  # "regex" | "llm" | "auto"
-
-# ----------------------------------------------------------------------
 # 辅助工具函数
 # ----------------------------------------------------------------------
 
@@ -80,8 +76,7 @@ _norm = _norm_strip
 # ----------------------------------------------------------------------
 # Step 1: 全角→半角 & 金额归一化
 # ----------------------------------------------------------------------
-
-LABEL_SPLIT_RE = re.compile(r"[／/、，,・\s]+")
+# LABEL_SPLIT_RE: 从 cleaner_tools.LABEL_SPLIT_RE_shop4 导入
 
 def _coerce_int_maybe(v) -> Optional[int]:
     if v is None:
@@ -107,6 +102,40 @@ def _split_labels(label: str) -> List[str]:
 # ----------------------------------------------------------------------
 # Step 2: 基准价回溯查找
 # ----------------------------------------------------------------------
+
+# 纯金额行：仅含数字、逗号、円、空格，无数颜色/全色等文字
+_PURE_PRICE_CHARS = re.compile(r"[０-９0-9,，\s円+\-−－]")
+
+def _is_pure_price_only_row(df: pd.DataFrame, idx: int) -> bool:
+    """
+    判断该行 data 是否仅为纯金额（无颜色标签）。
+    若仅为金额（如 "230,500円"）且下一行是机型行，则属于下一 block 的基准价，不应纳入当前 block。
+    """
+    if idx < 0 or "data" not in df.columns or idx >= len(df):
+        return False
+    line = str(df["data"].iat[idx]) if df["data"].iat[idx] is not None else ""
+    stripped = line.strip()
+    if not stripped:
+        return False
+    # 移除价格相关字符后若为空，则为纯金额
+    remains = _PURE_PRICE_CHARS.sub("", stripped)
+    if remains:
+        return False
+    return to_int_yen(line) is not None
+
+
+def _is_next_model_base_price_row(df: pd.DataFrame, idx: int, n: int) -> bool:
+    """
+    判断该行是否为下一机型的基准价行。
+    条件：纯金额行 + 下一行 data11 非空（下一机型行）。
+    """
+    if idx < 0 or idx >= n - 1:
+        return False
+    if not _is_pure_price_only_row(df, idx):
+        return False
+    val = df["data11"].iat[idx + 1] if "data11" in df.columns else None
+    return val is not None and str(val).strip() != ""
+
 
 def _find_base_price(df: pd.DataFrame, idx: int) -> Optional[int]:
     """
@@ -232,6 +261,9 @@ def _collect_adjustments_shop4_regex(
             val = df["data11"].iat[j]
             nxt_model = str(val) if val is not None else ""
         if j > start_idx and nxt_model.strip():
+            break
+        # 若该行为纯金额且下一行为机型行，则属于下一 block 基准价，不纳入当前 block
+        if j > start_idx and _is_next_model_base_price_row(df, j, n):
             break
 
         line = ""
@@ -376,8 +408,8 @@ def _lx_extract_color_deltas(text: str) -> list:
         text_or_documents=text,
         prompt_description=_SHOP4_LE_PROMPT,
         examples=_get_shop4_le_examples(),
-        model_id=SHOP4_OLLAMA_MODEL_ID,
-        model_url=SHOP4_OLLAMA_URL,
+        model_id=OLLAMA_MODEL_ID,
+        model_url=OLLAMA_URL,
         fence_output=False,
         use_schema_constraints=False,
         extraction_passes=1,
@@ -443,12 +475,15 @@ def _collect_adjustments_shop4_llm_with_guardrails(
     n = len(df)
 
     # 收集 block 文本：从 start_idx 到下一个 data11 非空前一行
+    # 排除「纯金额行且下一行为机型行」的下一 block 基准价行
     for j in range(start_idx, n):
         if j > start_idx:
             nxt_model = ""
             val = df["data11"].iat[j] if "data11" in df.columns else ""
             nxt_model = str(val) if val is not None else ""
             if nxt_model.strip():
+                break
+            if _is_next_model_base_price_row(df, j, n):
                 break
         raw = df["data"].iat[j] if "data" in df.columns else ""
         lines.append("" if raw is None else str(raw))
@@ -473,8 +508,8 @@ def _collect_adjustments_shop4_llm_with_guardrails(
                 "cleaner_name": CLEANER_NAME,
                 "error": str(e),
                 "error_type": type(e).__name__,
-                "model_id": SHOP4_OLLAMA_MODEL_ID,
-                "model_url": SHOP4_OLLAMA_URL,
+                "model_id": OLLAMA_MODEL_ID,
+                "model_url": OLLAMA_URL,
                 "row_index": row_index,
                 "text_length": len(block_text),
                 "text_preview": _truncate_for_log(block_text, 100),
@@ -554,14 +589,14 @@ def _collect_adjustments_shop4_dispatch(
     row_index: object = None,
 ) -> Tuple[Dict[str, int], str, List[Tuple[str, int]], Dict[str, str]]:
     """
-    根据 SHOP4_EXTRACTION_MODE 决定提取方式：
+    根据 EXTRACTION_MODE 决定提取方式：
       - "regex": 只用正则
       - "llm":   只用 LLM + Guardrails
       - "auto":  正则优先，正则无颜色结果时 LLM + Guardrails 兜底
 
     返回 (adjustments, extraction_method, delta_specs, color_delta_label_map)
     """
-    mode = SHOP4_EXTRACTION_MODE
+    mode = EXTRACTION_MODE
 
     if mode == "regex":
         result, ds, cdl = _collect_adjustments_shop4_regex(df, start_idx)
@@ -599,7 +634,7 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
             "cleaner_name": CLEANER_NAME,
             "log_seq": _log_seq,
             "input_rows": len(df),
-            "extraction_mode": SHOP4_EXTRACTION_MODE,
+            "extraction_mode": EXTRACTION_MODE,
         },
     )
     _log_seq += 1
@@ -663,8 +698,11 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
             _collect_adjustments_shop4_dispatch(df, i, row_index=i)
 
         # ---- 收集 block 文本（source_text_raw_full） ----
+        # 排除「纯金额行且下一行为机型行」的下一 block 基准价行，避免日志误导
         block_lines_raw = []
         for j in range(i, block_end + 1):
+            if j > i and _is_next_model_base_price_row(df, j, n):
+                break
             raw = str(df["data"].iat[j]) if df["data"].iat[j] is not None else ""
             if raw.strip():
                 block_lines_raw.append(raw.strip())

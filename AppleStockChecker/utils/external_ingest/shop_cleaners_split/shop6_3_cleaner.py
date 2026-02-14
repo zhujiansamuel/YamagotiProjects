@@ -1,4 +1,9 @@
 from __future__ import annotations
+"""
+shop6_3 清洗器 — JAN/PN 解析子模块
+  原始 data 列 → _extract_jan_from_data() / _extract_pn_from_text() → JAN or PN
+  供 shop6 主清洗流程调用
+"""
 from typing import Protocol, Dict, Callable, Optional,List
 from ...external_ingest.helpers import parse_dt_aware
 from ..cleaner_tools import extract_price_yen
