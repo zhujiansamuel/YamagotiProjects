@@ -387,9 +387,10 @@ _COLOR_SEP_SPLIT_RE = LABEL_SPLIT_RE_shop4
 
 def _label_matches_color_unified(label_raw: str, color_raw: str, color_norm: str) -> bool:
     """
-    统一标签→颜色匹配（供 shop3/4/9/11/12/14/15/16/17 共用）。
+    统一标签→颜色匹配（供各 shop 共用）。
 
     匹配策略（按顺序）:
+      0. 后缀清理：去除 "系/色"（如 "青系"→"青", "黒色"→"黒"）
       1. 精确归一化相等
       2. label_raw 为 color_raw 原文子串
       3. label_norm 为 color_raw 子串（小写，shop14）
@@ -403,7 +404,9 @@ def _label_matches_color_unified(label_raw: str, color_raw: str, color_norm: str
     if not label_raw:
         return False
 
-    label_norm = _norm_strip(str(label_raw))
+    # 0. 后缀清理：去除 "系/色"（shop2 数据常见 "青系" "黒色" 等写法）
+    label_cleaned = re.sub(r"[系色]$", "", str(label_raw).strip()).strip()
+    label_norm = _norm_strip(label_cleaned)
     color_raw_s = str(color_raw or "")
     color_raw_l = color_raw_s.lower()
     color_raw_norm = _norm_strip(color_raw_s)
@@ -413,8 +416,7 @@ def _label_matches_color_unified(label_raw: str, color_raw: str, color_norm: str
         return True
 
     # 2. 原文子串 (label in color)
-    lbl_stripped = str(label_raw).strip()
-    if lbl_stripped and lbl_stripped in color_raw_s:
+    if label_cleaned and label_cleaned in color_raw_s:
         return True
 
     # 3. shop14: label_norm in color (小写)
@@ -422,7 +424,7 @@ def _label_matches_color_unified(label_raw: str, color_raw: str, color_norm: str
         return True
 
     # 4. shop11: 分割后任一分片匹配
-    for tok in _COLOR_SEP_SPLIT_RE.split(str(label_raw)):
+    for tok in _COLOR_SEP_SPLIT_RE.split(label_cleaned):
         tok = tok.strip()
         if not tok:
             continue
@@ -435,7 +437,7 @@ def _label_matches_color_unified(label_raw: str, color_raw: str, color_norm: str
     candidates: set = set()
     if label_norm in SYNONYM_LOOKUP_NORM:
         candidates.update(SYNONYM_LOOKUP_NORM[label_norm])
-    for tok in _COLOR_SEP_SPLIT_RE.split(str(label_raw)):
+    for tok in _COLOR_SEP_SPLIT_RE.split(label_cleaned):
         tn = _norm_strip(tok.strip())
         if tn and tn in SYNONYM_LOOKUP_NORM:
             candidates.update(SYNONYM_LOOKUP_NORM[tn])
@@ -662,6 +664,7 @@ def resolve_color_prices(
     cleaner_name: str,
     recorded_at: object,
     emit_default_rows: bool = True,
+    skip_non_positive: bool = False,
     logger: Optional[logging.Logger] = None,
     log_seq_start: int = 0,
     row_index: int = -1,
@@ -688,6 +691,7 @@ def resolve_color_prices(
         cleaner_name: 清洗器名（用于日志）
         recorded_at: 记录时间
         emit_default_rows: 未匹配颜色是否生成行（False → 仅输出有明确定价的颜色）
+        skip_non_positive: 最终价格 <= 0 时跳过该颜色（True → 不生成行，仅 warning 日志）
         logger: 日志器（None 则跳过所有日志）
         log_seq_start: 日志序号起始值
         row_index: 行号（用于日志）
@@ -895,6 +899,26 @@ def resolve_color_prices(
 
         # emit_default_rows=False → 未匹配颜色不生成行
         if not emit_default_rows and effective_source == "default_zero":
+            continue
+
+        # skip_non_positive → 价格 <= 0 跳过（shop2 等需要）
+        if skip_non_positive and final_price is not None and int(final_price) <= 0:
+            if logger:
+                _seq += 1
+                logger.warning(
+                    "Skipping item: price <= 0",
+                    extra={
+                        **_log_ctx,
+                        "event_type": "output_record",
+                        "log_seq": _seq,
+                        "part_number": pn,
+                        "color_norm": col_norm,
+                        "base_price": base_price,
+                        "spec_value": spec_value,
+                        "final_price": int(final_price),
+                        "skip_reason": "price <= 0",
+                    },
+                )
             continue
 
         output_rows.append({

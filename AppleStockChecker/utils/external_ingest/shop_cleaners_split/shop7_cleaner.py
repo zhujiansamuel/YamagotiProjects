@@ -13,6 +13,7 @@ from ..cleaner_tools import (
     extract_price_yen,
     PriceDecomposition,
     resolve_color_prices,
+    _label_matches_color_unified,
     LABEL_SPLIT_RE_shop7,
 )
 import re
@@ -41,7 +42,7 @@ shop7 清洗器 — 買取ホムラ
     │       └─ _normalize_amount_text()  ← 金额文本 → int（cleaner_tools）
     │
     ├─ Step 4: label → color 匹配
-    │   └─ _label_matches_color_shop7()  ← 精确 | 子串匹配（shop7 专用）
+    │   └─ _label_matches_color_unified()  ← 统一匹配（cleaner_tools）
     │
     └─ Step 5: part_number 输出
         └─ base_price + color delta → final price
@@ -126,27 +127,6 @@ def _parse_color_deltas_shop7(text: str) -> List[Tuple[str, int]]:
                         res.append((_norm_strip(tok), delta))
 
     return res
-
-
-# ----------------------------------------------------------------------
-# Step 4: 颜色匹配
-# ----------------------------------------------------------------------
-
-def _label_matches_color_shop7(label_raw: str, col_raw: str, col_norm: str) -> bool:
-    """
-    判断提取的颜色标签是否匹配目标颜色。
-    匹配策略：精确(归一) | 原文子串。
-    """
-    label_norm = _norm_strip(label_raw)
-    # 精确匹配归一化颜色
-    if label_norm == col_norm:
-        return True
-    # 标签是原文颜色的子串
-    if label_norm and label_norm in _norm_strip(col_raw):
-        return True
-    if label_raw and label_raw in str(col_raw):
-        return True
-    return False
 
 
 # ----------------------------------------------------------------------
@@ -325,7 +305,7 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         )
 
         new_rows, _log_seq = resolve_color_prices(
-            decomp, color_map, _label_matches_color_shop7,
+            decomp, color_map, _label_matches_color_unified,
             shop_name=SHOP_NAME, cleaner_name=CLEANER_NAME,
             recorded_at=rec_at,
             logger=logger, log_seq_start=_log_seq,

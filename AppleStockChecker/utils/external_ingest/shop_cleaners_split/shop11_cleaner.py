@@ -8,7 +8,7 @@ shop11 清洗器 — モバステ
     │
     ├─ normalize_text_basic()              ← Step 1: 全角→半角归一化（cleaner_tools）
     │
-    ├─ to_int_yen_shop11()                   ← Step 2: 日元价格解析
+    ├─ extract_price_yen()                   ← Step 2: 基础价解析（cleaner_tools 统一）
     │
     ├─ _lx_parse_storage_shop11()            ← Step 3: LLM 机型/容量解析
     │   └─ fallback: _normalize_model_generic + _parse_capacity_gb
@@ -38,8 +38,9 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 from dateutil import parser as dateparser
 
-from ...external_ingest.helpers import to_int_yen, parse_dt_aware
+from ...external_ingest.helpers import parse_dt_aware
 from ..cleaner_tools import (
+    extract_price_yen,
     _parse_capacity_gb,
     _normalize_model_generic,
     _load_iphone17_info_df_from_db,
@@ -87,51 +88,6 @@ def _coerce_int(v) -> Optional[int]:
         return int(float(s))
     except Exception:
         return None
-
-# ----------------------------------------------------------------------
-# Step 2: 日元价格解析
-# ----------------------------------------------------------------------
-
-def to_int_yen_shop11(v) -> Optional[int]:
-    """
-    将各种形式的日元表示解析为 int（日元），若无法解析返回 None。
-    支持样例：
-      "1,000" "1,000円" "¥1,000" "１，０００" "1000" 以及带空格的混合形式
-    """
-    if v is None:
-        return None
-    s = str(v).strip()
-    if not s:
-        return None
-
-    # 去掉括号内的备注
-    s = re.sub(r"\（.*?\）|\(.*?\)", "", s).strip()
-
-    # 使用通用规范化（全角→半角 + 去换行 + 合并空格）
-    s2 = normalize_text_basic(s)
-
-    m = re.search(r"([+\-−－]?)\s*(?:¥|￥)?\s*([\d][\d,]*)", s2)
-    if not m:
-        m2 = re.search(r"([\d][\d,]*)", s2)
-        if not m2:
-            return None
-        amt_txt = m2.group(1)
-        sign = ""
-    else:
-        sign = m.group(1) or ""
-        amt_txt = m.group(2)
-
-    amt_digits = re.sub(r"[^\d]", "", amt_txt or "")
-    if not amt_digits:
-        return None
-    try:
-        val = int(amt_digits)
-    except Exception:
-        return None
-
-    if sign in ("-", "−", "－"):
-        val = -val
-    return val
 
 # ----------------------------------------------------------------------
 # Step 3: LLM 机型/容量解析（storage_name -> model_norm, cap_gb）
@@ -745,7 +701,7 @@ def clean_shop11(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) ->
         if not color_map:
             continue
 
-        base_price = to_int_yen_shop11(price_raw)
+        base_price = extract_price_yen(price_raw)
         if base_price is None:
             continue
         base_price = int(base_price)
