@@ -557,59 +557,53 @@ def _extract_specs_shop11_dispatch(
     caution_txt: str,
     available_colors: Tuple[str, ...],
     color_map: Dict[str, Tuple[str, str]],
-) -> Tuple[Dict[str, int], str, List[Tuple[str, int]], Dict[str, str]]:
+    *,
+    base_price: int,
+    source_text_raw: str,
+) -> PriceDecomposition:
     """
     根据 EXTRACTION_MODE 决定颜色差价提取方式：
       - "regex": 只用正则
       - "llm":   只用 LLM + Guardrails
-      - "auto":  正则优先，正则无颜色结果时 LLM + Guardrails 兜底
+      - "auto":  正则优先，正则无颜色結果时 LLM + Guardrails 兜底
 
-    返回 (color_deltas, extraction_method, delta_specs, color_delta_label_map)
-      - color_deltas: {color_norm: delta_int} — 已匹配
-      - delta_specs: [(label_raw, delta)] — 原始提取结果，用于日志
-      - color_delta_label_map: {color_norm: label_raw} — 标签追踪
+    返回 PriceDecomposition（base_price, delta_specs, extraction_method 等）。
     """
     mode = EXTRACTION_MODE
 
-    def _match_regex_deltas(
-        deltas_re: List[Tuple[str, int]],
-    ) -> Tuple[Dict[str, int], Dict[str, str]]:
-        cd: Dict[str, int] = {}
-        cl: Dict[str, str] = {}
-        for col_norm, (pn, col_raw) in color_map.items():
-            for label_raw, delta in deltas_re:
-                if _label_matches_color_unified(label_raw, col_raw, col_norm):
-                    cd[col_norm] = int(delta)
-                    cl[col_norm] = label_raw
-        return cd, cl
+    def _build_decomp(
+        delta_specs: List[Tuple[str, int]],
+        extraction_method: str,
+    ) -> PriceDecomposition:
+        return PriceDecomposition(
+            base_price=base_price,
+            delta_specs=delta_specs,
+            abs_specs=[],
+            extraction_method=extraction_method,
+            source_text_raw=source_text_raw,
+        )
 
     if mode == "regex":
         deltas_re = _extract_specs_shop11_regex(caution_txt)
-        color_deltas, label_map = _match_regex_deltas(deltas_re)
-        return color_deltas, "regex", deltas_re, label_map
+        return _build_decomp(deltas_re, "regex")
 
     if mode == "llm":
         color_deltas = _extract_specs_shop11_llm(
             caution_txt, available_colors, color_map,
         )
-        # LLM 路径：标签即 color_norm（LLM 被约束输出 AVAILABLE_COLORS）
         delta_specs = [(cn, dv) for cn, dv in color_deltas.items()]
-        label_map = {cn: cn for cn in color_deltas}
-        return color_deltas, "llm", delta_specs, label_map
+        return _build_decomp(delta_specs, "llm")
 
-    # ---- auto: 正则優先，正则無結果时 LLM 兜底 ----
+    # ---- auto: 正則優先，正則無結果时 LLM 兜底 ----
     deltas_re = _extract_specs_shop11_regex(caution_txt)
-    color_deltas_re, label_map_re = _match_regex_deltas(deltas_re)
-
-    if color_deltas_re:
-        return color_deltas_re, "regex", deltas_re, label_map_re
+    if deltas_re:
+        return _build_decomp(deltas_re, "regex")
 
     color_deltas_llm = _extract_specs_shop11_llm(
         caution_txt, available_colors, color_map,
     )
     delta_specs_llm = [(cn, dv) for cn, dv in color_deltas_llm.items()]
-    label_map_llm = {cn: cn for cn in color_deltas_llm}
-    return color_deltas_llm, "llm", delta_specs_llm, label_map_llm
+    return _build_decomp(delta_specs_llm, "llm")
 
 # ----------------------------------------------------------------------
 # Step 8: 清洗主函数
@@ -718,18 +712,10 @@ def clean_shop11(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) ->
         caution_txt = normalize_text_basic(str(caution_raw or ""))
         source_text_raw_full = str(caution_raw or "")
 
-        color_deltas, extraction_method, delta_specs, color_delta_label_map = (
-            _extract_specs_shop11_dispatch(
-                caution_txt, avail_colors, color_map,
-            )
-        )
-
         # ---- 匹配 + 定价 + 输出（公共函数） ----
-        decomp = PriceDecomposition(
+        decomp = _extract_specs_shop11_dispatch(
+            caution_txt, avail_colors, color_map,
             base_price=base_price,
-            delta_specs=delta_specs,
-            abs_specs=[],
-            extraction_method=extraction_method,
             source_text_raw=source_text_raw_full,
         )
 

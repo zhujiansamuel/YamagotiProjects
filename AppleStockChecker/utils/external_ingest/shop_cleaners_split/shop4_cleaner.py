@@ -586,37 +586,49 @@ def _extract_specs_shop4_llm(
 def _extract_specs_shop4_dispatch(
     df: pd.DataFrame,
     start_idx: int,
+    *,
+    base_price: int,
+    source_text_raw: str,
     row_index: object = None,
-) -> Tuple[Dict[str, int], str, List[Tuple[str, int]], Dict[str, str]]:
+) -> PriceDecomposition:
     """
     根据 EXTRACTION_MODE 决定提取方式：
       - "regex": 只用正则
       - "llm":   只用 LLM + Guardrails
       - "auto":  正则优先，正则无颜色结果时 LLM + Guardrails 兜底
 
-    返回 (adjustments, extraction_method, delta_specs, color_delta_label_map)
+    返回 PriceDecomposition
     """
     mode = EXTRACTION_MODE
 
     if mode == "regex":
-        result, ds, cdl = _extract_specs_shop4_regex_block(df, start_idx)
-        return result, "regex", ds, cdl
+        _, ds, _ = _extract_specs_shop4_regex_block(df, start_idx)
+        method = "regex"
 
-    if mode == "llm":
-        result, ds, cdl = _extract_specs_shop4_llm(
+    elif mode == "llm":
+        _, ds, _ = _extract_specs_shop4_llm(
             df, start_idx, row_index=row_index,
         )
-        return result, "llm", ds, cdl
+        method = "llm"
 
-    # ---- auto: 正則優先，正則無颜色结果时 LLM 兜底 ----
-    regex_result, ds, cdl = _extract_specs_shop4_regex_block(df, start_idx)
-    if regex_result:
-        return regex_result, "regex", ds, cdl
+    else:
+        # ---- auto: 正則優先，正則無颜色结果时 LLM 兜底 ----
+        regex_result, ds, _ = _extract_specs_shop4_regex_block(df, start_idx)
+        if regex_result:
+            method = "regex"
+        else:
+            _, ds, _ = _extract_specs_shop4_llm(
+                df, start_idx, row_index=row_index,
+            )
+            method = "llm"
 
-    llm_result, ds, cdl = _extract_specs_shop4_llm(
-        df, start_idx, row_index=row_index,
+    return PriceDecomposition(
+        delta_specs=list(ds),
+        abs_specs=[],
+        extraction_method=method,
+        base_price=base_price,
+        source_text_raw=source_text_raw,
     )
-    return llm_result, "llm", ds, cdl
 
 # ----------------------------------------------------------------------
 # Step 8: 清洗主函数
@@ -693,10 +705,6 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         if base_price is None:
             continue
 
-        # ---- 提取 ----
-        _, extraction_method, delta_specs_raw, _ = \
-            _extract_specs_shop4_dispatch(df, i, row_index=i)
-
         # ---- 收集 block 文本（source_text_raw_full） ----
         # 排除「纯金额行且下一行为机型行」的下一 block 基准价行，避免日志误导
         block_lines_raw = []
@@ -708,13 +716,12 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
                 block_lines_raw.append(raw.strip())
         source_text_raw_full = " | ".join(block_lines_raw)
 
-        # ---- PriceDecomposition + resolve_color_prices ----
-        decomp = PriceDecomposition(
+        # ---- 提取 ----
+        decomp = _extract_specs_shop4_dispatch(
+            df, i,
             base_price=base_price,
-            delta_specs=list(delta_specs_raw),
-            abs_specs=[],
-            extraction_method=extraction_method,
             source_text_raw=source_text_raw_full,
+            row_index=i,
         )
 
         new_rows, _log_seq = resolve_color_prices(
