@@ -8,10 +8,10 @@ shop15 清洗器 — 買取当番
     │
     ├─ _extract_base_price_at_start()             ← Step 2: 提取基础价
     │
-    ├─ _extract_price_parts_shop15_dispatch()      ← Step 9: 模式调度（EXTRACTION_MODE）
+    ├─ _extract_specs_shop15_dispatch()      ← Step 9: 模式调度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
-    │   │   └─ _extract_price_parts_shop15_regex()       ← Step 6: 正则提取 specs
+    │   │   └─ _extract_specs_shop15_regex()       ← Step 6: 正则提取 specs
     │   │
     │   └─ llm 路径:
     │       ├─ _parse_shop15_price_via_langextract()     ← Step 7: LLM 核心提取
@@ -187,7 +187,7 @@ MULTI_LABEL_DELTA_BLOCK_RE_shop15 = re.compile(
 # Step 6: 正则提取函数
 # ----------------------------------------------------------------------
 
-def _extract_price_parts_shop15_regex(
+def _extract_specs_shop15_regex(
     price_text: str,
 ) -> Tuple[Optional[int], List[Tuple[str, str, int]]]:
     """
@@ -388,7 +388,7 @@ def _iter_extractions_in_order(result) -> List:
     return sorted(exts, key=key)
 
 @lru_cache(maxsize=4096)
-def _parse_shop15_price_via_langextract_cached(
+def _extract_specs_shop15_llm_core(
     price_text: str,
     model_id: str,
     model_url: str,
@@ -586,7 +586,7 @@ def _augment_multi_label_block_specs_shop15(
 
     return new_specs
 
-def _extract_price_parts_shop15_llm_with_guardrails(
+def _extract_specs_shop15_llm(
     price_text: str, idx: object = None,
 ) -> Tuple[Optional[int], List[Tuple[str, str, int]]]:
     """
@@ -597,7 +597,7 @@ def _extract_price_parts_shop15_llm_with_guardrails(
     llm_ok = False
 
     try:
-        base_price, specs = _parse_shop15_price_via_langextract_cached(
+        base_price, specs = _extract_specs_shop15_llm_core(
             str(price_text),
             OLLAMA_MODEL_ID,
             OLLAMA_URL,
@@ -632,7 +632,7 @@ def _extract_price_parts_shop15_llm_with_guardrails(
 
     # LLM 完全失败且无 specs 时，回退到正则
     if (not llm_ok) and (not specs):
-        _, specs = _extract_price_parts_shop15_regex(price_text)
+        _, specs = _extract_specs_shop15_regex(price_text)
 
     return base_price, specs
 
@@ -640,7 +640,7 @@ def _extract_price_parts_shop15_llm_with_guardrails(
 # Step 9: 提取模式调度
 # ----------------------------------------------------------------------
 
-def _extract_price_parts_shop15_dispatch(
+def _extract_specs_shop15_dispatch(
     price_text: str, idx: object = None,
 ) -> Tuple[Optional[int], List[Tuple[str, str, int]], str]:
     """
@@ -654,21 +654,21 @@ def _extract_price_parts_shop15_dispatch(
     mode = EXTRACTION_MODE
 
     if mode == "regex":
-        bp, specs = _extract_price_parts_shop15_regex(price_text)
+        bp, specs = _extract_specs_shop15_regex(price_text)
         return bp, specs, "regex"
 
     if mode == "llm":
-        bp, specs = _extract_price_parts_shop15_llm_with_guardrails(
+        bp, specs = _extract_specs_shop15_llm(
             price_text, idx=idx,
         )
         return bp, specs, "llm"
 
     # ---- auto: 正则优先，正则无 specs 时 LLM 兜底 ----
-    bp_re, specs_re = _extract_price_parts_shop15_regex(price_text)
+    bp_re, specs_re = _extract_specs_shop15_regex(price_text)
     if specs_re:
         return bp_re, specs_re, "regex"
 
-    bp_llm, specs_llm = _extract_price_parts_shop15_llm_with_guardrails(
+    bp_llm, specs_llm = _extract_specs_shop15_llm(
         price_text, idx=idx,
     )
     # LLM 的 base_price 优先，其次正则的
@@ -739,7 +739,7 @@ def clean_shop15(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
         price_text_s = "" if price_text is None else str(price_text)
 
         # 根据 EXTRACTION_MODE 提取价格信息
-        base_price, specs, extraction_method = _extract_price_parts_shop15_dispatch(
+        base_price, specs, extraction_method = _extract_specs_shop15_dispatch(
             price_text_s, idx=i,
         )
 

@@ -37,7 +37,7 @@ shop7 清洗器 — 買取ホムラ
     │   └─ parse_dt_aware()           ← 时间解析
     │
     ├─ Step 3: 颜色减价解析（下一行检测）
-    │   └─ _parse_color_deltas_shop7()
+    │   └─ _extract_specs_shop7_regex()
     │       ├─ DELTA_RE               ← 核心正则: 标签+金额
     │       └─ _normalize_amount_text()  ← 金额文本 → int（cleaner_tools）
     │
@@ -86,7 +86,7 @@ DELTA_RE = re.compile(
 )
 
 
-def _parse_color_deltas_shop7(text: str) -> List[Tuple[str, int]]:
+def _extract_specs_shop7_regex(text: str) -> List[Tuple[str, int]]:
     """
     解析颜色减价文本，返回 [(颜色标签, delta金额)] 列表。
     例如: "シルバー/ディープブルー-3000" → [("シルバー", -3000), ("ディープブルー", -3000)]
@@ -291,7 +291,7 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
 
             if is_color_line:
                 source_text_raw_full = nxt_data2
-                labels_and_deltas = _parse_color_deltas_shop7(nxt_data2)
+                labels_and_deltas = _extract_specs_shop7_regex(nxt_data2)
 
         extraction_method = "regex" if labels_and_deltas else "none"
 

@@ -13,13 +13,13 @@ shop11 清洗器 — モバステ
     ├─ _lx_parse_storage_shop11()            ← Step 3: LLM 机型/容量解析
     │   └─ fallback: _normalize_model_generic + _parse_capacity_gb
     │
-    ├─ _extract_color_deltas_shop11_dispatch()  ← Step 7: 模式调度（EXTRACTION_MODE）
+    ├─ _extract_specs_shop11_dispatch()  ← Step 7: 模式调度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
-    │   │   └─ _extract_color_deltas_shop11_regex()   ← Step 5: 正则提取差价
+    │   │   └─ _extract_specs_shop11_regex()   ← Step 5: 正则提取差价
     │   │
     │   └─ llm 路径:
-    │       ├─ _lx_parse_color_deltas_shop11()        ← Step 6a: LLM 核心提取
+    │       ├─ _extract_specs_shop11_llm_core()        ← Step 6a: LLM 核心提取
     │       └─ Guardrails (delta 合理性检查)            ← Step 6b: 防幻觉过滤
     │
     ├─ _label_matches_color_unified()       ← Step 4: 标签→颜色匹配（cleaner_tools 统一）
@@ -305,7 +305,7 @@ _COLOR_GROUP_FALLBACK_RE = re.compile(
     re.UNICODE | re.VERBOSE,
 )
 
-def _extract_color_deltas_shop11_regex(text: str) -> List[Tuple[str, int]]:
+def _extract_specs_shop11_regex(text: str) -> List[Tuple[str, int]]:
     """
     纯正则版颜色差额解析，返回 [(label_raw, delta_int), ...]
     支持：
@@ -450,7 +450,7 @@ def _shop11_lx_color_materials():
     return prompt, examples
 
 @lru_cache(maxsize=4096)
-def _lx_parse_color_deltas_shop11(
+def _extract_specs_shop11_llm_core(
     caution: str,
     available_colors: Tuple[str, ...],
 ) -> Tuple[Tuple[Tuple[str, int], ...], Tuple[Tuple[str, str, Tuple[Tuple[str, str], ...]], ...]]:
@@ -497,7 +497,7 @@ def _lx_parse_color_deltas_shop11(
 
     return tuple(tmp.items()), tuple(trace)
 
-def _extract_color_deltas_shop11_llm_with_guardrails(
+def _extract_specs_shop11_llm(
     caution_txt: str,
     available_colors: Tuple[str, ...],
     color_map: Dict[str, Tuple[str, str]],
@@ -510,7 +510,7 @@ def _extract_color_deltas_shop11_llm_with_guardrails(
     llm_ok = False
 
     try:
-        deltas_items, deltas_trace = _lx_parse_color_deltas_shop11(caution_txt, available_colors)
+        deltas_items, deltas_trace = _extract_specs_shop11_llm_core(caution_txt, available_colors)
         color_deltas = dict(deltas_items)
         llm_ok = True
     except Exception as e:
@@ -540,7 +540,7 @@ def _extract_color_deltas_shop11_llm_with_guardrails(
 
     # LLM 完全失败且无结果时，回退到正则
     if (not llm_ok) and (not color_deltas) and caution_txt.strip():
-        deltas_fb = _extract_color_deltas_shop11_regex(caution_txt)
+        deltas_fb = _extract_specs_shop11_regex(caution_txt)
         if deltas_fb:
             for col_norm, (pn, col_raw) in color_map.items():
                 for label_raw, delta in deltas_fb:
@@ -553,7 +553,7 @@ def _extract_color_deltas_shop11_llm_with_guardrails(
 # Step 7: 提取模式调度
 # ----------------------------------------------------------------------
 
-def _extract_color_deltas_shop11_dispatch(
+def _extract_specs_shop11_dispatch(
     caution_txt: str,
     available_colors: Tuple[str, ...],
     color_map: Dict[str, Tuple[str, str]],
@@ -584,12 +584,12 @@ def _extract_color_deltas_shop11_dispatch(
         return cd, cl
 
     if mode == "regex":
-        deltas_re = _extract_color_deltas_shop11_regex(caution_txt)
+        deltas_re = _extract_specs_shop11_regex(caution_txt)
         color_deltas, label_map = _match_regex_deltas(deltas_re)
         return color_deltas, "regex", deltas_re, label_map
 
     if mode == "llm":
-        color_deltas = _extract_color_deltas_shop11_llm_with_guardrails(
+        color_deltas = _extract_specs_shop11_llm(
             caution_txt, available_colors, color_map,
         )
         # LLM 路径：标签即 color_norm（LLM 被约束输出 AVAILABLE_COLORS）
@@ -598,13 +598,13 @@ def _extract_color_deltas_shop11_dispatch(
         return color_deltas, "llm", delta_specs, label_map
 
     # ---- auto: 正则優先，正则無結果时 LLM 兜底 ----
-    deltas_re = _extract_color_deltas_shop11_regex(caution_txt)
+    deltas_re = _extract_specs_shop11_regex(caution_txt)
     color_deltas_re, label_map_re = _match_regex_deltas(deltas_re)
 
     if color_deltas_re:
         return color_deltas_re, "regex", deltas_re, label_map_re
 
-    color_deltas_llm = _extract_color_deltas_shop11_llm_with_guardrails(
+    color_deltas_llm = _extract_specs_shop11_llm(
         caution_txt, available_colors, color_map,
     )
     delta_specs_llm = [(cn, dv) for cn, dv in color_deltas_llm.items()]
@@ -719,7 +719,7 @@ def clean_shop11(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) ->
         source_text_raw_full = str(caution_raw or "")
 
         color_deltas, extraction_method, delta_specs, color_delta_label_map = (
-            _extract_color_deltas_shop11_dispatch(
+            _extract_specs_shop11_dispatch(
                 caution_txt, avail_colors, color_map,
             )
         )

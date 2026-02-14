@@ -10,7 +10,7 @@ shop9 清洗器 — アキモバ
     │
     ├─ _bucket_amount()                      ← Step 2: abs/delta 分類（量級・符号ヒント）
     │
-    ├─ _extract_price_parts_shop9_dispatch()  ← Step 7: モード調度（EXTRACTION_MODE）
+    ├─ _extract_specs_shop9_dispatch()  ← Step 7: モード調度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
     │   │   ├─ _extract_abs_prices_regex()        ← Step 5a: 正則提取絶対価
@@ -18,7 +18,7 @@ shop9 清洗器 — アキモバ
     │   │   └─ _direct_abs_overrides_for_row()    ← Step 5c: テキスト直接覆写
     │   │
     │   └─ llm 路径:
-    │       ├─ _llm_extract_rules_cached()        ← Step 6a: LLM 核心提取
+    │       ├─ _extract_specs_shop9_llm_core()        ← Step 6a: LLM 核心提取
     │       └─ _bucket_amount() guardrail         ← Step 6b: abs/delta 防幻觉過濾
     │
     ├─ _map_to_available_color()             ← Step 3: ラベル→カラーマッチング（cleaner_tools 统一）
@@ -342,7 +342,7 @@ def _direct_abs_overrides_for_row(
 
     return overrides
 
-def _extract_price_parts_shop9_regex(
+def _extract_specs_shop9_regex(
     s_price: str,
     s_color: str,
     color_to_pn: Dict[str, str],
@@ -535,7 +535,7 @@ def _shop9_lx_examples():
     ]
 
 @lru_cache(maxsize=4096)
-def _llm_extract_rules_cached(
+def _extract_specs_shop9_llm_core(
     price_text: str,
     detail_text: str,
     avail_colors_key: Tuple[str, ...],
@@ -633,7 +633,7 @@ def _llm_extract_rules_cached(
 
     return abs_map, delta_map, abs_specs, delta_specs, color_abs_label_map, color_delta_label_map
 
-def _extract_price_parts_shop9_llm_with_guardrails(
+def _extract_specs_shop9_llm(
     s_price: str,
     s_color: str,
     color_to_pn: Dict[str, str],
@@ -657,7 +657,7 @@ def _extract_price_parts_shop9_llm_with_guardrails(
     try:
         (abs_map, delta_map,
          abs_specs, delta_specs,
-         color_abs_label_map, color_delta_label_map) = _llm_extract_rules_cached(
+         color_abs_label_map, color_delta_label_map) = _extract_specs_shop9_llm_core(
             s_price, s_color, avail_colors_key)
     except Exception as e:
         logger.warning(
@@ -693,7 +693,7 @@ def _extract_price_parts_shop9_llm_with_guardrails(
 # Step 7: 提取モード調度
 # ----------------------------------------------------------------------
 
-def _extract_price_parts_shop9_dispatch(
+def _extract_specs_shop9_dispatch(
     s_price: str,
     s_color: str,
     color_to_pn: Dict[str, str],
@@ -715,7 +715,7 @@ def _extract_price_parts_shop9_dispatch(
 
     if mode == "regex":
         abs_map, delta_map, abs_specs, delta_specs, cal, cdl = \
-            _extract_price_parts_shop9_regex(s_price, s_color, color_to_pn)
+            _extract_specs_shop9_regex(s_price, s_color, color_to_pn)
         # Apply text-based abs overrides (same as original logic)
         overrides = _direct_abs_overrides_for_row(
             raw_color_text=s_color,
@@ -730,14 +730,14 @@ def _extract_price_parts_shop9_dispatch(
 
     if mode == "llm":
         abs_map, delta_map, abs_specs, delta_specs, cal, cdl = \
-            _extract_price_parts_shop9_llm_with_guardrails(
+            _extract_specs_shop9_llm(
                 s_price, s_color, color_to_pn, row_index=row_index,
             )
         return abs_map, delta_map, "llm", abs_specs, delta_specs, cal, cdl
 
     # ---- auto: regex 优先，regex 无颜色结果时 LLM 兜底 ----
     abs_map_re, delta_map_re, abs_specs, delta_specs, cal, cdl = \
-        _extract_price_parts_shop9_regex(s_price, s_color, color_to_pn)
+        _extract_specs_shop9_regex(s_price, s_color, color_to_pn)
     if abs_map_re or delta_map_re:
         # Apply text-based abs overrides
         overrides = _direct_abs_overrides_for_row(
@@ -752,7 +752,7 @@ def _extract_price_parts_shop9_dispatch(
         return abs_map_re, delta_map_re, "regex", abs_specs, delta_specs, cal, cdl
 
     abs_map_llm, delta_map_llm, abs_specs, delta_specs, cal, cdl = \
-        _extract_price_parts_shop9_llm_with_guardrails(
+        _extract_specs_shop9_llm(
             s_price, s_color, color_to_pn, row_index=row_index,
         )
     return abs_map_llm, delta_map_llm, "llm", abs_specs, delta_specs, cal, cdl
@@ -864,7 +864,7 @@ def clean_shop9(
         # ---- 提取 ----
         (abs_map, delta_map, extraction_method,
          abs_specs, delta_specs,
-         _cal, _cdl) = _extract_price_parts_shop9_dispatch(
+         _cal, _cdl) = _extract_specs_shop9_dispatch(
             s_price, s_color, color_to_pn, row_index=i,
         )
 

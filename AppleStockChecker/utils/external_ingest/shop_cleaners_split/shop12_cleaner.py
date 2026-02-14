@@ -10,15 +10,15 @@ shop12 清洗器 — トゥインクル
     │
     ├─ _norm_amount_to_int()                    ← Step 2: 统一全角数字→int
     │
-    ├─ _extract_price_parts_shop12_dispatch()   ← Step 5: 模式调度（EXTRACTION_MODE）
+    ├─ _extract_specs_shop12_dispatch()   ← Step 5: 模式调度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
-    │   │   └─ _extract_price_parts_shop12_regex()    ← Step 3: 正则提取 (abs + delta)
+    │   │   └─ _extract_specs_shop12_regex()    ← Step 3: 正则提取 (abs + delta)
     │   │       └─ _fallback_parse_rules()            ← 核心正则: _FALLBACK_ABS_RE / _FALLBACK_DELTA_RE
     │   │
     │   └─ llm 路径:
-    │       └─ _extract_price_parts_shop12_llm_with_guardrails()  ← Step 4: LLM 提取 + 防幻觉
-    │           └─ _parse_rules_with_langextract()    ← LLM 核心: effective_class 修正 + 去重
+    │       └─ _extract_specs_shop12_llm()  ← Step 4: LLM 提取 + 防幻觉
+    │           └─ _extract_specs_shop12_llm_core()    ← LLM 核心: effective_class 修正 + 去重
     │
     ├─ _label_matches_color_unified()           ← Step 6: 标签→颜色匹配（cleaner_tools 统一）
     │
@@ -174,7 +174,7 @@ def _fallback_parse_rules(text: str) -> Tuple[List[Tuple[str, int]], List[Tuple[
 
     return abs_list, delta_list
 
-def _extract_price_parts_shop12_regex(
+def _extract_specs_shop12_regex(
     remark_for_llm: str,
 ) -> Tuple[List[Tuple[str, int]], List[Tuple[str, int]]]:
     """
@@ -263,7 +263,7 @@ def _lx_examples():
     ]
 
 @lru_cache(maxsize=8192)
-def _parse_rules_with_langextract(remark_for_llm: str) -> Tuple[List[Tuple[str, int]], List[Tuple[str, int]], List[Tuple[str, str, dict]]]:
+def _extract_specs_shop12_llm_core(remark_for_llm: str) -> Tuple[List[Tuple[str, int]], List[Tuple[str, int]], List[Tuple[str, str, dict]]]:
     """
     返回:
       abs_list  = [(label_raw, absolute_price_yen), ...]
@@ -411,16 +411,16 @@ def _parse_rules_with_langextract(remark_for_llm: str) -> Tuple[List[Tuple[str, 
         )
         return [], [], []
 
-def _extract_price_parts_shop12_llm_with_guardrails(
+def _extract_specs_shop12_llm(
     remark_for_llm: str,
     idx: object = None,
 ) -> Tuple[List[Tuple[str, int]], List[Tuple[str, int]]]:
     """
     LLM 提取 + Guardrails（仅 LLM 路径使用）。
-    Guardrail: effective_class 修正 + 去重（内置于 _parse_rules_with_langextract）。
+    Guardrail: effective_class 修正 + 去重（内置于 _extract_specs_shop12_llm_core）。
     LLM 失败时回退到正则。
     """
-    abs_list, delta_list, _llm_dbg = _parse_rules_with_langextract(remark_for_llm)
+    abs_list, delta_list, _llm_dbg = _extract_specs_shop12_llm_core(remark_for_llm)
 
     # Guardrail: LLM 完全失败（空结果）时，回退到正则
     if not abs_list and not delta_list and remark_for_llm:
@@ -444,7 +444,7 @@ def _extract_price_parts_shop12_llm_with_guardrails(
 # Step 5: 提取模式调度
 # ----------------------------------------------------------------------
 
-def _extract_price_parts_shop12_dispatch(
+def _extract_specs_shop12_dispatch(
     remark_for_llm: str, idx: object = None,
 ) -> Tuple[List[Tuple[str, int]], List[Tuple[str, int]], str]:
     """
@@ -458,21 +458,21 @@ def _extract_price_parts_shop12_dispatch(
     mode = EXTRACTION_MODE
 
     if mode == "regex":
-        abs_list, delta_list = _extract_price_parts_shop12_regex(remark_for_llm)
+        abs_list, delta_list = _extract_specs_shop12_regex(remark_for_llm)
         return abs_list, delta_list, "regex"
 
     if mode == "llm":
-        abs_list, delta_list = _extract_price_parts_shop12_llm_with_guardrails(
+        abs_list, delta_list = _extract_specs_shop12_llm(
             remark_for_llm, idx=idx,
         )
         return abs_list, delta_list, "llm"
 
     # ---- auto: 正则优先，正则无颜色结果时 LLM 兜底 ----
-    abs_re, delta_re = _extract_price_parts_shop12_regex(remark_for_llm)
+    abs_re, delta_re = _extract_specs_shop12_regex(remark_for_llm)
     if abs_re or delta_re:
         return abs_re, delta_re, "regex"
 
-    abs_llm, delta_llm = _extract_price_parts_shop12_llm_with_guardrails(
+    abs_llm, delta_llm = _extract_specs_shop12_llm(
         remark_for_llm, idx=idx,
     )
     return abs_llm, delta_llm, "llm"
@@ -575,7 +575,7 @@ def clean_shop12(df: pd.DataFrame, debug: bool = False) -> pd.DataFrame:
         remark_for_llm = _normalize_remark_for_llm(remark_raw)
         source_text_raw_full = str(remark_raw)
 
-        abs_list, delta_list, extraction_method = _extract_price_parts_shop12_dispatch(
+        abs_list, delta_list, extraction_method = _extract_specs_shop12_dispatch(
             remark_for_llm, idx=idx,
         )
 

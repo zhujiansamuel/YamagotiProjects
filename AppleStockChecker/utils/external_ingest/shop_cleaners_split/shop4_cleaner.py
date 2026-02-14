@@ -10,15 +10,15 @@ shop4 清洗器 — モバイルミックス
     │
     ├─ _normalize_amount_text()              ← Step 2: 全角→半角归一化
     │
-    ├─ _parse_color_delta_shop4_regex()      ← Step 3: 正则提取单行色差
+    ├─ _extract_specs_shop4_regex_line()      ← Step 3: 正则提取单行色差
     │
-    ├─ _collect_adjustments_shop4_dispatch() ← Step 4: 模式调度（EXTRACTION_MODE）
+    ├─ _extract_specs_shop4_dispatch() ← Step 4: 模式调度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
-    │   │   └─ _collect_adjustments_shop4_regex()   ← Step 5a: 正则逐行收集
+    │   │   └─ _extract_specs_shop4_regex_block()   ← Step 5a: 正则逐行收集
     │   │
     │   └─ llm 路径:
-    │       ├─ _collect_adjustments_shop4_llm()      ← Step 5b: LLM 核心提取
+    │       ├─ _extract_specs_shop4_llm()             ← Step 5b: LLM 核心提取
     │       └─ Guardrails (coerce + validate)        ← Step 6: 防幻觉过滤
     │
     ├─ _label_matches_color_unified()       ← Step 7: 标签→颜色匹配（cleaner_tools 统一）
@@ -168,7 +168,7 @@ _COLOR_DELTA_RE = re.compile(
     re.VERBOSE,
 )
 
-def _parse_color_delta_shop4_regex(line: str) -> Optional[List[Tuple[str, int]]]:
+def _extract_specs_shop4_regex_line(line: str) -> Optional[List[Tuple[str, int]]]:
     if not line or not isinstance(line, str):
         return None
     s = line.strip()
@@ -240,7 +240,7 @@ def _parse_color_delta_shop4_regex(line: str) -> Optional[List[Tuple[str, int]]]
 _SHOP4_LINE_SPLIT_BY_YEN_SLASH = re.compile(r"円\s*[／/]\s*")
 
 
-def _collect_adjustments_shop4_regex(
+def _extract_specs_shop4_regex_block(
     df: pd.DataFrame, start_idx: int,
 ) -> Tuple[Dict[str, int], List[Tuple[str, int]], Dict[str, str]]:
     """
@@ -277,7 +277,7 @@ def _collect_adjustments_shop4_regex(
             seg = seg.strip()
             if not seg:
                 continue
-            parsed = _parse_color_delta_shop4_regex(seg)
+            parsed = _extract_specs_shop4_regex_line(seg)
             if not parsed:
                 continue
             for label, delta in parsed:
@@ -395,7 +395,7 @@ def _get_shop4_le_examples():
     ]
     return examples
 
-def _lx_extract_color_deltas(text: str) -> list:
+def _extract_specs_shop4_llm_core(text: str) -> list:
     """
     对 text 做一次 LangExtract 抽取，返回 result.extractions（若不可用则空列表）。
     """
@@ -460,7 +460,7 @@ def _get_start_pos(extraction) -> int:
 # Step 6: LLM + Guardrails（仅 LLM 路径使用）
 # ----------------------------------------------------------------------
 
-def _collect_adjustments_shop4_llm_with_guardrails(
+def _extract_specs_shop4_llm(
     df: pd.DataFrame,
     start_idx: int,
     row_index: object = None,
@@ -498,7 +498,7 @@ def _collect_adjustments_shop4_llm_with_guardrails(
     line0_end = len(lines[0]) if lines else 0
 
     try:
-        exts = _lx_extract_color_deltas(block_text)
+        exts = _extract_specs_shop4_llm_core(block_text)
     except Exception as e:
         logger.warning(
             "LangExtract extraction failed",
@@ -583,7 +583,7 @@ def _collect_adjustments_shop4_llm_with_guardrails(
 # Step 7: 提取模式调度
 # ----------------------------------------------------------------------
 
-def _collect_adjustments_shop4_dispatch(
+def _extract_specs_shop4_dispatch(
     df: pd.DataFrame,
     start_idx: int,
     row_index: object = None,
@@ -599,21 +599,21 @@ def _collect_adjustments_shop4_dispatch(
     mode = EXTRACTION_MODE
 
     if mode == "regex":
-        result, ds, cdl = _collect_adjustments_shop4_regex(df, start_idx)
+        result, ds, cdl = _extract_specs_shop4_regex_block(df, start_idx)
         return result, "regex", ds, cdl
 
     if mode == "llm":
-        result, ds, cdl = _collect_adjustments_shop4_llm_with_guardrails(
+        result, ds, cdl = _extract_specs_shop4_llm(
             df, start_idx, row_index=row_index,
         )
         return result, "llm", ds, cdl
 
     # ---- auto: 正則優先，正則無颜色结果时 LLM 兜底 ----
-    regex_result, ds, cdl = _collect_adjustments_shop4_regex(df, start_idx)
+    regex_result, ds, cdl = _extract_specs_shop4_regex_block(df, start_idx)
     if regex_result:
         return regex_result, "regex", ds, cdl
 
-    llm_result, ds, cdl = _collect_adjustments_shop4_llm_with_guardrails(
+    llm_result, ds, cdl = _extract_specs_shop4_llm(
         df, start_idx, row_index=row_index,
     )
     return llm_result, "llm", ds, cdl
@@ -695,7 +695,7 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
 
         # ---- 提取 ----
         _, extraction_method, delta_specs_raw, _ = \
-            _collect_adjustments_shop4_dispatch(df, i, row_index=i)
+            _extract_specs_shop4_dispatch(df, i, row_index=i)
 
         # ---- 收集 block 文本（source_text_raw_full） ----
         # 排除「纯金额行且下一行为机型行」的下一 block 基准价行，避免日志误导

@@ -14,16 +14,16 @@ shop2 清洗器 — 海峡通信
     │
     ├─ _parse_capacity_gb()                  ← Step 4: 容量解析
     │
-    ├─ _parse_adjust_rule_shop2_dispatch()   ← Step 7: 模式调度（EXTRACTION_MODE）
+    ├─ _extract_specs_shop2_dispatch()   ← Step 7: 模式调度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
-    │   │   └─ _parse_adjust_rule_shop2_regex()   ← Step 5: 正则提取规则
+    │   │   └─ _extract_specs_shop2_regex()   ← Step 5: 正则提取规则
     │   │
     │   └─ llm 路径:
-    │       ├─ _parse_adjust_rule_llm()           ← Step 6a: LLM 核心提取
+    │       ├─ _extract_specs_shop2_llm_core()     ← Step 6a: LLM 核心提取
     │       ├─ Guardrail A: label 原文校验         ← Step 6b: 防幻觉过滤
     │       ├─ Guardrail B: amount 原文校验        ← Step 6b: 防幻觉过滤
-    │       └─ _parse_adjust_rule_shop2_regex()   ← Step 6c: 正则补全
+    │       └─ _extract_specs_shop2_regex()   ← Step 6c: 正则补全
     │
     ├─ _label_matches_color_unified()         ← Step 8: 颜色匹配（cleaner_tools 统一）
     │
@@ -187,7 +187,7 @@ def _parse_rule_token_simple(token: str) -> Optional[Tuple[str, int]]:
 # Step 5: 纯正则版规则提取
 # ----------------------------------------------------------------------
 
-def _parse_adjust_rule_shop2_regex(val) -> dict:
+def _extract_specs_shop2_regex(val) -> dict:
     """
     对原始 data5 做正则解析：
     - 按分隔符拆开（换行/+++ / + / 逗号等），逐段用 _parse_rule_token_simple 解析
@@ -294,14 +294,14 @@ else:
 import json
 
 @lru_cache(maxsize=1024)
-def _parse_adjust_rule_llm_core(rule_text: str) -> dict:
+def _extract_specs_shop2_llm_core(rule_text: str) -> dict:
     """LLM 核心提取（无 guardrails），结果被缓存。"""
     s = (rule_text or "").strip()
     if not s:
         return {}
 
     if not _HAS_LANGEXTRACT:
-        return _parse_adjust_rule_shop2_regex(s)
+        return _extract_specs_shop2_regex(s)
 
     try:
         result = lx.extract(
@@ -340,14 +340,14 @@ def _parse_adjust_rule_llm_core(rule_text: str) -> dict:
 
         # LLM 一条都没解析出来就回退
         if not rules:
-            return _parse_adjust_rule_shop2_regex(s)
+            return _extract_specs_shop2_regex(s)
 
         return rules
 
     except Exception:
-        return _parse_adjust_rule_shop2_regex(s)
+        return _extract_specs_shop2_regex(s)
 
-def _parse_adjust_rule_shop2_llm(
+def _extract_specs_shop2_llm(
     val,
     row_index: object = None,
 ) -> dict:
@@ -365,7 +365,7 @@ def _parse_adjust_rule_shop2_llm(
     llm_ok = False
     llm_rules: dict = {}
     try:
-        llm_rules = _parse_adjust_rule_llm_core(s)
+        llm_rules = _extract_specs_shop2_llm_core(s)
         llm_ok = True
     except Exception as e:
         logger.warning(
@@ -397,14 +397,14 @@ def _parse_adjust_rule_shop2_llm(
         filtered_rules[group_label] = int(delta)
 
     # 正则补全：LLM 漏掉的 key 用正则结果补齐
-    supplement = _parse_adjust_rule_shop2_regex(s)
+    supplement = _extract_specs_shop2_regex(s)
     merged = dict(filtered_rules)
     for k, v in supplement.items():
         merged.setdefault(k, v)
 
     # LLM 完全失败时，回退到纯正则
     if (not llm_ok) and (not merged):
-        return _parse_adjust_rule_shop2_regex(s)
+        return _extract_specs_shop2_regex(s)
 
     return merged
 
@@ -412,7 +412,7 @@ def _parse_adjust_rule_shop2_llm(
 # Step 7: 提取模式调度
 # ----------------------------------------------------------------------
 
-def _parse_adjust_rule_shop2_dispatch(
+def _extract_specs_shop2_dispatch(
     val,
     row_index: object = None,
 ) -> Tuple[dict, str]:
@@ -427,19 +427,19 @@ def _parse_adjust_rule_shop2_dispatch(
     mode = EXTRACTION_MODE
 
     if mode == "regex":
-        rules = _parse_adjust_rule_shop2_regex(val)
+        rules = _extract_specs_shop2_regex(val)
         return rules, "regex"
 
     if mode == "llm":
-        rules = _parse_adjust_rule_shop2_llm(val, row_index=row_index)
+        rules = _extract_specs_shop2_llm(val, row_index=row_index)
         return rules, "llm"
 
     # ---- auto: 正则优先，正则无结果时 LLM 兜底 ----
-    regex_rules = _parse_adjust_rule_shop2_regex(val)
+    regex_rules = _extract_specs_shop2_regex(val)
     if regex_rules:
         return regex_rules, "regex"
 
-    llm_rules = _parse_adjust_rule_shop2_llm(val, row_index=row_index)
+    llm_rules = _extract_specs_shop2_llm(val, row_index=row_index)
     return llm_rules, "llm"
 
 # ----------------------------------------------------------------------
@@ -622,7 +622,7 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
             continue
 
         # ---- 提取 ----
-        rules, extraction_method = _parse_adjust_rule_shop2_dispatch(
+        rules, extraction_method = _extract_specs_shop2_dispatch(
             raw_rule, row_index=pos,
         )
 

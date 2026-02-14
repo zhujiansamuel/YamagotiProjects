@@ -10,14 +10,14 @@ shop16 清洗器 — 携帯空間
     │
     ├─ _extract_base_price_shop16()       ← Step 2: 提取基础价
     │
-    ├─ _extract_price_parts_shop16_dispatch()  ← Step 9: 模式调度（EXTRACTION_MODE）
+    ├─ _extract_specs_shop16_dispatch()  ← Step 9: 模式调度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
-    │   │   ├─ _extract_color_deltas_shop16()      ← Step 6a: 正则提取差价
-    │   │   └─ _extract_color_abs_prices_shop16()   ← Step 6b: 正则提取绝对价
+    │   │   ├─ _extract_specs_shop16_regex_deltas()      ← Step 6a: 正则提取差价
+    │   │   └─ _extract_specs_shop16_regex_abs()   ← Step 6b: 正则提取绝对价
     │   │
     │   └─ llm 路径:
-    │       ├─ _lx_extract_price_parts_shop16()     ← Step 7: LLM 核心提取
+    │       ├─ _extract_specs_shop16_llm_core()     ← Step 7: LLM 核心提取
     │       └─ Guardrail A/B/C                      ← Step 8: 防幻觉过滤
     │
     ├─ _label_matches_color_unified()     ← Step 4: 标签→颜色匹配（cleaner_tools 统一）
@@ -163,7 +163,7 @@ _GROUP_SHARED_DELTA_RE = re.compile(
 # Step 6: 正则提取函数
 # ----------------------------------------------------------------------
 
-def _extract_color_deltas_shop16(text: str) -> List[Tuple[str, int]]:
+def _extract_specs_shop16_regex_deltas(text: str) -> List[Tuple[str, int]]:
     """从价格串中抽取多段"颜色±金额"，支持 '青/オレンジ -5000' 这类多标签共用金额。"""
     out: List[Tuple[str, int]] = []
     if not text:
@@ -220,7 +220,7 @@ def _extract_color_deltas_shop16(text: str) -> List[Tuple[str, int]]:
 
     return out
 
-def _extract_color_abs_prices_shop16(text: str) -> List[Tuple[str, int]]:
+def _extract_specs_shop16_regex_abs(text: str) -> List[Tuple[str, int]]:
     """从价格串中抽取"颜色￥绝对价"，如：'黒￥86100/青￥87100'"""
     out: List[Tuple[str, int]] = []
     if not text:
@@ -258,15 +258,15 @@ def _extract_shared_delta_map_shop16(price_text_norm: str) -> Dict[str, int]:
                 out[lb] = delta
     return out
 
-def _extract_price_parts_shop16_regex(
+def _extract_specs_shop16_regex(
     price_text: str,
 ) -> Tuple[Optional[int], List[Tuple[str, int]], List[Tuple[str, int]]]:
     """
     纯正则版：从 price_text 中提取 (base_price, deltas, abs_prices)。
     """
     base_price = _extract_base_price_shop16(price_text)
-    deltas = _extract_color_deltas_shop16(price_text)
-    absps = _extract_color_abs_prices_shop16(price_text)
+    deltas = _extract_specs_shop16_regex_deltas(price_text)
+    absps = _extract_specs_shop16_regex_abs(price_text)
     return base_price, deltas, absps
 
 # ----------------------------------------------------------------------
@@ -436,7 +436,7 @@ def _shop16_price_examples():
     ]
 
 @lru_cache(maxsize=4096)
-def _lx_extract_price_parts_shop16(
+def _extract_specs_shop16_llm_core(
     price_text: str,
 ) -> Tuple[Optional[int], List[Tuple[str, int]], List[Tuple[str, int]], List[dict]]:
     """
@@ -530,7 +530,7 @@ def _lx_extract_price_parts_shop16(
 # Step 8: LLM + Guardrails（仅 LLM 路径使用）
 # ----------------------------------------------------------------------
 
-def _extract_price_parts_shop16_llm_with_guardrails(
+def _extract_specs_shop16_llm(
     price_text: str, idx: object = None,
 ) -> Tuple[Optional[int], List[Tuple[str, int]], List[Tuple[str, int]]]:
     """
@@ -542,7 +542,7 @@ def _extract_price_parts_shop16_llm_with_guardrails(
     llm_ok = False
 
     try:
-        base_llm, deltas, absps, _dbg = _lx_extract_price_parts_shop16(price_text)
+        base_llm, deltas, absps, _dbg = _extract_specs_shop16_llm_core(price_text)
         llm_ok = True
     except Exception as e:
         llm_ok = False
@@ -614,8 +614,8 @@ def _extract_price_parts_shop16_llm_with_guardrails(
 
     # LLM 完全失败且无颜色信息时，回退到正则
     if (not llm_ok) and (not deltas) and (not absps):
-        deltas = _extract_color_deltas_shop16(price_text)
-        absps = _extract_color_abs_prices_shop16(price_text)
+        deltas = _extract_specs_shop16_regex_deltas(price_text)
+        absps = _extract_specs_shop16_regex_abs(price_text)
 
     return base_price, deltas, absps
 
@@ -623,7 +623,7 @@ def _extract_price_parts_shop16_llm_with_guardrails(
 # Step 9: 提取模式调度
 # ----------------------------------------------------------------------
 
-def _extract_price_parts_shop16_dispatch(
+def _extract_specs_shop16_dispatch(
     price_text: str, idx: object = None,
 ) -> Tuple[Optional[int], List[Tuple[str, int]], List[Tuple[str, int]], str]:
     """
@@ -637,21 +637,21 @@ def _extract_price_parts_shop16_dispatch(
     mode = EXTRACTION_MODE
 
     if mode == "regex":
-        bp, deltas, absps = _extract_price_parts_shop16_regex(price_text)
+        bp, deltas, absps = _extract_specs_shop16_regex(price_text)
         return bp, deltas, absps, "regex"
 
     if mode == "llm":
-        bp, deltas, absps = _extract_price_parts_shop16_llm_with_guardrails(
+        bp, deltas, absps = _extract_specs_shop16_llm(
             price_text, idx=idx,
         )
         return bp, deltas, absps, "llm"
 
     # ---- auto: 正则优先，正则无颜色结果时 LLM 兜底 ----
-    bp_re, deltas_re, absps_re = _extract_price_parts_shop16_regex(price_text)
+    bp_re, deltas_re, absps_re = _extract_specs_shop16_regex(price_text)
     if deltas_re or absps_re:
         return bp_re, deltas_re, absps_re, "regex"
 
-    bp_llm, deltas_llm, absps_llm = _extract_price_parts_shop16_llm_with_guardrails(
+    bp_llm, deltas_llm, absps_llm = _extract_specs_shop16_llm(
         price_text, idx=idx,
     )
     # LLM 的 base_price 优先，其次正则的
@@ -726,7 +726,7 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
         price_text = _normalize_price_text_shop16(price_raw)
 
         # 根据 EXTRACTION_MODE 提取价格信息（regex / llm / auto）
-        base_price, deltas, absps, extraction_method = _extract_price_parts_shop16_dispatch(
+        base_price, deltas, absps, extraction_method = _extract_specs_shop16_dispatch(
             price_text, idx=idx,
         )
 

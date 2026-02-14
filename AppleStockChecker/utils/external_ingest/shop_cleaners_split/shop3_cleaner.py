@@ -12,13 +12,13 @@ shop3 清洗器 — 買取一丁目
     │
     ├─ extract_price_yen()                 ← Step 3: 基础价提取（cleaner_tools）
     │
-    ├─ _extract_color_deltas_shop3_dispatch()  ← Step 6: 模式调度（EXTRACTION_MODE）
+    ├─ _extract_specs_shop3_dispatch()  ← Step 6: 模式调度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
-    │   │   └─ _extract_color_deltas_shop3_regex()   ← Step 4: 正则提取差价
+    │   │   └─ _extract_specs_shop3_regex()   ← Step 4: 正则提取差价
     │   │
     │   └─ llm 路径:
-    │       ├─ _extract_color_deltas_shop3_llm_cached()  ← Step 5a: LLM 核心提取
+    │       ├─ _extract_specs_shop3_llm_cached()  ← Step 5a: LLM 核心提取
     │       └─ Guardrails (_parse_delta_int_llm,          ← Step 5b: 防幻觉过滤
     │           _infer_default_sign_from_text)
     │
@@ -118,7 +118,7 @@ _DELTA_PATTERN_LOOSE = re.compile(
     re.UNICODE | re.VERBOSE,
 )
 
-def _extract_color_deltas_shop3_regex(text: str) -> List[Tuple[str, int]]:
+def _extract_specs_shop3_regex(text: str) -> List[Tuple[str, int]]:
     """
     从 text 中提取 (label_raw, delta_int) 多条记录，支持多标签共用金额的写法。
     """
@@ -331,7 +331,7 @@ def _iter_extractions_from_langextract_result(result) -> List[object]:
     return list(getattr(result, "extractions", []) or [])
 
 @lru_cache(maxsize=4096)
-def _extract_color_deltas_shop3_llm_cached(text: str) -> Tuple[Tuple[str, int], ...]:
+def _extract_specs_shop3_llm_cached(text: str) -> Tuple[Tuple[str, int], ...]:
     s = (text or "").strip()
     if not s:
         return tuple()
@@ -388,7 +388,7 @@ def _extract_color_deltas_shop3_llm_cached(text: str) -> Tuple[Tuple[str, int], 
 # Step 5b: LLM + Guardrails（仅 LLM 路径使用）
 # ----------------------------------------------------------------------
 
-def _extract_color_deltas_shop3_llm_with_guardrails(
+def _extract_specs_shop3_llm(
     text: str,
     row_index: object = None,
 ) -> List[Tuple[str, int]]:
@@ -404,7 +404,7 @@ def _extract_color_deltas_shop3_llm_with_guardrails(
         return []
 
     try:
-        result = list(_extract_color_deltas_shop3_llm_cached(s))
+        result = list(_extract_specs_shop3_llm_cached(s))
     except Exception as e:
         logger.warning(
             "LangExtract extraction failed",
@@ -429,7 +429,7 @@ def _extract_color_deltas_shop3_llm_with_guardrails(
 # Step 6: 提取模式调度
 # ----------------------------------------------------------------------
 
-def _extract_color_deltas_shop3_dispatch(
+def _extract_specs_shop3_dispatch(
     text: str,
     row_index: object = None,
 ) -> Tuple[List[Tuple[str, int]], str]:
@@ -444,20 +444,20 @@ def _extract_color_deltas_shop3_dispatch(
     mode = EXTRACTION_MODE
 
     if mode == "regex":
-        return _extract_color_deltas_shop3_regex(text), "regex"
+        return _extract_specs_shop3_regex(text), "regex"
 
     if mode == "llm":
-        result = _extract_color_deltas_shop3_llm_with_guardrails(
+        result = _extract_specs_shop3_llm(
             text, row_index=row_index,
         )
         return result, "llm"
 
     # ---- auto: 正则优先，正则无颜色结果时 LLM 兜底 ----
-    regex_res = _extract_color_deltas_shop3_regex(text)
+    regex_res = _extract_specs_shop3_regex(text)
     if regex_res:
         return regex_res, "regex"
 
-    llm_res = _extract_color_deltas_shop3_llm_with_guardrails(
+    llm_res = _extract_specs_shop3_llm(
         text, row_index=row_index,
     )
     return llm_res, "llm"
@@ -568,7 +568,7 @@ def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
             continue
 
         # ---- 提取 ----
-        deltas, extraction_method = _extract_color_deltas_shop3_dispatch(
+        deltas, extraction_method = _extract_specs_shop3_dispatch(
             rem_text, row_index=i,
         )
 

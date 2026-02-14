@@ -41,7 +41,7 @@ shop17 清洗器 — ゲストモバイル
     │
     ├─ extract_price_yen()         ← Step 2: 基础价提取（cleaner_tools）
     │
-    ├─ _extract_color_deltas_shop17()  ← Step 3: 模式调度（EXTRACTION_MODE）
+    ├─ _extract_specs_shop17_dispatch()  ← Step 3: 模式调度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
     │   │   ├─ _pick_unopened_section()     ← 提取【未開封】段
@@ -50,7 +50,7 @@ shop17 清洗器 — ゲストモバイル
     │   │   └─ COLOR_NONE_RE / COLOR_DELTA_RE  ← なし模式・金额模式
     │   │
     │   └─ llm 路径:
-    │       └─ _extract_color_deltas_shop17_llm()  ← LangExtract 核心提取
+    │       └─ _extract_specs_shop17_llm()  ← LangExtract 核心提取
     │
     ├─ _label_matches_color_unified()  ← Step 4: 标签→颜色匹配（cleaner_tools 统一）
     │
@@ -160,7 +160,7 @@ except Exception:
 # 原 shop17 独立实现已迁移至 cleaner_tools._label_matches_color_unified，
 # 合并 shop3/4/9/11/12/14/15/16/17 逻辑，供所有清洗器共用。
 
-def _extract_color_deltas_shop17_regex(text: str) -> List[Tuple[str, int]]:
+def _extract_specs_shop17_regex(text: str) -> List[Tuple[str, int]]:
     """
     正则版提取 [(label_raw, delta_int)]，作为 LLM 的 fallback，也可以单独使用。
     """
@@ -334,7 +334,7 @@ def _parse_delta_attr_to_int(val) -> Optional[int]:
     except Exception:
         return None
 
-def _extract_color_deltas_shop17_llm(
+def _extract_specs_shop17_llm(
     text: str,
     shop_name: Optional[str] = None,
     cleaner_name: Optional[str] = None,
@@ -415,7 +415,7 @@ def _extract_color_deltas_shop17_llm(
 
     return out
 
-def _extract_color_deltas_shop17(
+def _extract_specs_shop17_dispatch(
     text: str,
     shop_name: Optional[str] = None,
     cleaner_name: Optional[str] = None,
@@ -428,14 +428,14 @@ def _extract_color_deltas_shop17(
     - "auto":  正则优先，正则无结果时 LLM 兜底
     """
     if EXTRACTION_MODE == "regex":
-        return _extract_color_deltas_shop17_regex(text)
+        return _extract_specs_shop17_regex(text)
     elif EXTRACTION_MODE == "llm":
-        return _extract_color_deltas_shop17_llm(text, shop_name, cleaner_name, row_context)
+        return _extract_specs_shop17_llm(text, shop_name, cleaner_name, row_context)
     else:  # auto
-        regex_res = _extract_color_deltas_shop17_regex(text)
+        regex_res = _extract_specs_shop17_regex(text)
         if regex_res:
             return regex_res
-        return _extract_color_deltas_shop17_llm(text, shop_name, cleaner_name, row_context)
+        return _extract_specs_shop17_llm(text, shop_name, cleaner_name, row_context)
 # ----------------------------------------------------------------------
 # 清洗主函数
 # ----------------------------------------------------------------------
@@ -510,7 +510,7 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
         }
 
         # 提取颜色差额
-        labels_and_deltas = _extract_color_deltas_shop17(
+        labels_and_deltas = _extract_specs_shop17_dispatch(
             raw_color_s,
             shop_name=SHOP_NAME,
             cleaner_name=CLEANER_NAME,
@@ -523,7 +523,7 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
         elif EXTRACTION_MODE in ("regex", "llm"):
             extraction_method = EXTRACTION_MODE
         else:  # auto: 需要判断结果来自哪个方法
-            regex_result = _extract_color_deltas_shop17_regex(raw_color_s)
+            regex_result = _extract_specs_shop17_regex(raw_color_s)
             extraction_method = "regex" if regex_result else "llm"
 
         shop_name = SHOP_NAME_OVERRIDE or (urlparse(str(row.get("web-scraper-start-url") or "")).netloc or "shop17")
