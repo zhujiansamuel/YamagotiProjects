@@ -35,8 +35,9 @@ from typing import List, Optional, Tuple
 
 import pandas as pd
 
-from ...external_ingest.helpers import to_int_yen, parse_dt_aware
+from ...external_ingest.helpers import parse_dt_aware
 from ..cleaner_tools import (
+    extract_price_yen,
     _parse_capacity_gb,
     _normalize_model_generic,
     _load_iphone17_info_df_from_db,
@@ -524,7 +525,7 @@ def clean_shop12(df: pd.DataFrame, debug: bool = False) -> pd.DataFrame:
     rows: List[dict] = []
 
     for idx, row in df.iterrows():
-        base_price = to_int_yen(row.get("買取価格"))
+        base_price = extract_price_yen(row.get("買取価格"))
         if base_price is None:
             continue
         base_price = int(base_price)
