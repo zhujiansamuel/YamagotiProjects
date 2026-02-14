@@ -8,7 +8,7 @@ shop2 清洗器 — 海峡通信
     │
     ├─ _is_target()                          ← Step 1: SIMfree+未開封 过滤
     │
-    ├─ _parse_yen()                          ← Step 2: 基础价(data3)解析
+    ├─ _normalize_amount_text()              ← Step 2: 基础价(data3)解析 (cleaner_tools)
     │
     ├─ _pick_model_name_loose()              ← Step 3: 机型宽松匹配
     │
@@ -43,6 +43,7 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
 from ..cleaner_tools import (
+    _normalize_amount_text,
     _parse_capacity_gb,
     _load_iphone17_info_df_from_db,
     _truncate_for_log,
@@ -79,25 +80,6 @@ except Exception:
 # ----------------------------------------------------------------------
 # 辅助工具函数
 # ----------------------------------------------------------------------
-
-_YEN_RE = re.compile(r"[^\d]+")
-
-def _parse_yen(val) -> int | None:
-    """'¥177,000' / '177,000円' / '177000' -> 177000"""
-    if val is None:
-        return None
-    s = str(val).strip()
-    if not s:
-        return None
-    s = _YEN_RE.sub("", s)
-    if not s:
-        return None
-    try:
-        n = int(s)
-        return n
-    except Exception:
-        return None
-
 
 def _norm(s: str) -> str:
     """shop2 专用：strip 归一化，用于 model/color/part_number 等字段"""
@@ -726,7 +708,7 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
             )
             continue
 
-        base_price = _parse_yen(raw_price)
+        base_price = _normalize_amount_text(raw_price)
         if base_price is None:
             logger.debug(
                 "Skipping row: base_price parse failed",
