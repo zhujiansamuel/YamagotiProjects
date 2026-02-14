@@ -1,6 +1,6 @@
 # Shop6 清洗器系列详细流程说明
 
-> 文件路径: `AppleStockChecker/utils/external_ingest/shop_cleaners_split/shop6_1_cleaner.py` ～ `shop6_4_cleaner.py`
+> 文件路径: `AppleStockChecker/utils/external_ingest/shop_cleaners_split/shop6_cleaner.py`（统一实现，shop6_1～4 多注册）
 
 ---
 

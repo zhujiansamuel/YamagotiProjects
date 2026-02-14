@@ -1,6 +1,6 @@
 # Shop5 清洗器（森森買取系列）详细流程说明
 
-> 文件路径: `AppleStockChecker/utils/external_ingest/shop_cleaners_split/shop5_1_cleaner.py` ～ `shop5_4_cleaner.py`
+> 文件路径: `AppleStockChecker/utils/external_ingest/shop_cleaners_split/shop5_cleaner.py`（统一实现，shop5_1～4 多注册）
 > 店铺名称: 森森買取（shop5_1～shop5_4 为同一店铺不同数据源变体）
 
 ---

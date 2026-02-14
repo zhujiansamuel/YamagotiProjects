@@ -9,14 +9,8 @@ from .shop_cleaners_split.shop1_cleaner import clean_shop1
 from .shop_cleaners_split.shop2_cleaner import clean_shop2
 from .shop_cleaners_split.shop3_cleaner import clean_shop3
 from .shop_cleaners_split.shop4_cleaner import clean_shop4
-from .shop_cleaners_split.shop5_1_cleaner import clean_shop5_1
-from .shop_cleaners_split.shop5_2_cleaner import clean_shop5_2
-from .shop_cleaners_split.shop5_3_cleaner import clean_shop5_3
-from .shop_cleaners_split.shop5_4_cleaner import clean_shop5_4
-from .shop_cleaners_split.shop6_1_cleaner import clean_shop6_1
-from .shop_cleaners_split.shop6_2_cleaner import clean_shop6_2
-from .shop_cleaners_split.shop6_3_cleaner import clean_shop6_3
-from .shop_cleaners_split.shop6_4_cleaner import clean_shop6_4
+from .shop_cleaners_split.shop5_cleaner import clean_shop5_1, clean_shop5_2, clean_shop5_3, clean_shop5_4
+from .shop_cleaners_split.shop6_cleaner import clean_shop6_1, clean_shop6_2, clean_shop6_3, clean_shop6_4
 from .shop_cleaners_split.shop7_cleaner import clean_shop7
 from .shop_cleaners_split.shop8_cleaner import clean_shop8
 from .shop_cleaners_split.shop9_cleaner import clean_shop9

@@ -1,26 +1,25 @@
+# -*- coding: utf-8 -*-
+"""
+shop6 统一清洗器（買取ルデヤ · shop6_1～shop6_4）
+
+shop6_1～shop6_4 为同一店铺不同数据源变体，逻辑相同，统一在此实现。
+通过多注册方式供 registry 映射 shop6_1, shop6_2, shop6_3, shop6_4。
+"""
 from __future__ import annotations
-"""
-shop6_4 清洗器 — JAN/PN 解析子模块
-  原始 data 列 → _extract_jan_from_data() / _extract_pn_from_text() → JAN or PN
-  供 shop6 主清洗流程调用
-"""
-from typing import Protocol, Dict, Callable, Optional,List
+
+import os
+import re
+import time
+from pathlib import Path
+from typing import Dict, List, Optional
+
+import pandas as pd
+
 from ...external_ingest.helpers import parse_dt_aware
 from ..cleaner_tools import extract_price_yen
-import os
-from functools import lru_cache
-from pathlib import Path
-import re
-import pandas as pd
-from typing import Optional, Tuple
-from urllib.parse import urlparse
-from typing import Dict, Optional, List, Iterable, Union
-import os, re, json, pathlib
-from datetime import datetime
-import pytz
-import time
 
 _PN_REGEX = re.compile(r"\b[A-Z0-9]{4,6}\d{0,3}J/A\b")
+
 
 def _resolve_info_path() -> Path:
     try:
@@ -35,6 +34,7 @@ def _resolve_info_path() -> Path:
         return Path(envp)
     return Path(__file__).resolve().parents[2] / "data" / "iphone17_info.csv"
 
+
 def _load_jan_to_pn() -> Dict[str, str]:
     """
     返回 { jan(13位字符串) : part_number } 的字典。
@@ -42,7 +42,6 @@ def _load_jan_to_pn() -> Dict[str, str]:
     """
     path = _resolve_info_path()
     if not path.exists():
-        # 没找到映射文件时，仍允许仅走 data8 的 PN 兜底
         return {}
     if re.search(r"\.(xlsx|xlsm|xls|ods)$", str(path), re.I):
         df = pd.read_excel(path)
@@ -50,17 +49,15 @@ def _load_jan_to_pn() -> Dict[str, str]:
         df = pd.read_csv(path, encoding="utf-8-sig")
 
     if "part_number" not in df.columns:
-        # 没有 PN 列，无法映射
         return {}
 
-    # 允许 info 表没有 jan；有则清洗为 13 位
     if "jan" in df.columns:
         df = df.copy()
         df["jan"] = df["jan"].astype(str).str.replace(r"[^\d]", "", regex=True)
         df = df[df["jan"].str.fullmatch(r"\d{13}", na=False)]
-        mapping = dict(zip(df["jan"].astype(str), df["part_number"].astype(str)))
-        return mapping
+        return dict(zip(df["jan"].astype(str), df["part_number"].astype(str)))
     return {}
+
 
 def _extract_pn_from_text(text: object) -> Optional[str]:
     if text is None:
@@ -69,13 +66,22 @@ def _extract_pn_from_text(text: object) -> Optional[str]:
     m = _PN_REGEX.search(s)
     return m.group(0) if m else None
 
-def clean_shop6_4(df: pd.DataFrame) -> pd.DataFrame:
-    print("shop6-4:買取ルデヤ---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+
+def _clean_shop6_kaidoruya(df: pd.DataFrame, variant: str) -> pd.DataFrame:
+    """
+    買取ルデヤ统一清洗逻辑。
+
+    输入列：data7, phone, data8, time-scraped
+    输出列：part_number, shop_name, price_new, recorded_at
+    shop_name 固定 '買取ルデヤ'
+    """
     # 必要列检查
     need_cols = ["data7", "phone", "data8", "time-scraped"]
     for c in need_cols:
         if c not in df.columns:
-            raise ValueError(f"shop6-4 清洗器缺少必要列：{c}")
+            raise ValueError(f"shop6-{variant} 清洗器缺少必要列：{c}")
+
+    print(f"shop6-{variant}:買取ルデヤ---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
 
     # 跳过 time-scraped 为空的行
     src = df.copy()
@@ -84,14 +90,13 @@ def clean_shop6_4(df: pd.DataFrame) -> pd.DataFrame:
     if src.empty:
         return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
 
-    jan_to_pn = _load_jan_to_pn()  # 可能为空字典（允许）
+    jan_to_pn = _load_jan_to_pn()
 
-    # 解析列
+    # 解析列：JAN 从 phone；PN 兜底从 data8
     jan_series = src["phone"].astype(str).str.replace(r"[^\d]", "", regex=True)
     pn_by_jan = jan_series.map(lambda j: jan_to_pn.get(j) if re.fullmatch(r"\d{13}", j or "") else None)
-    pn_fallback = src["data8"].map(_extract_pn_from_text)  # 从 data8 兜底提取 PN
+    pn_fallback = src["data8"].map(_extract_pn_from_text)
 
-    # 价格/时间
     price_new = src["data7"].map(extract_price_yen)
     recorded_at = src["time-scraped"].map(parse_dt_aware)
 
@@ -99,7 +104,7 @@ def clean_shop6_4(df: pd.DataFrame) -> pd.DataFrame:
     rows: List[dict] = []
     for i in range(len(src)):
         pn = pn_by_jan.iat[i] or pn_fallback.iat[i]
-        p  = price_new.iat[i]
+        p = price_new.iat[i]
         ts = recorded_at.iat[i]
         if not pn or p is None:
             continue
@@ -115,3 +120,17 @@ def clean_shop6_4(df: pd.DataFrame) -> pd.DataFrame:
         out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
         out["part_number"] = out["part_number"].astype(str)
     return out
+
+
+def _make_shop6_cleaner(variant: str):
+    """返回绑定 variant 的清洗器，供 registry 多注册。"""
+    def _cleaner(df: pd.DataFrame) -> pd.DataFrame:
+        return _clean_shop6_kaidoruya(df, variant)
+    return _cleaner
+
+
+# 供 registry 直接导入的四个清洗器
+clean_shop6_1 = _make_shop6_cleaner("1")
+clean_shop6_2 = _make_shop6_cleaner("2")
+clean_shop6_3 = _make_shop6_cleaner("3")
+clean_shop6_4 = _make_shop6_cleaner("4")
