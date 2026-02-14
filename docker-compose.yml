@@ -981,6 +981,25 @@ services:
       - celery
       - shop-workers
 
+  # Metabase (数据可视化/验证用)
+  metabase:
+    image: metabase/metabase:latest
+    container_name: ypa_metabase
+    ports:
+      - "3000:3000"
+    environment:
+      # Metabase 内部元数据用 H2 (开发足够, 生产可换 PG)
+      - MB_DB_TYPE=h2
+      - MB_DB_FILE=/metabase-data/metabase.db
+      - JAVA_TIMEZONE=Asia/Tokyo
+    volumes:
+      - ypa_metabase_data:/metabase-data
+    networks:
+      - ypa_network
+    depends_on:
+      - clickhouse
+    restart: unless-stopped
+
   # ClickHouse 单节点 (GPU pipeline 用)
   clickhouse:
     image: clickhouse/clickhouse-server:24-alpine
@@ -1010,6 +1029,8 @@ volumes:
   ypa_media:
     driver: local
   ypa_clickhouse_data:
+    driver: local
+  ypa_metabase_data:
     driver: local
 
 networks:
