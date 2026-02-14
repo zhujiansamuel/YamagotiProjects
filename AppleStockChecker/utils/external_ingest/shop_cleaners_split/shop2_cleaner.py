@@ -10,7 +10,7 @@ shop2 清洗器 — 海峡通信
     │
     ├─ _normalize_amount_text()              ← Step 2: 基础价(data3)解析 (cleaner_tools)
     │
-    ├─ _pick_model_name_loose()              ← Step 3: 机型宽松匹配
+    ├─ _normalize_model_generic()            ← Step 3: 机型规范化（cleaner_tools 统一）
     │
     ├─ _parse_capacity_gb()                  ← Step 4: 容量解析
     │
@@ -45,6 +45,8 @@ from ...external_ingest.helpers import to_int_yen, parse_dt_aware
 from ..cleaner_tools import (
     _normalize_amount_text,
     _parse_capacity_gb,
+    _normalize_model_generic,
+    _build_color_map,
     _load_iphone17_info_df_from_db,
     _truncate_for_log,
     safe_to_text,
@@ -93,45 +95,6 @@ def _norm(s: str) -> str:
 def _is_target(s: str) -> bool:
     s = (s or "").lower()
     return ("simfree" in s) and ("未開封" in s)
-
-# ----------------------------------------------------------------------
-# Step 2: 机型宽松匹配
-# ----------------------------------------------------------------------
-
-def _norm_model_token(s: str) -> str:
-    """
-    将 data2-1 的机型片段"宽松"规范化（仅用于和 iphone17_info 里的 model_name 做宽松匹配）
-    规则：小写、去空格、去多余符号
-    """
-    s = (s or "").lower()
-    s = re.sub(r"iphone\s*", "iphone ", s)
-    s = re.sub(r"[^0-9a-z\s+]", "", s)  # 仅保留 a-z0-9 和空格
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
-
-def _pick_model_name_loose(model_token: str, iphone17_df: pd.DataFrame) -> str | None:
-    """
-    宽松匹配：在 iphone17_df['model_name'] 中选与 token 最匹配的项（不严格 Fuzzy，先简单包含匹配）
-    """
-    token = _norm_model_token(model_token)
-    if not token:
-        return None
-    # 候选（去重）
-    candidates = list(
-        dict.fromkeys([_norm(x) for x in iphone17_df["model_name"].dropna().tolist()])
-    )
-
-    def norm_m(m: str) -> str:
-        return _norm_model_token(m)
-
-    # 简单策略：同样规范化后，包含则命中
-    hits = [m for m in candidates if token in norm_m(m) or norm_m(m) in token]
-    if len(hits) == 1:
-        return hits[0]
-    # 多命中时偏向更长的 model_name（更具体）
-    if hits:
-        return sorted(hits, key=lambda m: len(m), reverse=True)[0]
-    return None
 
 # ----------------------------------------------------------------------
 # Step 3: 颜色组匹配逻辑（黒 -> ブラック 等）
@@ -623,6 +586,7 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
         _log_seq += 1
         raise ValueError("iphone17_info.csv 需要包含 capacity_gb 列")
     info["color"] = info["color"].apply(_norm)
+    color_maps = _build_color_map(info)
 
     logger.debug(
         "After filter",
@@ -675,25 +639,24 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
             )
             continue
 
-        model_name = _pick_model_name_loose(raw_modelcap, info)
+        model_name = _normalize_model_generic(raw_modelcap)
         if not model_name:
             logger.debug(
-                "Skipping row: model_name loose match failed",
+                "Skipping row: model_name normalization failed",
                 extra={
                     "event_type": "row_processing_summary",
                     "shop_name": SHOP_NAME,
                     "cleaner_name": CLEANER_NAME,
                     "row_index": pos,
-                    "skip_reason": "model_name loose match failed",
+                    "skip_reason": "model_name normalization failed",
                     "data2_1_raw": _truncate_for_log(raw_modelcap, 100),
                 },
             )
             continue
 
-        sub = info[
-            (info["model_name"] == model_name) & (info["capacity_gb"] == cap_gb)
-        ].copy()
-        if sub.empty:
+        key = (model_name, int(cap_gb))
+        cmap = color_maps.get(key)
+        if not cmap:
             logger.debug(
                 "Skipping row: no info match for model+capacity",
                 extra={
@@ -735,7 +698,7 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
         delta_specs: List[Tuple[str, int]] = list(rules.items())
 
         # ---- available_colors 列表 ----
-        available_colors_list = sub["color"].dropna().astype(str).unique().tolist()
+        available_colors_list = [raw for _, (_, raw) in cmap.items()]
 
         # ---- extraction_result（§3.1） ----
         logger.debug(
@@ -763,7 +726,7 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
                 "labels_extracted_count": len(delta_specs),
                 "abs_prices_count": 0,
                 "available_colors": available_colors_list,
-                "colors_in_catalog": len(sub),
+                "colors_in_catalog": len(cmap),
             },
         )
         _log_seq += 1
@@ -773,9 +736,7 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
         current_row_records: list[dict] = []
         colors_matched = 0
 
-        for _, it in sub.iterrows():
-            part = _norm(it.get("part_number"))
-            color = _norm(it.get("color"))
+        for _color_norm, (part, color) in cmap.items():
             if not part:
                 logger.debug(
                     "Skip item: empty part_number",
@@ -982,7 +943,7 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
                 "extraction_method": extraction_method,
                 "labels_extracted_count": len(delta_specs),
                 "abs_prices_extracted_count": 0,
-                "colors_in_catalog": len(sub),
+                "colors_in_catalog": len(cmap),
                 "colors_matched_count": colors_matched,
                 "output_records_count": len(current_row_records),
                 "has_discounted_colors": any(v != 0 for v in all_spec_values),
