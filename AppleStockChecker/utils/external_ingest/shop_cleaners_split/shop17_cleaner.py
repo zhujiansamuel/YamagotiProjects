@@ -417,25 +417,45 @@ def _extract_specs_shop17_llm(
 
 def _extract_specs_shop17_dispatch(
     text: str,
+    *,
+    base_price: int,
+    source_text_raw: str,
     shop_name: Optional[str] = None,
     cleaner_name: Optional[str] = None,
-    row_context: Optional[Dict] = None
-) -> List[Tuple[str, int]]:
+    row_context: Optional[Dict] = None,
+) -> PriceDecomposition:
     """
     根据 EXTRACTION_MODE 决定提取方式：
     - "regex": 只用正则
     - "llm":   只用 LLM
-    - "auto":  正则优先，正则无结果时 LLM 兜底
+    - "auto":  正则优先，正则无結果時 LLM 兜底
+
+    返回 PriceDecomposition
     """
     if EXTRACTION_MODE == "regex":
-        return _extract_specs_shop17_regex(text)
+        deltas = _extract_specs_shop17_regex(text)
+        method = "regex"
     elif EXTRACTION_MODE == "llm":
-        return _extract_specs_shop17_llm(text, shop_name, cleaner_name, row_context)
+        deltas = _extract_specs_shop17_llm(text, shop_name, cleaner_name, row_context)
+        method = "llm"
     else:  # auto
-        regex_res = _extract_specs_shop17_regex(text)
-        if regex_res:
-            return regex_res
-        return _extract_specs_shop17_llm(text, shop_name, cleaner_name, row_context)
+        deltas = _extract_specs_shop17_regex(text)
+        if deltas:
+            method = "regex"
+        else:
+            deltas = _extract_specs_shop17_llm(text, shop_name, cleaner_name, row_context)
+            method = "llm"
+
+    if not deltas:
+        method = "none"
+
+    return PriceDecomposition(
+        base_price=base_price,
+        delta_specs=deltas,
+        abs_specs=[],
+        extraction_method=method,
+        source_text_raw=source_text_raw,
+    )
 # ----------------------------------------------------------------------
 # 清洗主函数
 # ----------------------------------------------------------------------
@@ -510,32 +530,17 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
         }
 
         # 提取颜色差额
-        labels_and_deltas = _extract_specs_shop17_dispatch(
+        decomp = _extract_specs_shop17_dispatch(
             raw_color_s,
+            base_price=base_price,
+            source_text_raw=raw_color_s,
             shop_name=SHOP_NAME,
             cleaner_name=CLEANER_NAME,
-            row_context=row_context
+            row_context=row_context,
         )
-
-        # 判断使用的提取方法
-        if not labels_and_deltas:
-            extraction_method = "none"
-        elif EXTRACTION_MODE in ("regex", "llm"):
-            extraction_method = EXTRACTION_MODE
-        else:  # auto: 需要判断结果来自哪个方法
-            regex_result = _extract_specs_shop17_regex(raw_color_s)
-            extraction_method = "regex" if regex_result else "llm"
 
         shop_name = SHOP_NAME_OVERRIDE or (urlparse(str(row.get("web-scraper-start-url") or "")).netloc or "shop17")
         rec_at = parse_dt_aware(row.get("time-scraped"))
-
-        decomp = PriceDecomposition(
-            base_price=base_price,
-            delta_specs=labels_and_deltas,
-            abs_specs=[],
-            extraction_method=extraction_method,
-            source_text_raw=raw_color_s,
-        )
 
         new_rows, _log_seq = resolve_color_prices(
             decomp,

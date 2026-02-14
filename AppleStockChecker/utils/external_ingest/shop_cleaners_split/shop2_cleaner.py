@@ -414,33 +414,43 @@ def _extract_specs_shop2_llm(
 
 def _extract_specs_shop2_dispatch(
     val,
+    *,
+    base_price: int,
+    source_text_raw: str,
     row_index: object = None,
-) -> Tuple[dict, str]:
+) -> PriceDecomposition:
     """
     根据 EXTRACTION_MODE 决定提取方式：
       - "regex": 只用正则
       - "llm":   只用 LLM + Guardrails
       - "auto":  正则优先，正则无结果时 LLM + Guardrails 兜底
 
-    返回 (rules, extraction_method)
+    返回 PriceDecomposition
     """
     mode = EXTRACTION_MODE
 
     if mode == "regex":
         rules = _extract_specs_shop2_regex(val)
-        return rules, "regex"
-
-    if mode == "llm":
+        method = "regex"
+    elif mode == "llm":
         rules = _extract_specs_shop2_llm(val, row_index=row_index)
-        return rules, "llm"
+        method = "llm"
+    else:
+        # ---- auto: 正则優先，正則無結果時 LLM 兜底 ----
+        rules = _extract_specs_shop2_regex(val)
+        if rules:
+            method = "regex"
+        else:
+            rules = _extract_specs_shop2_llm(val, row_index=row_index)
+            method = "llm"
 
-    # ---- auto: 正则优先，正则无结果时 LLM 兜底 ----
-    regex_rules = _extract_specs_shop2_regex(val)
-    if regex_rules:
-        return regex_rules, "regex"
-
-    llm_rules = _extract_specs_shop2_llm(val, row_index=row_index)
-    return llm_rules, "llm"
+    return PriceDecomposition(
+        base_price=base_price,
+        delta_specs=list(rules.items()),
+        abs_specs=[],
+        extraction_method=method,
+        source_text_raw=source_text_raw,
+    )
 
 # ----------------------------------------------------------------------
 # Step 10: 清洗主函数
@@ -622,26 +632,17 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
             continue
 
         # ---- 提取 ----
-        rules, extraction_method = _extract_specs_shop2_dispatch(
-            raw_rule, row_index=pos,
-        )
-
         raw_rule_s = safe_to_text(raw_rule)
-        source_text_raw_full = raw_rule_s
 
-        # ---- delta_specs from rules ----
-        delta_specs: List[Tuple[str, int]] = list(rules.items())
+        decomp = _extract_specs_shop2_dispatch(
+            raw_rule,
+            base_price=base_price,
+            source_text_raw=raw_rule_s,
+            row_index=pos,
+        )
 
         # ---- 过滤空 part_number ----
         cmap_filtered = {cn: (pn, cr) for cn, (pn, cr) in cmap.items() if pn}
-
-        decomp = PriceDecomposition(
-            base_price=base_price,
-            delta_specs=delta_specs,
-            abs_specs=[],
-            extraction_method=extraction_method,
-            source_text_raw=source_text_raw_full,
-        )
 
         new_rows, _log_seq = resolve_color_prices(
             decomp,
