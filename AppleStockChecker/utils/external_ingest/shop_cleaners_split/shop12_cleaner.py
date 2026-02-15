@@ -445,37 +445,61 @@ def _extract_specs_shop12_llm(
 # ----------------------------------------------------------------------
 
 def _extract_specs_shop12_dispatch(
-    remark_for_llm: str, idx: object = None,
-) -> Tuple[List[Tuple[str, int]], List[Tuple[str, int]], str]:
+    remark_for_llm: str,
+    *,
+    base_price: int,
+    source_text_raw: str,
+    idx: object = None,
+) -> PriceDecomposition:
     """
     根据 EXTRACTION_MODE 决定提取方式：
       - "regex": 只用正则
       - "llm":   只用 LLM + Guardrails
       - "auto":  正则优先，正则无颜色结果时 LLM + Guardrails 兜底
 
-    返回 (abs_list, delta_list, extraction_method)
+    返回 PriceDecomposition
     """
     mode = EXTRACTION_MODE
 
     if mode == "regex":
         abs_list, delta_list = _extract_specs_shop12_regex(remark_for_llm)
-        return abs_list, delta_list, "regex"
-
-    if mode == "llm":
+        method = "regex"
+    elif mode == "llm":
         abs_list, delta_list = _extract_specs_shop12_llm(
             remark_for_llm, idx=idx,
         )
-        return abs_list, delta_list, "llm"
+        method = "llm"
+    else:
+        # ---- auto: 正则优先，正则无颜色结果时 LLM 兜底 ----
+        abs_list, delta_list = _extract_specs_shop12_regex(remark_for_llm)
+        if abs_list or delta_list:
+            method = "regex"
+        else:
+            abs_list, delta_list = _extract_specs_shop12_llm(
+                remark_for_llm, idx=idx,
+            )
+            method = "llm"
 
-    # ---- auto: 正则优先，正则无颜色结果时 LLM 兜底 ----
-    abs_re, delta_re = _extract_specs_shop12_regex(remark_for_llm)
-    if abs_re or delta_re:
-        return abs_re, delta_re, "regex"
+    # ---- "全色" delta → 覆盖全部，清空 abs ----
+    delta_specs: List[Tuple[str, int]] = []
+    abs_specs: List[Tuple[str, int]] = list(abs_list)
 
-    abs_llm, delta_llm = _extract_specs_shop12_llm(
-        remark_for_llm, idx=idx,
+    for label_raw, delta_val in delta_list:
+        if str(label_raw).strip() in {"全色", "ALL"}:
+            delta_specs = [("全色", int(delta_val))]
+            abs_specs = []
+            break
+        delta_specs.append((label_raw, int(delta_val)))
+    else:
+        delta_specs = [(lb, int(d)) for lb, d in delta_list]
+
+    return PriceDecomposition(
+        base_price=base_price,
+        delta_specs=delta_specs,
+        abs_specs=abs_specs,
+        extraction_method=method,
+        source_text_raw=source_text_raw,
     )
-    return abs_llm, delta_llm, "llm"
 
 # ----------------------------------------------------------------------
 # Step 6: 标签→颜色匹配（2025-02 替换为 cleaner_tools 统一实现）
@@ -575,35 +599,15 @@ def clean_shop12(df: pd.DataFrame, debug: bool = False) -> pd.DataFrame:
         remark_for_llm = _normalize_remark_for_llm(remark_raw)
         source_text_raw_full = str(remark_raw)
 
-        abs_list, delta_list, extraction_method = _extract_specs_shop12_dispatch(
-            remark_for_llm, idx=idx,
+        decomp = _extract_specs_shop12_dispatch(
+            remark_for_llm,
+            base_price=base_price,
+            source_text_raw=source_text_raw_full,
+            idx=idx,
         )
 
         rec_at = parse_dt_aware(row.get("time-scraped"))
 
-        # ---- 统一为 specs 格式 ----
-        delta_specs: List[Tuple[str, int]] = []
-        abs_specs: List[Tuple[str, int]] = list(abs_list)
-
-        has_all_color = False
-        for label_raw, delta_val in delta_list:
-            if str(label_raw).strip() in {"全色", "ALL"}:
-                delta_specs = [("全色", int(delta_val))]
-                abs_specs = []
-                has_all_color = True
-                break
-            delta_specs.append((label_raw, int(delta_val)))
-
-        if not has_all_color:
-            delta_specs = [(lb, int(d)) for lb, d in delta_list]
-
-        decomp = PriceDecomposition(
-            base_price=base_price,
-            delta_specs=delta_specs,
-            abs_specs=abs_specs,
-            extraction_method=extraction_method,
-            source_text_raw=source_text_raw_full,
-        )
         new_rows, _log_seq = resolve_color_prices(
             decomp, color_map, _label_matches_color_unified,
             shop_name=SHOP_NAME,

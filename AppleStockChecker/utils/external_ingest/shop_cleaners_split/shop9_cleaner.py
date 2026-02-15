@@ -697,65 +697,84 @@ def _extract_specs_shop9_dispatch(
     s_price: str,
     s_color: str,
     color_to_pn: Dict[str, str],
+    *,
+    base_price: Optional[int],
+    source_text_raw: str,
     row_index: object = None,
-) -> Tuple[Dict[str, int], Dict[str, int], str,
-           List[Tuple[str, int]], List[Tuple[str, int]],
-           Dict[str, str], Dict[str, str]]:
+) -> PriceDecomposition:
     """
     根据 EXTRACTION_MODE 决定提取方式：
       - "regex": 只用正则
       - "llm":   只用 LLM + Guardrail
       - "auto":  regex 优先，regex 无颜色结果时 LLM + Guardrail 兜底
 
-    返回 (abs_map, delta_map, extraction_method,
-          abs_specs, delta_specs,
-          color_abs_label_map, color_delta_label_map)
+    返回 PriceDecomposition
     """
     mode = EXTRACTION_MODE
 
     if mode == "regex":
         abs_map, delta_map, abs_specs, delta_specs, cal, cdl = \
             _extract_specs_shop9_regex(s_price, s_color, color_to_pn)
-        # Apply text-based abs overrides (same as original logic)
         overrides = _direct_abs_overrides_for_row(
-            raw_color_text=s_color,
-            color_to_pn=color_to_pn,
+            raw_color_text=s_color, color_to_pn=color_to_pn,
         )
         if overrides:
             for col_norm, v in overrides.items():
                 abs_map[col_norm] = int(v)
-                cal[col_norm] = col_norm
                 abs_specs.append((col_norm, int(v)))
-        return abs_map, delta_map, "regex", abs_specs, delta_specs, cal, cdl
-
-    if mode == "llm":
+        method = "regex"
+    elif mode == "llm":
         abs_map, delta_map, abs_specs, delta_specs, cal, cdl = \
             _extract_specs_shop9_llm(
                 s_price, s_color, color_to_pn, row_index=row_index,
             )
-        return abs_map, delta_map, "llm", abs_specs, delta_specs, cal, cdl
+        method = "llm"
+    else:
+        # ---- auto: regex 优先，regex 无颜色结果时 LLM 兜底 ----
+        abs_map, delta_map, abs_specs, delta_specs, cal, cdl = \
+            _extract_specs_shop9_regex(s_price, s_color, color_to_pn)
+        if abs_map or delta_map:
+            overrides = _direct_abs_overrides_for_row(
+                raw_color_text=s_color, color_to_pn=color_to_pn,
+            )
+            if overrides:
+                for col_norm, v in overrides.items():
+                    abs_map[col_norm] = int(v)
+                    abs_specs.append((col_norm, int(v)))
+            method = "regex"
+        else:
+            abs_map, delta_map, abs_specs, delta_specs, cal, cdl = \
+                _extract_specs_shop9_llm(
+                    s_price, s_color, color_to_pn, row_index=row_index,
+                )
+            method = "llm"
 
-    # ---- auto: regex 优先，regex 无颜色结果时 LLM 兜底 ----
-    abs_map_re, delta_map_re, abs_specs, delta_specs, cal, cdl = \
-        _extract_specs_shop9_regex(s_price, s_color, color_to_pn)
-    if abs_map_re or delta_map_re:
-        # Apply text-based abs overrides
-        overrides = _direct_abs_overrides_for_row(
-            raw_color_text=s_color,
-            color_to_pn=color_to_pn,
-        )
-        if overrides:
-            for col_norm, v in overrides.items():
-                abs_map_re[col_norm] = int(v)
-                cal[col_norm] = col_norm
-                abs_specs.append((col_norm, int(v)))
-        return abs_map_re, delta_map_re, "regex", abs_specs, delta_specs, cal, cdl
+    # ---- "ALL" 归一化 ----
+    final_delta_specs: List[Tuple[str, int]] = list(delta_specs)
+    final_abs_specs: List[Tuple[str, int]] = list(abs_specs)
 
-    abs_map_llm, delta_map_llm, abs_specs, delta_specs, cal, cdl = \
-        _extract_specs_shop9_llm(
-            s_price, s_color, color_to_pn, row_index=row_index,
-        )
-    return abs_map_llm, delta_map_llm, "llm", abs_specs, delta_specs, cal, cdl
+    if "ALL" in delta_map:
+        final_delta_specs = [("全色", delta_map["ALL"])]
+        final_abs_specs = []
+    elif "ALL" in abs_map:
+        final_abs_specs = [("全色", abs_map["ALL"])]
+        final_delta_specs = []
+
+    # ---- base_price=None 时仅 abs 路径有效 ----
+    if base_price is None:
+        decomp_delta: List[Tuple[str, int]] = []
+        decomp_base = 0
+    else:
+        decomp_delta = final_delta_specs
+        decomp_base = base_price
+
+    return PriceDecomposition(
+        base_price=decomp_base,
+        delta_specs=decomp_delta,
+        abs_specs=final_abs_specs,
+        extraction_method=method,
+        source_text_raw=source_text_raw,
+    )
 
 # ----------------------------------------------------------------------
 # Step 8: 清洗主函数
@@ -862,44 +881,14 @@ def clean_shop9(
         source_text_raw_full = f"{s_price} | {s_color}" if s_price and s_color else (s_price or s_color)
 
         # ---- 提取 ----
-        (abs_map, delta_map, extraction_method,
-         abs_specs, delta_specs,
-         _cal, _cdl) = _extract_specs_shop9_dispatch(
-            s_price, s_color, color_to_pn, row_index=i,
-        )
-
-        # ---- "ALL" 归一化 ----
-        has_all_delta = "ALL" in delta_map
-        has_all_abs = "ALL" in abs_map
-
-        final_delta_specs: List[Tuple[str, int]] = list(delta_specs)
-        final_abs_specs: List[Tuple[str, int]] = list(abs_specs)
-
-        if has_all_delta:
-            final_delta_specs = [("全色", delta_map["ALL"])]
-            final_abs_specs = []
-        elif has_all_abs:
-            final_abs_specs = [("全色", abs_map["ALL"])]
-            final_delta_specs = []
-
-        # ---- PriceDecomposition + resolve_color_prices ----
-        # base_price=None 时仅 abs 路径有效（delta/default 无意义）
-        if base_price is None:
-            decomp_delta: List[Tuple[str, int]] = []
-            decomp_emit_default = False
-            decomp_base = 0
-        else:
-            decomp_delta = final_delta_specs
-            decomp_emit_default = True
-            decomp_base = base_price
-
-        decomp = PriceDecomposition(
-            base_price=decomp_base,
-            delta_specs=decomp_delta,
-            abs_specs=final_abs_specs,
-            extraction_method=extraction_method,
+        decomp = _extract_specs_shop9_dispatch(
+            s_price, s_color, color_to_pn,
+            base_price=base_price,
             source_text_raw=source_text_raw_full,
+            row_index=i,
         )
+        decomp_emit_default = base_price is not None
+
         new_rows, _log_seq = resolve_color_prices(
             decomp,
             color_to_pn,

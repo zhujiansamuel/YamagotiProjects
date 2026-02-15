@@ -431,36 +431,43 @@ def _extract_specs_shop3_llm(
 
 def _extract_specs_shop3_dispatch(
     text: str,
+    *,
+    base_price: int,
+    source_text_raw: str,
     row_index: object = None,
-) -> Tuple[List[Tuple[str, int]], str]:
+) -> PriceDecomposition:
     """
     根据 EXTRACTION_MODE 决定提取方式：
       - "regex": 只用正则
       - "llm":   只用 LLM + Guardrails
       - "auto":  正则优先，正则无颜色结果时 LLM + Guardrails 兜底
 
-    返回 (labels_and_deltas, extraction_method)
+    返回 PriceDecomposition
     """
     mode = EXTRACTION_MODE
 
     if mode == "regex":
-        return _extract_specs_shop3_regex(text), "regex"
+        deltas = _extract_specs_shop3_regex(text)
+        method = "regex"
+    elif mode == "llm":
+        deltas = _extract_specs_shop3_llm(text, row_index=row_index)
+        method = "llm"
+    else:
+        # ---- auto: 正则优先，正则无颜色结果时 LLM 兜底 ----
+        deltas = _extract_specs_shop3_regex(text)
+        if deltas:
+            method = "regex"
+        else:
+            deltas = _extract_specs_shop3_llm(text, row_index=row_index)
+            method = "llm"
 
-    if mode == "llm":
-        result = _extract_specs_shop3_llm(
-            text, row_index=row_index,
-        )
-        return result, "llm"
-
-    # ---- auto: 正则优先，正则无颜色结果时 LLM 兜底 ----
-    regex_res = _extract_specs_shop3_regex(text)
-    if regex_res:
-        return regex_res, "regex"
-
-    llm_res = _extract_specs_shop3_llm(
-        text, row_index=row_index,
+    return PriceDecomposition(
+        base_price=base_price,
+        delta_specs=deltas,
+        abs_specs=[],
+        extraction_method=method,
+        source_text_raw=source_text_raw,
     )
-    return llm_res, "llm"
 
 # ----------------------------------------------------------------------
 # Step 7: 标签→颜色匹配（2025-02 替换为 cleaner_tools 统一实现）
@@ -568,20 +575,11 @@ def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
             continue
 
         # ---- 提取 ----
-        deltas, extraction_method = _extract_specs_shop3_dispatch(
-            rem_text, row_index=i,
-        )
-
-        # ---- source_text_raw_full ----
-        source_text_raw_full = rem_text
-
-        # ---- 构建 PriceDecomposition & 调用公共下游函数 ----
-        decomp = PriceDecomposition(
+        decomp = _extract_specs_shop3_dispatch(
+            rem_text,
             base_price=p0,
-            delta_specs=deltas,
-            abs_specs=[],
-            extraction_method=extraction_method,
-            source_text_raw=source_text_raw_full,
+            source_text_raw=rem_text,
+            row_index=i,
         )
         new_rows, _log_seq = resolve_color_prices(
             decomp, cmap, _label_matches_color_unified,

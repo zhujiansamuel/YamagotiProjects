@@ -600,12 +600,12 @@ def _extract_specs_shop14_llm(
 # Step 7-C: Dispatch（三模式路由）
 # ---------------------------------------------------------------------------
 
-def _extract_specs_shop14_dispatch(
+def _extract_specs_shop14_parse(
     text: str,
     mode: str = EXTRACTION_MODE,
 ) -> Tuple[Dict[str, Union[Optional[int], List[Tuple[str, int]]]], str]:
     """
-    三模式路由。
+    单 fragment 三模式路由。
     返回: (parsed_dict, extraction_method)
     parsed_dict = {"all_delta": ..., "abs": [...], "delta": [...]}
     """
@@ -629,6 +629,60 @@ def _extract_specs_shop14_dispatch(
 
     parsed = _extract_specs_shop14_llm(text)
     return parsed, "llm"
+
+
+def _extract_specs_shop14_dispatch(
+    frags: Dict[str, str],
+    combined: str,
+    *,
+    base_price: int,
+    source_text_raw: str,
+) -> PriceDecomposition:
+    """
+    多 fragment 聚合 + PriceDecomposition 構築。
+
+    frags の各値を _extract_specs_shop14_parse() で解析し結果を集約。
+    全 fragment が空の場合は combined テキストで再試行。
+    """
+    agg_all_delta: Optional[int] = None
+    agg_abs: List[Tuple[str, int]] = []
+    agg_delta: List[Tuple[str, int]] = []
+    extraction_method = "none"
+
+    for _col, frag in frags.items():
+        if not frag:
+            continue
+        parsed, method = _extract_specs_shop14_parse(frag)
+        if parsed.get("all_delta") is not None:
+            agg_all_delta = int(parsed["all_delta"])
+        agg_abs.extend(parsed.get("abs") or [])
+        agg_delta.extend(parsed.get("delta") or [])
+        extraction_method = method
+
+    # 兜底：逐列都没抽到，合并串再跑一次
+    if combined and (agg_all_delta is None) and (not agg_abs) and (not agg_delta):
+        parsed2, method2 = _extract_specs_shop14_parse(combined)
+        if parsed2.get("all_delta") is not None:
+            agg_all_delta = int(parsed2["all_delta"])
+        agg_abs.extend(parsed2.get("abs") or [])
+        agg_delta.extend(parsed2.get("delta") or [])
+        extraction_method = method2
+
+    # ---- 全色预处理 ----
+    delta_specs: List[Tuple[str, int]] = list(agg_delta)
+    abs_specs: List[Tuple[str, int]] = list(agg_abs)
+
+    if agg_all_delta is not None:
+        delta_specs = [("全色", agg_all_delta)]
+        abs_specs = []
+
+    return PriceDecomposition(
+        base_price=base_price,
+        delta_specs=delta_specs,
+        abs_specs=abs_specs,
+        extraction_method=extraction_method,
+        source_text_raw=source_text_raw,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -711,46 +765,10 @@ def clean_shop14(df: "pd.DataFrame", debug: bool = True) -> "pd.DataFrame":
 
         combined = " ".join([v for v in frags.values() if v]).strip()
 
-        # ---- 逐列抽取 + 聚合 ----
-        agg_all_delta: Optional[int] = None
-        agg_abs: List[Tuple[str, int]] = []
-        agg_delta: List[Tuple[str, int]] = []
-        extraction_method = "none"
-
-        for col, frag in frags.items():
-            if not frag:
-                continue
-            parsed, method = _extract_specs_shop14_dispatch(frag)
-
-            if parsed.get("all_delta") is not None:
-                agg_all_delta = int(parsed["all_delta"])
-            agg_abs.extend(parsed.get("abs") or [])
-            agg_delta.extend(parsed.get("delta") or [])
-            extraction_method = method
-
-        # 兜底：逐列都没抽到，合并串再跑一次
-        if combined and (agg_all_delta is None) and (not agg_abs) and (not agg_delta):
-            parsed2, method2 = _extract_specs_shop14_dispatch(combined)
-            if parsed2.get("all_delta") is not None:
-                agg_all_delta = int(parsed2["all_delta"])
-            agg_abs.extend(parsed2.get("abs") or [])
-            agg_delta.extend(parsed2.get("delta") or [])
-            extraction_method = method2
-
-        # ---- 全色预处理 + 统一为 specs 格式 ----
-        delta_specs: List[Tuple[str, int]] = list(agg_delta)
-        abs_specs: List[Tuple[str, int]] = list(agg_abs)
-
-        if agg_all_delta is not None:
-            delta_specs = [("全色", agg_all_delta)]
-            abs_specs = []
-
-        # ---- PriceDecomposition + resolve_color_prices ----
-        decomp = PriceDecomposition(
+        # ---- 提取 + 聚合 ----
+        decomp = _extract_specs_shop14_dispatch(
+            frags, combined,
             base_price=base_price,
-            delta_specs=delta_specs,
-            abs_specs=abs_specs,
-            extraction_method=extraction_method,
             source_text_raw=combined,
         )
         new_rows, _log_seq = resolve_color_prices(

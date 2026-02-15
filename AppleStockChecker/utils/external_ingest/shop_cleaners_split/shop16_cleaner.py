@@ -624,39 +624,52 @@ def _extract_specs_shop16_llm(
 # ----------------------------------------------------------------------
 
 def _extract_specs_shop16_dispatch(
-    price_text: str, idx: object = None,
-) -> Tuple[Optional[int], List[Tuple[str, int]], List[Tuple[str, int]], str]:
+    price_text: str, idx: object = None, *, source_text_raw: str,
+) -> PriceDecomposition:
     """
     根据 EXTRACTION_MODE 决定提取方式：
       - "regex": 只用正则
       - "llm":   只用 LLM + Guardrail A/B/C
       - "auto":  正则优先，正则无颜色结果时 LLM + Guardrail 兜底
 
-    返回 (base_price, deltas, abs_prices, extraction_method)
+    返回 PriceDecomposition
     """
     mode = EXTRACTION_MODE
 
     if mode == "regex":
         bp, deltas, absps = _extract_specs_shop16_regex(price_text)
-        return bp, deltas, absps, "regex"
+        method = "regex"
 
-    if mode == "llm":
+    elif mode == "llm":
         bp, deltas, absps = _extract_specs_shop16_llm(
             price_text, idx=idx,
         )
-        return bp, deltas, absps, "llm"
+        method = "llm"
 
-    # ---- auto: 正则优先，正则无颜色结果时 LLM 兜底 ----
-    bp_re, deltas_re, absps_re = _extract_specs_shop16_regex(price_text)
-    if deltas_re or absps_re:
-        return bp_re, deltas_re, absps_re, "regex"
+    else:
+        # ---- auto: 正则优先，正则无颜色结果时 LLM 兜底 ----
+        bp_re, deltas_re, absps_re = _extract_specs_shop16_regex(price_text)
+        if deltas_re or absps_re:
+            bp, deltas, absps, method = bp_re, deltas_re, absps_re, "regex"
+        else:
+            bp_llm, deltas_llm, absps_llm = _extract_specs_shop16_llm(
+                price_text, idx=idx,
+            )
+            # LLM 的 base_price 优先，其次正则的
+            bp = bp_llm if bp_llm is not None else bp_re
+            deltas, absps, method = deltas_llm, absps_llm, "llm"
 
-    bp_llm, deltas_llm, absps_llm = _extract_specs_shop16_llm(
-        price_text, idx=idx,
+    # base_price=None 时不能使用 delta（base+delta 无法计算）
+    if bp is None:
+        deltas = []
+
+    return PriceDecomposition(
+        base_price=bp,
+        delta_specs=deltas,
+        abs_specs=absps,
+        extraction_method=method,
+        source_text_raw=source_text_raw,
     )
-    # LLM 的 base_price 优先，其次正则的
-    bp_final = bp_llm if bp_llm is not None else bp_re
-    return bp_final, deltas_llm, absps_llm, "llm"
 
 # ----------------------------------------------------------------------
 # Step 10: 清洗主函数
@@ -726,29 +739,15 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
         price_text = _normalize_price_text_shop16(price_raw)
 
         # 根据 EXTRACTION_MODE 提取价格信息（regex / llm / auto）
-        base_price, deltas, absps, extraction_method = _extract_specs_shop16_dispatch(
-            price_text, idx=idx,
+        decomp = _extract_specs_shop16_dispatch(
+            price_text, idx=idx, source_text_raw=price_text,
         )
 
         # 没 base 且没 abs：没法落库
-        if base_price is None and not absps:
+        if decomp.base_price is None and not decomp.abs_specs:
             continue
 
-        # base_price=None 时不能使用 delta（base+delta 无法计算），且不能输出 default 行
-        if base_price is None:
-            deltas = []
-            emit_default = False
-        else:
-            emit_default = True
-
-        # 构建 PriceDecomposition
-        decomp = PriceDecomposition(
-            base_price=base_price,
-            delta_specs=deltas,
-            abs_specs=absps,
-            extraction_method=extraction_method,
-            source_text_raw=price_text,
-        )
+        emit_default = decomp.base_price is not None
 
         # 使用公共函数生成输出行（含完整日志）
         new_rows, _log_seq = resolve_color_prices(

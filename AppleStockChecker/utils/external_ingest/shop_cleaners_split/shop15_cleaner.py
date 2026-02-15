@@ -641,39 +641,53 @@ def _extract_specs_shop15_llm(
 # ----------------------------------------------------------------------
 
 def _extract_specs_shop15_dispatch(
-    price_text: str, idx: object = None,
-) -> Tuple[Optional[int], List[Tuple[str, str, int]], str]:
+    price_text: str, idx: object = None, *, source_text_raw: str,
+) -> PriceDecomposition:
     """
     根据 EXTRACTION_MODE 决定提取方式：
       - "regex": 只用正则
       - "llm":   只用 LLM + 纠错
       - "auto":  正则优先，正则无 specs 时 LLM 兜底
 
-    返回 (base_price, specs, extraction_method)
+    返回 PriceDecomposition。
     """
     mode = EXTRACTION_MODE
 
     if mode == "regex":
         bp, specs = _extract_specs_shop15_regex(price_text)
-        return bp, specs, "regex"
+        method = "regex"
 
-    if mode == "llm":
+    elif mode == "llm":
         bp, specs = _extract_specs_shop15_llm(
             price_text, idx=idx,
         )
-        return bp, specs, "llm"
+        method = "llm"
 
-    # ---- auto: 正则优先，正则无 specs 时 LLM 兜底 ----
-    bp_re, specs_re = _extract_specs_shop15_regex(price_text)
-    if specs_re:
-        return bp_re, specs_re, "regex"
+    else:
+        # ---- auto: 正则优先，正则无 specs 时 LLM 兜底 ----
+        bp_re, specs_re = _extract_specs_shop15_regex(price_text)
+        if specs_re:
+            bp, specs, method = bp_re, specs_re, "regex"
+        else:
+            bp_llm, specs_llm = _extract_specs_shop15_llm(
+                price_text, idx=idx,
+            )
+            # LLM 的 base_price 优先，其次正则的
+            bp = bp_llm if bp_llm is not None else bp_re
+            specs, method = specs_llm, "llm"
 
-    bp_llm, specs_llm = _extract_specs_shop15_llm(
-        price_text, idx=idx,
+    delta_specs = [(label, value) for label, kind, value in specs if kind == "delta"]
+    abs_specs = [(label, value) for label, kind, value in specs if kind == "abs"]
+    if bp is None:
+        delta_specs = []
+
+    return PriceDecomposition(
+        base_price=bp,
+        delta_specs=delta_specs,
+        abs_specs=abs_specs,
+        extraction_method=method,
+        source_text_raw=source_text_raw,
     )
-    # LLM 的 base_price 优先，其次正则的
-    bp_final = bp_llm if bp_llm is not None else bp_re
-    return bp_final, specs_llm, "llm"
 
 
 # ----------------------------------------------------------------------
@@ -739,27 +753,8 @@ def clean_shop15(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
         price_text_s = "" if price_text is None else str(price_text)
 
         # 根据 EXTRACTION_MODE 提取价格信息
-        base_price, specs, extraction_method = _extract_specs_shop15_dispatch(
-            price_text_s, idx=i,
-        )
-
-        # 按类型拆分 specs
-        delta_specs = [(label, value) for label, kind, value in specs if kind == "delta"]
-        abs_specs = [(label, value) for label, kind, value in specs if kind == "abs"]
-
-        # base_price=None 时不能使用 delta（base+delta 无法计算）
-        if base_price is None:
-            delta_specs = []
-
+        decomp = _extract_specs_shop15_dispatch(price_text_s, idx=i, source_text_raw=price_text_s)
         rec_at = parse_dt_aware(row.get("time-scraped"))
-
-        decomp = PriceDecomposition(
-            base_price=base_price,
-            delta_specs=delta_specs,
-            abs_specs=abs_specs,
-            extraction_method=extraction_method,
-            source_text_raw=price_text_s,
-        )
 
         new_rows, _log_seq = resolve_color_prices(
             decomp,
