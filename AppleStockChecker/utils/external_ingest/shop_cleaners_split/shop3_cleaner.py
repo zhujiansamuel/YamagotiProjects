@@ -54,7 +54,10 @@ from ..cleaner_tools import (
     assemble_output_df,
     log_cleaner_start,
     log_cleaner_complete,
+    log_llm_extraction_error,
     validate_columns,
+    lx,
+    HAS_LANGEXTRACT,
     LABEL_SPLIT_RE_shop3 as _LABEL_SPLIT_RE,
     OLLAMA_URL,
     OLLAMA_MODEL_ID,
@@ -73,13 +76,8 @@ SHOP_NAME = "買取一丁目"
 # DEBUG 功能现在由 logging 级别控制（在 settings.py 的 LOGGING 配置中）
 # 控制台显示 INFO 级别（简洁），文件记录 DEBUG 级别（详细）
 
-# --- LangExtract (LLM 抽取) ---
-try:
-    import langextract as lx
-    _HAS_LANGEXTRACT = True
-except Exception:
-    lx = None
-    _HAS_LANGEXTRACT = False
+# LangExtract (LLM 抽取)
+# lx / HAS_LANGEXTRACT 从 cleaner_tools 统一导入
 
 # ----------------------------------------------------------------------
 # 辅助工具函数
@@ -256,7 +254,7 @@ def _parse_delta_int_llm(x: object, default_sign: Optional[int]) -> Optional[int
     return int(explicit_sign * amt)
 
 # LLM prompt & examples (only available when langextract is installed)
-if _HAS_LANGEXTRACT:
+if HAS_LANGEXTRACT:
     _SHOP3_COLOR_DELTA_PROMPT = textwrap.dedent("""\
         你将看到一个很短的"备注/减价1"字符串，来源于日本二手回收价格表。
         目标：抽取"颜色标签 -> 价格差额(人民币/日元中的日元JPY)"的映射。
@@ -404,26 +402,15 @@ def _extract_specs_shop3_llm(
     if not s:
         return []
 
-    if not _HAS_LANGEXTRACT or lx is None:
+    if not HAS_LANGEXTRACT or lx is None:
         return []
 
     try:
         result = list(_extract_specs_shop3_llm_cached(s))
     except Exception as e:
-        logger.warning(
-            "LangExtract extraction failed",
-            extra={
-                "event_type": "llm_extraction_error",
-                "shop_name": SHOP_NAME,
-                "cleaner_name": CLEANER_NAME,
-                "error": str(e),
-                "error_type": type(e).__name__,
-                "model_id": OLLAMA_MODEL_ID,
-                "model_url": OLLAMA_URL,
-                "row_index": row_index,
-                "text_length": len(s),
-                "text_preview": _truncate_for_log(s, 100),
-            },
+        log_llm_extraction_error(
+            logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+            error=e, text=s, row_index=row_index,
         )
         return []
 

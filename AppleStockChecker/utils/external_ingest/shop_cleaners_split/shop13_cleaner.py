@@ -10,24 +10,18 @@ shop13 清洗器 — 家電市場
     ├─ _load_iphone17_info_df_from_db()  ← Step 4: 机型信息（cleaner_tools）
     └─ clean_shop13()              ← Step 5: 主函数，输出 part_number / price_new / recorded_at
 """
-from typing import Protocol, Dict, Callable, Optional,List
-from ...external_ingest.helpers import parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db, extract_price_yen, assemble_output_df, validate_columns
-import os
-from functools import lru_cache
-from pathlib import Path
-import re
+from typing import List
+import logging
+
 import pandas as pd
-from typing import Optional, Tuple
-from urllib.parse import urlparse
-from typing import Dict, Optional, List, Iterable, Union
-import os, re, json, pathlib
-from datetime import datetime
-import pytz
-import time
+
+from ...external_ingest.helpers import parse_dt_aware
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db, extract_price_yen, assemble_output_df, validate_columns, log_cleaner_start
+
+logger = logging.getLogger(__name__)
 
 def clean_shop13(df: pd.DataFrame) -> pd.DataFrame:
-    print("shop13:家電市場---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+    log_cleaner_start(logger, cleaner_name="shop13", shop_name="家電市場", input_rows=len(df))
     """
     输入列（来自 shop13.csv）：
       - 「新品価格」: 价格（可能含 '円'、'¥'、'～'、'万' 等）

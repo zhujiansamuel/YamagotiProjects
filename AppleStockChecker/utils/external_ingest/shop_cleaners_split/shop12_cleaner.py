@@ -44,6 +44,7 @@ from ..cleaner_tools import (
     _build_color_map,
     _truncate_for_log,
     _norm_strip,
+    _normalize_amount_text,
     normalize_text_basic,
     PriceDecomposition,
     resolve_color_prices,
@@ -53,6 +54,9 @@ from ..cleaner_tools import (
     log_cleaner_complete,
     validate_columns,
     log_row_skip,
+    lx,
+    HAS_LANGEXTRACT,
+    log_llm_extraction_error,
     LABEL_SPLIT_RE_shop12,
     OLLAMA_URL,
     OLLAMA_MODEL_ID,
@@ -103,21 +107,8 @@ def _normalize_remark_for_llm(remark_raw: str) -> str:
 # Step 2: 数字归一化（含全角）
 # ----------------------------------------------------------------------
 
-def _norm_amount_to_int(s: str) -> Optional[int]:
-    """
-    解析金额文本，使用通用规范化函数
-    """
-    if s is None:
-        return None
-    # 使用通用规范化（全角→半角 + 去换行 + 合并空格）
-    tt = normalize_text_basic(str(s))
-    m = re.search(r"([0-9][0-9,]*)", tt)
-    if not m:
-        return None
-    try:
-        return int(m.group(1).replace(",", ""))
-    except Exception:
-        return None
+# _norm_amount_to_int は cleaner_tools._normalize_amount_text に統一
+_norm_amount_to_int = _normalize_amount_text
 
 # ----------------------------------------------------------------------
 # Step 3: 正则提取函数
@@ -212,7 +203,6 @@ _LX_PROMPT = textwrap.dedent(r"""
 """).strip()
 
 def _lx_examples():
-    import langextract as lx
     return [
         lx.data.ExampleData(
             text="orange-1000円",
@@ -281,9 +271,10 @@ def _extract_specs_shop12_llm_core(remark_for_llm: str) -> Tuple[List[Tuple[str,
     if not remark_for_llm:
         return [], [], []
 
-    try:
-        import langextract as lx
+    if not HAS_LANGEXTRACT:
+        return [], [], []
 
+    try:
         llm_input = "色別価格ルール:\n" + remark_for_llm
 
         res = lx.extract(
@@ -402,18 +393,7 @@ def _extract_specs_shop12_llm_core(remark_for_llm: str) -> Tuple[List[Tuple[str,
         return abs_list, delta_list, llm_dbg
 
     except Exception as e:
-        logger.warning(
-            "LangExtract extraction failed",
-            extra={
-                "event_type": "llm_extraction_error",
-                "shop_name": SHOP_NAME,
-                "cleaner_name": CLEANER_NAME,
-                "error": str(e),
-                "error_type": type(e).__name__,
-                "text_length": len(remark_for_llm),
-                "text_preview": _truncate_for_log(remark_for_llm, 100),
-            }
-        )
+        log_llm_extraction_error(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, error=e, text=remark_for_llm, row_index=None)
         return [], [], []
 
 def _extract_specs_shop12_llm(

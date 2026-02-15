@@ -52,7 +52,10 @@ from ..cleaner_tools import (
     assemble_output_df,
     log_cleaner_start,
     log_cleaner_complete,
+    log_llm_extraction_error,
     validate_columns,
+    lx,
+    HAS_LANGEXTRACT,
     LABEL_SPLIT_RE_shop4 as LABEL_SPLIT_RE,
     OLLAMA_URL,
     OLLAMA_MODEL_ID,
@@ -298,15 +301,12 @@ def _extract_specs_shop4_regex_block(
 # Step 5b: LLM 核心提取
 # ----------------------------------------------------------------------
 
-try:
-    import langextract as lx
+# lx / HAS_LANGEXTRACT 从 cleaner_tools 统一导入
+if HAS_LANGEXTRACT:
     from langextract.data import ExampleData, Extraction
-    _HAS_LANGEXTRACT = True
-except Exception:
-    lx = None
+else:
     ExampleData = None
     Extraction = None
-    _HAS_LANGEXTRACT = False
 
 _SHOP4_LE_PROMPT = textwrap.dedent("""\
 You are extracting structured information from a Japanese iPhone pricing table.
@@ -327,7 +327,7 @@ Rules:
 
 @lru_cache()
 def _get_shop4_le_examples():
-    if not _HAS_LANGEXTRACT:
+    if not HAS_LANGEXTRACT:
         return []
 
     examples = [
@@ -403,10 +403,8 @@ def _extract_specs_shop4_llm_core(text: str) -> list:
     """
     对 text 做一次 LangExtract 抽取，返回 result.extractions（若不可用则空列表）。
     """
-    if not (_HAS_LANGEXTRACT and isinstance(text, str) and text.strip()):
+    if not (HAS_LANGEXTRACT and isinstance(text, str) and text.strip()):
         return []
-
-    import langextract as lx
 
     kwargs = dict(
         text_or_documents=text,
@@ -504,20 +502,9 @@ def _extract_specs_shop4_llm(
     try:
         exts = _extract_specs_shop4_llm_core(block_text)
     except Exception as e:
-        logger.warning(
-            "LangExtract extraction failed",
-            extra={
-                "event_type": "llm_extraction_error",
-                "shop_name": SHOP_NAME,
-                "cleaner_name": CLEANER_NAME,
-                "error": str(e),
-                "error_type": type(e).__name__,
-                "model_id": OLLAMA_MODEL_ID,
-                "model_url": OLLAMA_URL,
-                "row_index": row_index,
-                "text_length": len(block_text),
-                "text_preview": _truncate_for_log(block_text, 100),
-            },
+        log_llm_extraction_error(
+            logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+            error=e, text=block_text, row_index=row_index,
         )
         return _empty
 

@@ -51,6 +51,9 @@ from ..cleaner_tools import (
     log_cleaner_start,
     log_cleaner_complete,
     validate_columns,
+    lx,
+    HAS_LANGEXTRACT,
+    log_llm_extraction_error,
 )
 
 # 初始化 logger
@@ -63,12 +66,7 @@ logger = logging.getLogger(__name__)
 # 配置
 # ----------------------------------------------------------------------
 
-try:
-    import langextract as lx
-    _LANGEXTRACT_OK = True
-except Exception:
-    lx = None
-    _LANGEXTRACT_OK = False
+# lx / HAS_LANGEXTRACT 从 cleaner_tools 统一导入
 
 MODEL_COL = "data2"
 PRICE_COL = "price"
@@ -404,7 +402,7 @@ def _extract_specs_shop15_llm_core(
         kind in {"delta","abs"}
         yen_value: delta 为 signed, abs 为正数
     """
-    if not _LANGEXTRACT_OK:
+    if not HAS_LANGEXTRACT:
         return None, []
 
     examples = _shop15_langextract_examples()
@@ -608,21 +606,7 @@ def _extract_specs_shop15_llm(
         )
         llm_ok = True
     except Exception as e:
-        logger.warning(
-            "LangExtract extraction failed",
-            extra={
-                "event_type": "llm_extraction_error",
-                "shop_name": "買取当番",
-                "cleaner_name": "shop15",
-                "error": str(e),
-                "error_type": type(e).__name__,
-                "model_id": OLLAMA_MODEL_ID,
-                "model_url": OLLAMA_URL,
-                "row_index": idx,
-                "text_length": len(price_text),
-                "text_preview": _truncate_for_log(price_text, 100),
-            }
-        )
+        log_llm_extraction_error(logger, cleaner_name="shop15", shop_name="買取当番", error=e, text=price_text, row_index=idx)
 
     # 兜底：LLM 没给 base，就自己从开头 regex 抓
     if base_price is None:

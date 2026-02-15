@@ -43,6 +43,9 @@ from ..cleaner_tools import (
     assemble_output_df,
     log_cleaner_start,
     log_cleaner_complete,
+    lx,
+    HAS_LANGEXTRACT,
+    log_llm_extraction_error,
     LABEL_SPLIT_RE_shop14,
     OLLAMA_URL,
     OLLAMA_MODEL_ID,
@@ -326,8 +329,6 @@ def _extract_specs_shop14_regex(
 
 @lru_cache(maxsize=1)
 def _extract_specs_shop14_lx_prompt():
-    import langextract as lx
-
     prompt = textwrap.dedent(
         """\
         你是信息抽取系统。请从输入文本中抽取"按颜色的价格规则（円）"。
@@ -444,8 +445,6 @@ def _extract_specs_shop14_llm_core(
     s = _clean_remark_frag(text)
     if not s:
         return out
-
-    import langextract as lx
 
     prompt, examples = _extract_specs_shop14_lx_prompt()
 
@@ -579,18 +578,7 @@ def _extract_specs_shop14_llm(
     try:
         parsed = _extract_specs_shop14_llm_core(text)
     except Exception as exc:
-        logger.warning(
-            "LLM extraction failed, returning empty",
-            extra={
-                "event_type": "llm_extraction_error",
-                "shop_name": SHOP_NAME,
-                "cleaner_name": CLEANER_NAME,
-                "error": str(exc),
-                "text_snippet": _truncate_for_log(text, 120),
-                "model_id": OLLAMA_MODEL_ID,
-                "model_url": OLLAMA_URL,
-            },
-        )
+        log_llm_extraction_error(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, error=exc, text=text)
         return {"all_delta": None, "abs": [], "delta": []}
 
     return {
