@@ -57,7 +57,10 @@ from ..cleaner_tools import (
     log_cleaner_start,
     log_cleaner_complete,
     log_row_skip,
+    log_llm_extraction_error,
     validate_columns,
+    lx,
+    HAS_LANGEXTRACT,
     OLLAMA_URL,
     OLLAMA_MODEL_ID,
     EXTRACTION_MODE,
@@ -79,13 +82,8 @@ SHOP_NAME = "海峡通信"
 # 配置
 # ----------------------------------------------------------------------
 
-# LangExtract + Ollama (本地 LLM) 集成，OLLAMA 配置见 cleaner_tools
-try:
-    import langextract as lx
-    _HAS_LANGEXTRACT = True
-except Exception:
-    lx = None
-    _HAS_LANGEXTRACT = False
+# LangExtract + Ollama (本地 LLM) 集成
+# lx / HAS_LANGEXTRACT 从 cleaner_tools 统一导入
 
 # ----------------------------------------------------------------------
 # 辅助工具函数
@@ -236,7 +234,7 @@ def _extract_specs_shop2_regex(val) -> dict:
 # Step 6: LLM + Guardrails 版规则提取
 # ----------------------------------------------------------------------
 
-if _HAS_LANGEXTRACT:
+if HAS_LANGEXTRACT:
     _COLOR_RULE_PROMPT = textwrap.dedent(
         """\
         あなたは中古スマホ買取表の「色ごとの減額条件」を解析するツールです。
@@ -305,7 +303,7 @@ def _extract_specs_shop2_llm_core(rule_text: str) -> dict:
     if not s:
         return {}
 
-    if not _HAS_LANGEXTRACT:
+    if not HAS_LANGEXTRACT:
         return _extract_specs_shop2_regex(s)
 
     try:
@@ -373,20 +371,9 @@ def _extract_specs_shop2_llm(
         llm_rules = _extract_specs_shop2_llm_core(s)
         llm_ok = True
     except Exception as e:
-        logger.warning(
-            "LangExtract extraction failed",
-            extra={
-                "event_type": "llm_extraction_error",
-                "shop_name": SHOP_NAME,
-                "cleaner_name": CLEANER_NAME,
-                "error": str(e),
-                "error_type": type(e).__name__,
-                "model_id": OLLAMA_MODEL_ID,
-                "model_url": OLLAMA_URL,
-                "row_index": row_index,
-                "text_length": len(s),
-                "text_preview": _truncate_for_log(s, 100),
-            },
+        log_llm_extraction_error(
+            logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+            error=e, text=s, row_index=row_index,
         )
 
     # Guardrail A & B: label/amount 必须在原文出现

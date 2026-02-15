@@ -53,6 +53,9 @@ from ..cleaner_tools import (
     log_cleaner_complete,
     validate_columns,
     log_row_skip,
+    lx,
+    HAS_LANGEXTRACT,
+    log_llm_extraction_error,
     LABEL_SPLIT_RE_shop12,
     OLLAMA_URL,
     OLLAMA_MODEL_ID,
@@ -212,7 +215,6 @@ _LX_PROMPT = textwrap.dedent(r"""
 """).strip()
 
 def _lx_examples():
-    import langextract as lx
     return [
         lx.data.ExampleData(
             text="orange-1000円",
@@ -281,9 +283,10 @@ def _extract_specs_shop12_llm_core(remark_for_llm: str) -> Tuple[List[Tuple[str,
     if not remark_for_llm:
         return [], [], []
 
-    try:
-        import langextract as lx
+    if not HAS_LANGEXTRACT:
+        return [], [], []
 
+    try:
         llm_input = "色別価格ルール:\n" + remark_for_llm
 
         res = lx.extract(
@@ -402,18 +405,7 @@ def _extract_specs_shop12_llm_core(remark_for_llm: str) -> Tuple[List[Tuple[str,
         return abs_list, delta_list, llm_dbg
 
     except Exception as e:
-        logger.warning(
-            "LangExtract extraction failed",
-            extra={
-                "event_type": "llm_extraction_error",
-                "shop_name": SHOP_NAME,
-                "cleaner_name": CLEANER_NAME,
-                "error": str(e),
-                "error_type": type(e).__name__,
-                "text_length": len(remark_for_llm),
-                "text_preview": _truncate_for_log(remark_for_llm, 100),
-            }
-        )
+        log_llm_extraction_error(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, error=e, text=remark_for_llm, row_index=None)
         return [], [], []
 
 def _extract_specs_shop12_llm(

@@ -57,7 +57,10 @@ from ..cleaner_tools import (
     log_cleaner_start,
     log_cleaner_complete,
     log_row_skip,
+    log_llm_extraction_error,
     validate_columns,
+    lx,
+    HAS_LANGEXTRACT,
 )
 
 # 初始化 logger
@@ -464,8 +467,6 @@ def _shop9_lx_examples():
     - "全色 +/-"
     - "每色 +/-"
     """
-    import langextract as lx
-
     return [
         lx.data.ExampleData(
             text="買取価格: 195,500円\n色・詳細等: 未開 橙194,500/青,銀195,500",
@@ -553,9 +554,7 @@ def _extract_specs_shop9_llm_core(
       color_abs_label_map, color_delta_label_map
     """
     _empty = ({}, {}, [], [], {}, {})
-    try:
-        import langextract as lx
-    except Exception:
+    if not HAS_LANGEXTRACT:
         return _empty
 
     available_colors = list(avail_colors_key)
@@ -665,20 +664,9 @@ def _extract_specs_shop9_llm(
          color_abs_label_map, color_delta_label_map) = _extract_specs_shop9_llm_core(
             s_price, s_color, avail_colors_key)
     except Exception as e:
-        logger.warning(
-            "LangExtract extraction failed",
-            extra={
-                "event_type": "llm_extraction_error",
-                "shop_name": SHOP_NAME,
-                "cleaner_name": CLEANER_NAME,
-                "error": str(e),
-                "error_type": type(e).__name__,
-                "model_id": OLLAMA_MODEL_ID,
-                "model_url": OLLAMA_URL,
-                "row_index": row_index,
-                "text_length": len(s_color),
-                "text_preview": _truncate_for_log(s_color, 100),
-            }
+        log_llm_extraction_error(
+            logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+            error=e, text=s_color, row_index=row_index,
         )
 
     # 关键新增：用原始 raw_color 文本对 abs_map 做"颜色级别"的覆盖修正

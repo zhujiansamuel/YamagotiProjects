@@ -7,56 +7,16 @@ shop6_1～shop6_4 为同一店铺不同数据源变体，逻辑相同，统一�
 """
 from __future__ import annotations
 
-import os
 import re
 import time
-from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import pandas as pd
 
 from ...external_ingest.helpers import parse_dt_aware
-from ..cleaner_tools import extract_price_yen, assemble_output_df, validate_columns
+from ..cleaner_tools import extract_price_yen, assemble_output_df, validate_columns, _load_jan_to_pn_from_csv
 
 _PN_REGEX = re.compile(r"\b[A-Z0-9]{4,6}\d{0,3}J/A\b")
-
-
-def _resolve_info_path() -> Path:
-    try:
-        from django.conf import settings
-        p = getattr(settings, "EXTERNAL_IPHONE17_INFO_PATH", None)
-        if p:
-            return Path(p)
-    except Exception:
-        pass
-    envp = os.getenv("IPHONE17_INFO_CSV")
-    if envp and Path(envp).exists():
-        return Path(envp)
-    return Path(__file__).resolve().parents[2] / "data" / "iphone17_info.csv"
-
-
-def _load_jan_to_pn() -> Dict[str, str]:
-    """
-    返回 { jan(13位字符串) : part_number } 的字典。
-    若 info 文件没有 jan 列，则返回空字典（后续走 data8 的 PN 兜底）。
-    """
-    path = _resolve_info_path()
-    if not path.exists():
-        return {}
-    if re.search(r"\.(xlsx|xlsm|xls|ods)$", str(path), re.I):
-        df = pd.read_excel(path)
-    else:
-        df = pd.read_csv(path, encoding="utf-8-sig")
-
-    if "part_number" not in df.columns:
-        return {}
-
-    if "jan" in df.columns:
-        df = df.copy()
-        df["jan"] = df["jan"].astype(str).str.replace(r"[^\d]", "", regex=True)
-        df = df[df["jan"].str.fullmatch(r"\d{13}", na=False)]
-        return dict(zip(df["jan"].astype(str), df["part_number"].astype(str)))
-    return {}
 
 
 def _extract_pn_from_text(text: object) -> Optional[str]:
@@ -88,7 +48,7 @@ def _clean_shop6_kaidoruya(df: pd.DataFrame, variant: str) -> pd.DataFrame:
     if src.empty:
         return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
 
-    jan_to_pn = _load_jan_to_pn()
+    jan_to_pn = _load_jan_to_pn_from_csv()
 
     # 解析列：JAN 从 phone；PN 兜底从 data8
     jan_series = src["phone"].astype(str).str.replace(r"[^\d]", "", regex=True)

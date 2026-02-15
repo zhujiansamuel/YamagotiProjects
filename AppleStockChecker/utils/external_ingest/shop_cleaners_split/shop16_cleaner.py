@@ -54,6 +54,9 @@ from ..cleaner_tools import (
     log_cleaner_start,
     log_cleaner_complete,
     validate_columns,
+    lx,
+    HAS_LANGEXTRACT,
+    log_llm_extraction_error,
 )
 
 # 初始化 logger
@@ -324,8 +327,6 @@ def _to_signed_int_yen(x: object) -> Optional[int]:
     return int(amt) if amt is not None else None
 
 def _shop16_price_examples():
-    import langextract as lx
-
     return [
         lx.data.ExampleData(
             text="86,100円 黒:-1,000円 青:+500円",
@@ -454,10 +455,8 @@ def _extract_specs_shop16_llm_core(
     if not s:
         return None, [], [], []
 
-    try:
-        import langextract as lx
-    except ImportError as e:
-        raise ImportError("缺少依赖：pip install langextract") from e
+    if not HAS_LANGEXTRACT:
+        raise ImportError("缺少依赖：pip install langextract")
 
     examples = _shop16_price_examples()
 
@@ -550,21 +549,7 @@ def _extract_specs_shop16_llm(
         llm_ok = True
     except Exception as e:
         llm_ok = False
-        logger.warning(
-            "LangExtract extraction failed",
-            extra={
-                "event_type": "llm_extraction_error",
-                "shop_name": "携帯空間",
-                "cleaner_name": "shop16",
-                "error": str(e),
-                "error_type": type(e).__name__,
-                "model_id": OLLAMA_MODEL_ID,
-                "model_url": OLLAMA_URL,
-                "row_index": idx,
-                "text_length": len(price_text),
-                "text_preview": _truncate_for_log(price_text, 100),
-            }
-        )
+        log_llm_extraction_error(logger, cleaner_name="shop16", shop_name="携帯空間", error=e, text=price_text, row_index=idx)
 
     base_price = base_llm
     if base_price is None:

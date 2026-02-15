@@ -20,6 +20,9 @@ from ..cleaner_tools import (
     log_cleaner_start,
     log_cleaner_complete,
     validate_columns,
+    lx,
+    HAS_LANGEXTRACT,
+    log_llm_extraction_error,
 )
 import os
 from functools import lru_cache
@@ -145,15 +148,12 @@ COLOR_DELTA_RE_shop17 = re.compile(
 # LangExtract / Ollama 集成配置
 # ----------------------------------------------------------------------
 
+# lx / HAS_LANGEXTRACT 从 cleaner_tools 统一导入
 try:
-    import langextract as lx
     from langextract.data import ExampleData, Extraction
-    _HAS_LANGEXTRACT = True
 except Exception:
-    lx = None
     ExampleData = None
     Extraction = None
-    _HAS_LANGEXTRACT = False
 
 # ----------------------------------------------------------------------
 # 颜色匹配函数
@@ -246,7 +246,7 @@ COLOR_DELTA_PROMPT_SHOP17 = textwrap.dedent("""
 
 @lru_cache()
 def _get_color_delta_examples_shop17() -> List[ExampleData]:
-    if not _HAS_LANGEXTRACT:
+    if not HAS_LANGEXTRACT:
         return []
 
     examples: List[ExampleData] = []
@@ -344,7 +344,7 @@ def _extract_specs_shop17_llm(
     cleaner_name: Optional[str] = None,
     row_context: Optional[Dict] = None
 ) -> List[Tuple[str, int]]:
-    if not _HAS_LANGEXTRACT:
+    if not HAS_LANGEXTRACT:
         return []
     if not text or not str(text).strip():
         return []
@@ -353,8 +353,6 @@ def _extract_specs_shop17_llm(
 
     if re.fullmatch(r"\s*(?:なし|減額なし)\s*", s):
         return []
-
-    import langextract as lx
 
     try:
         result = lx.extract(
@@ -371,27 +369,7 @@ def _extract_specs_shop17_llm(
             prompt_validation_strict=False,
         )
     except Exception as e:
-        log_extra = {
-            "event_type": "llm_extraction_error",
-            "error": str(e),
-            "error_type": type(e).__name__,
-            "model_id": OLLAMA_MODEL_ID,
-            "model_url": OLLAMA_URL,
-            "text_length": len(s),
-            "text_preview": _truncate_for_log(s, 100),
-        }
-        # 添加上下文信息（如果提供）
-        if shop_name:
-            log_extra["shop_name"] = shop_name
-        if cleaner_name:
-            log_extra["cleaner_name"] = cleaner_name
-        if row_context:
-            log_extra.update(row_context)
-
-        logger.warning(
-            "LangExtract extraction failed",
-            extra=log_extra
-        )
+        log_llm_extraction_error(logger, cleaner_name="shop17", shop_name=SHOP_NAME_OVERRIDE, error=e, text=s, row_index=row_context.get("row_index") if row_context else None)
         return []
 
     out: List[Tuple[str, int]] = []

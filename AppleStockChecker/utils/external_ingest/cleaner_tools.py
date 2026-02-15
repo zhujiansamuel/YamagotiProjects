@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 import logging
 import os
@@ -21,6 +22,151 @@ from .helpers import to_int_yen
 OLLAMA_URL = os.getenv("OLLAMA_URL") or os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL_ID = os.getenv("OLLAMA_MODEL_ID") or os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
 EXTRACTION_MODE = os.getenv("EXTRACTION_MODE", "regex")  # "regex" | "llm" | "auto"
+
+
+# ----------------------------------------------------------------------
+# langextract 统一导入（各 shop 共用）
+# ----------------------------------------------------------------------
+try:
+    import langextract as lx
+    HAS_LANGEXTRACT = True
+except Exception:
+    lx = None  # type: ignore[assignment]
+    HAS_LANGEXTRACT = False
+
+
+# ----------------------------------------------------------------------
+# CSV 信息文件路径解析（shop5/6/10/20 等仍从 CSV 读取的 shop 共用）
+# ----------------------------------------------------------------------
+
+def _resolve_info_csv_path() -> Path:
+    """
+    解析 iphone17_info CSV/Excel 文件路径。
+
+    优先级：Django settings > 环境变量 > 默认路径。
+    供 shop5/6/10/20 等仍然从文件而非数据库读取的清洗器使用。
+    """
+    try:
+        from django.conf import settings
+        p = getattr(settings, "EXTERNAL_IPHONE17_INFO_PATH", None)
+        if p:
+            return Path(p)
+    except Exception:
+        pass
+    envp = os.getenv("IPHONE17_INFO_CSV")
+    if envp and Path(envp).exists():
+        return Path(envp)
+    return Path(__file__).resolve().parents[1] / "data" / "iphone17_info.csv"
+
+
+def _read_info_csv(path: Path) -> pd.DataFrame:
+    """
+    读取 iphone17_info CSV 或 Excel 文件，返回原始 DataFrame。
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"未找到 iphone17_info：{path}")
+    if re.search(r"\.(xlsx|xlsm|xls|ods)$", str(path), re.I):
+        return pd.read_excel(path)
+    return pd.read_csv(path, encoding="utf-8-sig")
+
+
+def _load_info_df_from_csv(
+    *,
+    required_cols: Optional[set] = None,
+    output_cols: Optional[List[str]] = None,
+    add_model_norm: bool = False,
+) -> pd.DataFrame:
+    """
+    从 CSV/Excel 读取 iphone17_info 并做标准预处理。
+
+    供 shop5/6/10/20 等仍然从文件读取的清洗器使用。
+    数据库路径的清洗器应使用 _load_iphone17_info_df_from_db()。
+
+    参数:
+        required_cols: 必须存在的列集合（默认 {"part_number","model_name","capacity_gb"}）
+        output_cols: 最终返回的列列表（默认按 required_cols 推断）
+        add_model_norm: 是否添加 model_name_norm 列
+    """
+    path = _resolve_info_csv_path()
+    df = _read_info_csv(path)
+
+    if required_cols is None:
+        required_cols = {"part_number", "model_name", "capacity_gb"}
+    missing = required_cols - set(df.columns)
+    if missing:
+        raise ValueError(f"iphone17_info 缺少必要列：{missing}")
+
+    df = df.copy()
+    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
+
+    if add_model_norm:
+        df["model_name_norm"] = df["model_name"].map(_normalize_model_generic)
+
+    dropna_cols = [c for c in ["part_number", "model_name", "capacity_gb", "model_name_norm"]
+                   if c in df.columns]
+    df = df.dropna(subset=dropna_cols)
+
+    if output_cols:
+        df = df[[c for c in output_cols if c in df.columns]]
+
+    return df
+
+
+def _load_jan_to_pn_from_csv() -> Dict[str, str]:
+    """
+    从 CSV/Excel 信息文件构建 { jan_13位 : part_number } 映射。
+
+    供 shop5/6 等仍从文件读取 JAN 的清洗器使用。
+    若信息文件无 jan 列，返回空字典。
+    """
+    path = _resolve_info_csv_path()
+    if not path.exists():
+        return {}
+    df = _read_info_csv(path)
+    if "part_number" not in df.columns or "jan" not in df.columns:
+        return {}
+    df = df.copy()
+    df["jan"] = df["jan"].astype(str).str.replace(r"[^\d]", "", regex=True)
+    df = df[df["jan"].str.fullmatch(r"\d{13}", na=False)]
+    return dict(zip(df["jan"].astype(str), df["part_number"].astype(str)))
+
+
+# ----------------------------------------------------------------------
+# LLM 提取失败日志（各 shop 共用）
+# ----------------------------------------------------------------------
+
+def log_llm_extraction_error(
+    logger: logging.Logger,
+    *,
+    cleaner_name: str,
+    shop_name: str,
+    error: Exception,
+    text: str = "",
+    row_index: object = None,
+    text_preview_len: int = 100,
+    **extra_fields: object,
+) -> None:
+    """
+    LLM（LangExtract）提取失败时的统一 warning 日志。
+
+    替代各 shop 清洗器中重复出现的:
+        logger.warning("LangExtract extraction failed", extra={...})
+    """
+    extra: dict = {
+        "event_type": "llm_extraction_error",
+        "shop_name": shop_name,
+        "cleaner_name": cleaner_name,
+        "error": str(error),
+        "error_type": type(error).__name__,
+        "model_id": OLLAMA_MODEL_ID,
+        "model_url": OLLAMA_URL,
+        "text_length": len(text) if text else 0,
+        "text_preview": _truncate_for_log(text, text_preview_len) if text else "",
+    }
+    if row_index is not None:
+        extra["row_index"] = row_index
+    extra.update(extra_fields)
+    logger.warning("LangExtract extraction failed", extra=extra)
 
 
 # ----------------------------------------------------------------------

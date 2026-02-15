@@ -55,6 +55,9 @@ from ..cleaner_tools import (
     log_cleaner_start,
     log_cleaner_complete,
     validate_columns,
+    lx,
+    HAS_LANGEXTRACT,
+    log_llm_extraction_error,
     LABEL_SPLIT_RE_shop11,
     OLLAMA_URL,
     OLLAMA_MODEL_ID,
@@ -97,10 +100,7 @@ def _coerce_int(v) -> Optional[int]:
 # Step 3: LLM 机型/容量解析（storage_name -> model_norm, cap_gb）
 # ----------------------------------------------------------------------
 
-try:
-    import langextract as lx
-except Exception:  # 允许在未安装时仍可跑 fallback
-    lx = None
+# lx / HAS_LANGEXTRACT 从 cleaner_tools 统一导入
 
 @lru_cache(maxsize=1)
 def _shop11_model_config():
@@ -519,20 +519,7 @@ def _extract_specs_shop11_llm(
         llm_ok = True
     except Exception as e:
         llm_ok = False
-        logger.warning(
-            "LangExtract color delta extraction failed",
-            extra={
-                "event_type": "llm_extraction_error",
-                "shop_name": SHOP_NAME,
-                "cleaner_name": CLEANER_NAME,
-                "error": str(e),
-                "error_type": type(e).__name__,
-                "model_id": OLLAMA_MODEL_ID,
-                "model_url": OLLAMA_URL,
-                "text_length": len(caution_txt),
-                "text_preview": _truncate_for_log(caution_txt, 100),
-            },
-        )
+        log_llm_extraction_error(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, error=e, text=caution_txt, row_index=None)
 
     # Guardrail A: delta 合理性检查 — 过滤掉不在 available_colors 中的键
     if color_deltas:
