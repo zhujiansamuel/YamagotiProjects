@@ -45,6 +45,7 @@ from ..cleaner_tools import (
     _build_color_map,
     _truncate_for_log,
     _norm_strip,
+    _normalize_amount_text,
     normalize_text_basic,
     PriceDecomposition,
     resolve_color_prices,
@@ -138,15 +139,8 @@ def _coerce_signed_int(x) -> Optional[int]:
     except Exception:
         return None
 
-def _norm_amount_to_int(x: str) -> Optional[int]:
-    if not x:
-        return None
-    s = str(x).strip()
-    s = s.translate(str.maketrans("０１２３４５６７８９，", "0123456789,"))
-    s = s.replace(",", "")
-    if not s.isdigit():
-        return None
-    return int(s)
+# _norm_amount_to_int は cleaner_tools._normalize_amount_text に統一
+_norm_amount_to_int = _normalize_amount_text
 
 # ----------------------------------------------------------------------
 # Step 2: abs/delta 分類

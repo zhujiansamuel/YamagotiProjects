@@ -10,11 +10,15 @@ shop20 清洗器
     └─ clean_shop20()                      ← Step 3: 主函数，输出 part_number / price_new / recorded_at
 """
 from typing import Dict, Optional, List
-from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import assemble_output_df, validate_columns, _load_info_df_from_csv, _extract_jan_digits, _build_jan_map
 import json
+import logging
+
 import pandas as pd
-import time
+
+from ...external_ingest.helpers import to_int_yen, parse_dt_aware
+from ..cleaner_tools import assemble_output_df, validate_columns, _load_info_df_from_csv, _extract_jan_digits, _build_jan_map, log_cleaner_start
+
+logger = logging.getLogger(__name__)
 
 def _coerce_price(v) -> Optional[int]:
     """goodsPrice 既可能是数字也可能是字符串，统一转 int（日元）"""
@@ -25,7 +29,7 @@ def _coerce_price(v) -> Optional[int]:
     return to_int_yen(v)
 
 def clean_shop20(df: pd.DataFrame) -> pd.DataFrame:
-    print("shop20:毎日買取---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+    log_cleaner_start(logger, cleaner_name="shop20", shop_name="毎日買取", input_rows=len(df))
     """
     输入 (shop20.csv):
       - json: 形如 {""success"":true,""data"":[...]} 的 JSON 文本（需先把 "" → "）

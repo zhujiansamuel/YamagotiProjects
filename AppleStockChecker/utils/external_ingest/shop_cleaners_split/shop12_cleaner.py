@@ -44,6 +44,7 @@ from ..cleaner_tools import (
     _build_color_map,
     _truncate_for_log,
     _norm_strip,
+    _normalize_amount_text,
     normalize_text_basic,
     PriceDecomposition,
     resolve_color_prices,
@@ -106,21 +107,8 @@ def _normalize_remark_for_llm(remark_raw: str) -> str:
 # Step 2: 数字归一化（含全角）
 # ----------------------------------------------------------------------
 
-def _norm_amount_to_int(s: str) -> Optional[int]:
-    """
-    解析金额文本，使用通用规范化函数
-    """
-    if s is None:
-        return None
-    # 使用通用规范化（全角→半角 + 去换行 + 合并空格）
-    tt = normalize_text_basic(str(s))
-    m = re.search(r"([0-9][0-9,]*)", tt)
-    if not m:
-        return None
-    try:
-        return int(m.group(1).replace(",", ""))
-    except Exception:
-        return None
+# _norm_amount_to_int は cleaner_tools._normalize_amount_text に統一
+_norm_amount_to_int = _normalize_amount_text
 
 # ----------------------------------------------------------------------
 # Step 3: 正则提取函数

@@ -9,21 +9,16 @@ shop8 清洗器 — 買取wiki
     ├─ parse_dt_aware()          ← Step 3: 时间解析
     └─ clean_shop8()             ← Step 4: 主函数，输出 part_number / price_new / recorded_at
 """
-from typing import Protocol, Dict, Callable, Optional,List
-from ...external_ingest.helpers import parse_dt_aware
-from ..cleaner_tools import normalize_text_basic, extract_price_yen, validate_columns
-import os
-from functools import lru_cache
-from pathlib import Path
+from typing import Optional
+import logging
 import re
+
 import pandas as pd
-from typing import Optional, Tuple
-from urllib.parse import urlparse
-from typing import Dict, Optional, List, Iterable, Union
-import os, re, json, pathlib
-from datetime import datetime
-import pytz
-import time
+
+from ...external_ingest.helpers import parse_dt_aware
+from ..cleaner_tools import normalize_text_basic, extract_price_yen, validate_columns, log_cleaner_start
+
+logger = logging.getLogger(__name__)
 
 PN_REGEX = re.compile(r"\b[A-Z0-9]{4,6}\d{0,3}J/A\b")
 
@@ -38,7 +33,7 @@ def _extract_part_number(text: str) -> str | None:
     return m2.group(0) if m2 else None
 
 def clean_shop8(df: pd.DataFrame) -> pd.DataFrame:
-    print("shop8:買取wiki---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+    log_cleaner_start(logger, cleaner_name="shop8", shop_name="買取wiki", input_rows=len(df))
     # 列名容错：有些抓取器可能用不同大小写或空白
     # 这里统一抓关键列
     col_model = "機種名"

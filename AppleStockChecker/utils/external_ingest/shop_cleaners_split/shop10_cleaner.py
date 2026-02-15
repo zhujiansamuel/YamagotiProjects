@@ -11,14 +11,18 @@ shop10 清洗器 — ドラゴンモバイル
     └─ clean_shop10()             ← Step 5: 主函数，输出 part_number / price_new / recorded_at
 """
 from typing import List, Optional
-from ...external_ingest.helpers import parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, extract_price_yen, assemble_output_df, validate_columns, _load_info_df_from_csv
+import logging
 import re
+
 import pandas as pd
-import time
+
+from ...external_ingest.helpers import parse_dt_aware
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, extract_price_yen, assemble_output_df, validate_columns, _load_info_df_from_csv, log_cleaner_start
+
+logger = logging.getLogger(__name__)
 
 def clean_shop10(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> pd.DataFrame:
-    print("##shop10:ドラゴンモバイル---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+    log_cleaner_start(logger, cleaner_name="shop10", shop_name="ドラゴンモバイル", input_rows=len(df))
     info_df = _load_info_df_from_csv(
         required_cols={"part_number", "model_name", "capacity_gb"},
         output_cols=["part_number", "model_name_norm", "capacity_gb"],

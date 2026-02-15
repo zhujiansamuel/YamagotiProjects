@@ -7,14 +7,16 @@ shop6_1～shop6_4 为同一店铺不同数据源变体，逻辑相同，统一�
 """
 from __future__ import annotations
 
+import logging
 import re
-import time
 from typing import List, Optional
 
 import pandas as pd
 
 from ...external_ingest.helpers import parse_dt_aware
-from ..cleaner_tools import extract_price_yen, assemble_output_df, validate_columns, _load_jan_to_pn_from_csv
+from ..cleaner_tools import extract_price_yen, assemble_output_df, validate_columns, _load_jan_to_pn_from_csv, log_cleaner_start
+
+logger = logging.getLogger(__name__)
 
 _PN_REGEX = re.compile(r"\b[A-Z0-9]{4,6}\d{0,3}J/A\b")
 
@@ -39,7 +41,7 @@ def _clean_shop6_kaidoruya(df: pd.DataFrame, variant: str) -> pd.DataFrame:
     validate_columns(df, ["data7", "phone", "data8", "time-scraped"],
                      cleaner_name=f"shop6-{variant}", shop_name="買取ルデヤ")
 
-    print(f"shop6-{variant}:買取ルデヤ---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+    log_cleaner_start(logger, cleaner_name=f"shop6-{variant}", shop_name="買取ルデヤ", input_rows=len(df))
 
     # 跳过 time-scraped 为空的行
     src = df.copy()

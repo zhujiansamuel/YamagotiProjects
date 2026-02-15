@@ -7,14 +7,16 @@ shop5_1～shop5_4 为同一店铺不同数据源变体，逻辑相同，统一�
 """
 from __future__ import annotations
 
+import logging
 import re
-import time
 from typing import List, Optional
 
 import pandas as pd
 
 from ...external_ingest.helpers import parse_dt_aware
-from ..cleaner_tools import extract_price_yen, assemble_output_df, validate_columns, _load_jan_to_pn_from_csv
+from ..cleaner_tools import extract_price_yen, assemble_output_df, validate_columns, _load_jan_to_pn_from_csv, log_cleaner_start
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_jan_from_data(x: object) -> Optional[str]:
@@ -43,7 +45,7 @@ def _clean_shop5_soramimi(df: pd.DataFrame, variant: str) -> pd.DataFrame:
     validate_columns(df, ["price", "data", "name", "time-scraped"],
                      cleaner_name=f"shop5-{variant}", shop_name="森森買取")
 
-    print(f"shop5-{variant}:森森買取---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+    log_cleaner_start(logger, cleaner_name=f"shop5-{variant}", shop_name="森森買取", input_rows=len(df))
 
     # 1) 过滤掉 name 含"中古"的行
     src = df.copy()
