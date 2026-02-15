@@ -12,7 +12,7 @@ shop10 清洗器 — ドラゴンモバイル
 """
 from typing import Protocol, Dict, Callable, Optional,List
 from ...external_ingest.helpers import parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, extract_price_yen, assemble_output_df
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, extract_price_yen, assemble_output_df, validate_columns
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -66,10 +66,8 @@ def clean_shop10(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) ->
     print("##shop10:ドラゴンモバイル---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     info_df = _load_iphone17_info_df()
 
-    need_cols = ["data2", "price", "time-scraped"]
-    for c in need_cols:
-        if c not in df.columns:
-            raise ValueError(f"shop10 清洗器缺少必要列：{c}")
+    validate_columns(df, ["data2", "price", "time-scraped"],
+                     cleaner_name="shop10", shop_name="ドラゴンモバイル")
 
     # 解析
     model_norm = df["data2"].map(_normalize_model_generic)

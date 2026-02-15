@@ -12,7 +12,7 @@ shop18 清洗器 — 買取オク
 """
 from typing import Dict, Optional, List, Tuple
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db, _extract_jan_digits, _build_jan_map, assemble_output_df
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db, _extract_jan_digits, _build_jan_map, assemble_output_df, validate_columns
 import re
 import pandas as pd
 from urllib.parse import urlparse
@@ -69,10 +69,8 @@ def clean_shop18(df: pd.DataFrame) -> pd.DataFrame:
       - part_number, shop_name, price_new, recorded_at
     仅输出出现在 _load_iphone17_info_df_from_db() 的机型。
     """
-    need_cols = ["jan", "type", "price", "time-scraped"]
-    for c in need_cols:
-        if c not in df.columns:
-            raise ValueError(f"shop18 清洗器缺少必要列：{c}")
+    validate_columns(df, ["jan", "type", "price", "time-scraped"],
+                     cleaner_name="shop18", shop_name="買取オク")
 
     info_df = _load_iphone17_info_df_from_db()
     jan_map = _build_jan_map(info_df)

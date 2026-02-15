@@ -11,7 +11,7 @@ shop8 清洗器 — 買取wiki
 """
 from typing import Protocol, Dict, Callable, Optional,List
 from ...external_ingest.helpers import parse_dt_aware
-from ..cleaner_tools import normalize_text_basic, extract_price_yen
+from ..cleaner_tools import normalize_text_basic, extract_price_yen, validate_columns
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -45,9 +45,8 @@ def clean_shop8(df: pd.DataFrame) -> pd.DataFrame:
     col_price_new = "未開封"
     col_time = "time-scraped"
 
-    for need in (col_model, col_price_new, col_time):
-        if need not in df.columns:
-            raise ValueError(f"shop8 清洗器缺少必要列: {need}")
+    validate_columns(df, [col_model, col_price_new, col_time],
+                     cleaner_name="shop8", shop_name="買取wiki")
 
     # 解析
     part_numbers = df[col_model].map(_extract_part_number)

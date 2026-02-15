@@ -16,7 +16,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 
 from ...external_ingest.helpers import parse_dt_aware
-from ..cleaner_tools import extract_price_yen, assemble_output_df
+from ..cleaner_tools import extract_price_yen, assemble_output_df, validate_columns
 
 
 def _resolve_info_path() -> Path:
@@ -80,10 +80,8 @@ def _clean_shop5_soramimi(df: pd.DataFrame, variant: str) -> pd.DataFrame:
     shop_name 固定 '森森買取'
     """
     # 必要列检查
-    need_cols = ["price", "data", "name", "time-scraped"]
-    for c in need_cols:
-        if c not in df.columns:
-            raise ValueError(f"shop5-{variant} 清洗器缺少必要列：{c}")
+    validate_columns(df, ["price", "data", "name", "time-scraped"],
+                     cleaner_name=f"shop5-{variant}", shop_name="森森買取")
 
     print(f"shop5-{variant}:森森買取---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
 

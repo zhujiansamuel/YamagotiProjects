@@ -16,7 +16,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 
 from ...external_ingest.helpers import parse_dt_aware
-from ..cleaner_tools import extract_price_yen, assemble_output_df
+from ..cleaner_tools import extract_price_yen, assemble_output_df, validate_columns
 
 _PN_REGEX = re.compile(r"\b[A-Z0-9]{4,6}\d{0,3}J/A\b")
 
@@ -76,10 +76,8 @@ def _clean_shop6_kaidoruya(df: pd.DataFrame, variant: str) -> pd.DataFrame:
     shop_name 固定 '買取ルデヤ'
     """
     # 必要列检查
-    need_cols = ["data7", "phone", "data8", "time-scraped"]
-    for c in need_cols:
-        if c not in df.columns:
-            raise ValueError(f"shop6-{variant} 清洗器缺少必要列：{c}")
+    validate_columns(df, ["data7", "phone", "data8", "time-scraped"],
+                     cleaner_name=f"shop6-{variant}", shop_name="買取ルデヤ")
 
     print(f"shop6-{variant}:買取ルデヤ---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
 

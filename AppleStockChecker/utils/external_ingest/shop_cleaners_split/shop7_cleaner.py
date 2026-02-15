@@ -18,6 +18,8 @@ from ..cleaner_tools import (
     assemble_output_df,
     log_cleaner_start,
     log_cleaner_complete,
+    log_row_skip,
+    validate_columns,
 )
 import re
 import time
@@ -144,22 +146,9 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
     _log_seq += 1
 
     # ── Step 1: 加载参考数据 & 输入验证 ──────────────────────────────
-    need_cols = ["data", "data2", "data3", "time-scraped"]
-    for c in need_cols:
-        if c not in df.columns:
-            logger.error(
-                f"Missing required column: {c}",
-                extra={
-                    "event_type": "validation_error",
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "log_seq": _log_seq,
-                    "missing_column": c,
-                    "available_columns": list(df.columns),
-                },
-            )
-            _log_seq += 1
-            raise ValueError(f"shop7 清洗器缺少必要列：{c}")
+    _log_seq = validate_columns(df, ["data", "data2", "data3", "time-scraped"],
+                                cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                                logger=logger, log_seq=_log_seq)
 
     info_df = _load_iphone17_info_df_from_db()
 
@@ -235,20 +224,10 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
 
         if not model_norm or pd.isna(c):
             _log_seq += 1
-            logger.debug(
-                f"Row {i}: skip (model/cap missing)",
-                extra={
-                    "event_type": "row_skip",
-                    "log_seq": _log_seq,
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "row_index": i,
-                    "model_text": model_text,
-                    "model_norm": model_norm or "",
-                    "capacity_gb": int(c) if pd.notna(c) else None,
-                    "skip_reason": "model_or_cap_missing",
-                },
-            )
+            log_row_skip(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                         row_index=i, skip_reason="model_or_cap_missing", log_seq=_log_seq,
+                         model_text=model_text, model_norm=model_norm or "",
+                         capacity_gb=int(c) if pd.notna(c) else None)
             continue
 
         cap_gb = int(c)
@@ -256,20 +235,9 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         color_map = pn_map.get(key)
         if not color_map:
             _log_seq += 1
-            logger.debug(
-                f"Row {i}: skip (no color_map for key={key})",
-                extra={
-                    "event_type": "row_skip",
-                    "log_seq": _log_seq,
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "row_index": i,
-                    "model_text": model_text,
-                    "model_norm": model_norm,
-                    "capacity_gb": cap_gb,
-                    "skip_reason": "no_color_map",
-                },
-            )
+            log_row_skip(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                         row_index=i, skip_reason="no_color_map", log_seq=_log_seq,
+                         model_text=model_text, model_norm=model_norm, capacity_gb=cap_gb)
             continue
 
         # ---- Step 3: 下一行是否为颜色减价行 ----

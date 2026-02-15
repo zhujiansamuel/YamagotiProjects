@@ -19,6 +19,7 @@ from ..cleaner_tools import (
     assemble_output_df,
     log_cleaner_start,
     log_cleaner_complete,
+    validate_columns,
 )
 import os
 from functools import lru_cache
@@ -472,19 +473,9 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
 
     log_cleaner_start(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), log_seq=_log_seq)
 
-    for c in ["type", "新未開封品", "色減額", "time-scraped"]:
-        if c not in df.columns:
-            logger.error(
-                f"Missing required column: {c}",
-                extra={
-                    "event_type": "validation_error",
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "missing_column": c,
-                    "available_columns": list(df.columns),
-                }
-            )
-            raise ValueError(f"shop17 清洗器缺少必要列：{c}")
+    _log_seq = validate_columns(df, ["type", "新未開封品", "色減額", "time-scraped"],
+                                cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                                logger=logger, log_seq=_log_seq)
 
     info_df = _load_iphone17_info_df_from_db()
     cmap_all = _build_color_map(info_df)

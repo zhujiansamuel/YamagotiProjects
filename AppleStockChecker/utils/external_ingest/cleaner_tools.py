@@ -1134,3 +1134,103 @@ def log_cleaner_complete(
             "elapsed_seconds": elapsed,
         },
     )
+
+
+# ======================================================================
+# 3. 行スキップ日志
+# ======================================================================
+
+def log_row_skip(
+    logger: logging.Logger,
+    *,
+    cleaner_name: str,
+    shop_name: str,
+    row_index: int,
+    skip_reason: str,
+    log_seq: int = 0,
+    **extra_fields: object,
+) -> None:
+    """行がスキップされた際の統一 DEBUG ログ。
+
+    Parameters
+    ----------
+    extra_fields : keyword arguments
+        追加コンテキスト (model_text, capacity_gb, data_raw, …) を
+        そのまま extra dict にマージする。
+    """
+    extra: dict = {
+        "event_type": "row_skip",
+        "shop_name": shop_name,
+        "cleaner_name": cleaner_name,
+        "log_seq": log_seq,
+        "row_index": row_index,
+        "skip_reason": skip_reason,
+    }
+    extra.update(extra_fields)
+    logger.debug(
+        f"Row {row_index}: skip ({skip_reason})",
+        extra=extra,
+    )
+
+
+# ======================================================================
+# 4. 必須列バリデーション
+# ======================================================================
+
+def validate_columns(
+    df: pd.DataFrame,
+    required: List[str],
+    *,
+    cleaner_name: str,
+    shop_name: str,
+    logger: Optional[logging.Logger] = None,
+    log_seq: int = 0,
+    lenient: bool = False,
+) -> int:
+    """必須列の存在を検証し、欠落時にログ出力 + エラーを投げる。
+
+    Parameters
+    ----------
+    lenient : bool
+        True の場合、欠落列を None で埋めて処理を続行する (shop2 方式)。
+        False の場合 (デフォルト)、ValueError を送出する。
+
+    Returns
+    -------
+    int
+        更新後の log_seq (ログ出力した分だけインクリメント)。
+    """
+    seq = log_seq
+    for c in required:
+        if c not in df.columns:
+            if logger is not None:
+                if lenient:
+                    logger.warning(
+                        f"Missing column, filling with None: {c}",
+                        extra={
+                            "event_type": "validation_error",
+                            "shop_name": shop_name,
+                            "cleaner_name": cleaner_name,
+                            "log_seq": seq,
+                            "missing_column": c,
+                            "available_columns": list(df.columns),
+                        },
+                    )
+                else:
+                    logger.error(
+                        f"Missing required column: {c}",
+                        extra={
+                            "event_type": "validation_error",
+                            "shop_name": shop_name,
+                            "cleaner_name": cleaner_name,
+                            "log_seq": seq,
+                            "missing_column": c,
+                            "available_columns": list(df.columns),
+                        },
+                    )
+                seq += 1
+            if lenient:
+                df[c] = None
+            else:
+                raise ValueError(f"{cleaner_name} 清洗器缺少必要列：{c}")
+    return seq

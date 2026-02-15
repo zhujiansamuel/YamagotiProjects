@@ -47,6 +47,7 @@ from ..cleaner_tools import (
     OLLAMA_URL,
     OLLAMA_MODEL_ID,
     EXTRACTION_MODE,
+    validate_columns,
 )
 
 # ---------------------------------------------------------------------------
@@ -700,20 +701,9 @@ def clean_shop14(df: "pd.DataFrame", debug: bool = True) -> "pd.DataFrame":
     _log_seq += 1
 
     # ---- 列校验 ----
-    for c in ["name", "data6", "price2", "time-scraped"]:
-        if c not in df.columns:
-            logger.error(
-                f"Missing required column: {c}",
-                extra={
-                    "event_type": "validation_error",
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "log_seq": _log_seq,
-                    "column": c,
-                },
-            )
-            _log_seq += 1
-            raise ValueError(f"shop14 清洗器缺少必要列：{c}")
+    _log_seq = validate_columns(df, ["name", "data6", "price2", "time-scraped"],
+                                cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                                logger=logger, log_seq=_log_seq)
 
     remark_cols_map = _resolve_remark_cols(df)
 

@@ -51,6 +51,8 @@ from ..cleaner_tools import (
     assemble_output_df,
     log_cleaner_start,
     log_cleaner_complete,
+    validate_columns,
+    log_row_skip,
     LABEL_SPLIT_RE_shop12,
     OLLAMA_URL,
     OLLAMA_MODEL_ID,
@@ -521,20 +523,9 @@ def clean_shop12(df: pd.DataFrame, debug: bool = False) -> pd.DataFrame:
     log_cleaner_start(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), log_seq=_log_seq, extraction_mode=EXTRACTION_MODE)
     _log_seq += 1
 
-    for c in ["モデルナンバー", "備考1", "買取価格", "time-scraped"]:
-        if c not in df.columns:
-            logger.error(
-                f"Missing required column: {c}",
-                extra={
-                    "event_type": "validation_error",
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "log_seq": _log_seq,
-                    "column": c,
-                },
-            )
-            _log_seq += 1
-            raise ValueError(f"shop12 清洗器缺少必要列：{c}")
+    _log_seq = validate_columns(df, ["モデルナンバー", "備考1", "買取価格", "time-scraped"],
+                                cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                                logger=logger, log_seq=_log_seq)
 
     info_df = _load_iphone17_info_df_from_db()
     cmap_all = _build_color_map(info_df)
@@ -555,17 +546,9 @@ def clean_shop12(df: pd.DataFrame, debug: bool = False) -> pd.DataFrame:
         cap_gb = _parse_capacity_gb(model_text)
         if not model_norm or cap_gb is None or pd.isna(cap_gb):
             _log_seq += 1
-            logger.debug(
-                f"Skip row: model/cap parse failed: {model_text!r}",
-                extra={
-                    "event_type": "row_processing_summary",
-                    "log_seq": _log_seq,
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "row_index": int(idx),
-                    "model_text": model_text,
-                },
-            )
+            log_row_skip(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                         row_index=idx, skip_reason="model_or_cap_parse_failed", log_seq=_log_seq,
+                         model_text=model_text)
             continue
         cap_gb = int(cap_gb)
 
@@ -573,19 +556,9 @@ def clean_shop12(df: pd.DataFrame, debug: bool = False) -> pd.DataFrame:
         color_map = cmap_all.get(key)
         if not color_map:
             _log_seq += 1
-            logger.debug(
-                f"Skip row: info no key={key}",
-                extra={
-                    "event_type": "row_processing_summary",
-                    "log_seq": _log_seq,
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "row_index": int(idx),
-                    "model_text": model_text,
-                    "model_norm": model_norm,
-                    "capacity_gb": cap_gb,
-                },
-            )
+            log_row_skip(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                         row_index=idx, skip_reason="no_info_key", log_seq=_log_seq,
+                         model_text=model_text, model_norm=model_norm, capacity_gb=cap_gb)
             continue
 
         remark_raw = row.get("備考1") or ""
