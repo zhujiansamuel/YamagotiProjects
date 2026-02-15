@@ -16,7 +16,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 
 from ...external_ingest.helpers import parse_dt_aware
-from ..cleaner_tools import extract_price_yen
+from ..cleaner_tools import extract_price_yen, assemble_output_df
 
 
 def _resolve_info_path() -> Path:
@@ -123,10 +123,7 @@ def _clean_shop5_soramimi(df: pd.DataFrame, variant: str) -> pd.DataFrame:
             "recorded_at": ts,
         })
 
-    out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
-    if not out.empty:
-        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
-        out["part_number"] = out["part_number"].astype(str)
+    out = assemble_output_df(rows, coerce_price=False)
     return out
 
 

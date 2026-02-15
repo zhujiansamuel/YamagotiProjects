@@ -51,6 +51,9 @@ from ..cleaner_tools import (
     PriceDecomposition,
     resolve_color_prices,
     _label_matches_color_unified,
+    assemble_output_df,
+    log_cleaner_start,
+    log_cleaner_complete,
     LABEL_SPLIT_RE_shop3 as _LABEL_SPLIT_RE,
     OLLAMA_URL,
     OLLAMA_MODEL_ID,
@@ -483,17 +486,7 @@ def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
     start_time = time.time()
     _log_seq = 0
 
-    logger.info(
-        "shop3 cleaner started",
-        extra={
-            "event_type": "cleaner_start",
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "log_seq": _log_seq,
-            "input_rows": len(df),
-            "extraction_mode": EXTRACTION_MODE,
-        },
-    )
+    log_cleaner_start(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), log_seq=_log_seq, extraction_mode=EXTRACTION_MODE)
     _log_seq += 1
 
     need_cols = ["title", "data5", "time-scraped"]
@@ -517,19 +510,7 @@ def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
     mask_time_ok = src["time-scraped"].astype(str).str.strip().ne("") & src["time-scraped"].notna()
     src = src[mask_time_ok].reset_index(drop=True)
     if src.empty:
-        elapsed = round(time.time() - start_time, 2)
-        logger.info(
-            "shop3 cleaner completed (empty input after time filter)",
-            extra={
-                "event_type": "cleaner_complete",
-                "shop_name": SHOP_NAME,
-                "cleaner_name": CLEANER_NAME,
-                "log_seq": _log_seq,
-                "input_rows": len(df),
-                "output_records": 0,
-                "elapsed_seconds": elapsed,
-            },
-        )
+        log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=0, start_time=start_time, log_seq=_log_seq)
         return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
 
     info_df = _load_iphone17_info_df_from_db()
@@ -595,23 +576,8 @@ def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         )
         rows.extend(new_rows)
 
-    out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
-    if not out.empty:
-        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
-        out["part_number"] = out["part_number"].astype(str)
+    out = assemble_output_df(rows, coerce_price=False)
 
-    elapsed = round(time.time() - start_time, 2)
-    logger.info(
-        "shop3 cleaner completed",
-        extra={
-            "event_type": "cleaner_complete",
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "log_seq": _log_seq,
-            "input_rows": len(df),
-            "output_records": len(out),
-            "elapsed_seconds": elapsed,
-        },
-    )
+    log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=len(out), start_time=start_time, log_seq=_log_seq)
 
     return out

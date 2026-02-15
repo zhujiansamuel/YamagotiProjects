@@ -40,6 +40,9 @@ from ..cleaner_tools import (
     PriceDecomposition,
     resolve_color_prices,
     _label_matches_color_unified,
+    assemble_output_df,
+    log_cleaner_start,
+    log_cleaner_complete,
     LABEL_SPLIT_RE_shop14,
     OLLAMA_URL,
     OLLAMA_MODEL_ID,
@@ -693,17 +696,7 @@ def clean_shop14(df: "pd.DataFrame", debug: bool = True) -> "pd.DataFrame":
     t_start = time.time()
     _log_seq = 0
 
-    logger.info(
-        "shop14 cleaner started",
-        extra={
-            "event_type": "cleaner_start",
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "log_seq": _log_seq,
-            "input_rows": len(df),
-            "extraction_mode": EXTRACTION_MODE,
-        },
-    )
+    log_cleaner_start(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), log_seq=_log_seq, extraction_mode=EXTRACTION_MODE)
     _log_seq += 1
 
     # ---- 列校验 ----
@@ -789,23 +782,8 @@ def clean_shop14(df: "pd.DataFrame", debug: bool = True) -> "pd.DataFrame":
         rows.extend(new_rows)
 
     # ---- 输出 DataFrame 组装 ----
-    out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
-    if not out.empty:
-        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
-        out["part_number"] = out["part_number"].astype(str)
-        out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
+    out = assemble_output_df(rows)
 
-    elapsed = round(time.time() - t_start, 2)
-    logger.info(
-        "shop14 cleaner completed",
-        extra={
-            "event_type": "cleaner_complete",
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "log_seq": _log_seq,
-            "output_rows": len(out),
-            "elapsed_seconds": elapsed,
-        },
-    )
+    log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=len(out), start_time=t_start, log_seq=_log_seq)
 
     return out

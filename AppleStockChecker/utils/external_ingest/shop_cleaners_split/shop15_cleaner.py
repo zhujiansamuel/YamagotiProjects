@@ -47,6 +47,9 @@ from ..cleaner_tools import (
     OLLAMA_URL,
     OLLAMA_MODEL_ID,
     EXTRACTION_MODE,
+    assemble_output_df,
+    log_cleaner_start,
+    log_cleaner_complete,
 )
 
 # 初始化 logger
@@ -702,16 +705,7 @@ def clean_shop15(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
     CLEANER_NAME = "shop15"
     SHOP_NAME = "買取当番"
 
-    logger.info(
-        "Starting shop15 cleaner",
-        extra={
-            "event_type": "cleaner_start",
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "input_rows": len(df),
-            "start_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-        }
-    )
+    log_cleaner_start(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), log_seq=_log_seq)
 
     for c in [PRICE_COL, MODEL_COL, "time-scraped"]:
         if c not in df.columns:
@@ -773,46 +767,16 @@ def clean_shop15(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
         )
         rows.extend(new_rows)
 
-    out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
-    if out.empty:
-        elapsed_time = time.time() - start_time
-        logger.info(
-            "Shop15 cleaner completed (empty)",
-            extra={
-                "event_type": "cleaner_complete",
-                "shop_name": SHOP_NAME,
-                "cleaner_name": CLEANER_NAME,
-                "input_rows": len(df),
-                "output_records": 0,
-                "elapsed_seconds": round(elapsed_time, 2),
-                "end_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-            }
-        )
-        return out
-
-    out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
-    out["part_number"] = out["part_number"].astype(str)
-    out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
+    out = assemble_output_df(rows)
 
     # "有历史则更新"：同一 (part_number, shop_name) 只保留最新 recorded_at
-    out = (
-        out.sort_values(["part_number", "shop_name", "recorded_at"])
-          .drop_duplicates(subset=["part_number", "shop_name"], keep="last")
-          .reset_index(drop=True)
-    )
+    if not out.empty:
+        out = (
+            out.sort_values(["part_number", "shop_name", "recorded_at"])
+              .drop_duplicates(subset=["part_number", "shop_name"], keep="last")
+              .reset_index(drop=True)
+        )
 
-    elapsed_time = time.time() - start_time
-    logger.info(
-        "Shop15 cleaner completed",
-        extra={
-            "event_type": "cleaner_complete",
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "input_rows": len(df),
-            "output_records": len(out),
-            "elapsed_seconds": round(elapsed_time, 2),
-            "end_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-        }
-    )
+    log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=len(out), start_time=start_time, log_seq=_log_seq)
 
     return out

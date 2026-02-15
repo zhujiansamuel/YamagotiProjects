@@ -53,6 +53,9 @@ from ..cleaner_tools import (
     safe_to_text,
     PriceDecomposition,
     resolve_color_prices,
+    assemble_output_df,
+    log_cleaner_start,
+    log_cleaner_complete,
     OLLAMA_URL,
     OLLAMA_MODEL_ID,
     EXTRACTION_MODE,
@@ -460,17 +463,7 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
     start_time = time.time()
     _log_seq = 0
 
-    logger.info(
-        "shop2 cleaner started",
-        extra={
-            "event_type": "cleaner_start",
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "log_seq": _log_seq,
-            "input_rows": len(shop2_df),
-            "extraction_mode": EXTRACTION_MODE,
-        },
-    )
+    log_cleaner_start(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(shop2_df), log_seq=_log_seq, extraction_mode=EXTRACTION_MODE)
     _log_seq += 1
 
     # 统一列名（小写）
@@ -498,19 +491,7 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
     # 只保留 simfree 未開封
     df = df[df["data2-2"].apply(_is_target)].copy().reset_index(drop=True)
     if df.empty:
-        elapsed = round(time.time() - start_time, 2)
-        logger.info(
-            "shop2 cleaner completed (no target rows)",
-            extra={
-                "event_type": "cleaner_complete",
-                "shop_name": SHOP_NAME,
-                "cleaner_name": CLEANER_NAME,
-                "log_seq": _log_seq,
-                "input_rows": len(shop2_df),
-                "output_records": 0,
-                "elapsed_seconds": elapsed,
-            },
-        )
+        log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(shop2_df), output_records=0, start_time=start_time, log_seq=_log_seq)
         return pd.DataFrame(
             columns=["part_number", "shop_name", "price_new", "recorded_at"]
         )
@@ -663,39 +644,13 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
         out_rows.extend(new_rows)
 
     if not out_rows:
-        elapsed = round(time.time() - start_time, 2)
-        logger.info(
-            "shop2 cleaner completed (no output rows)",
-            extra={
-                "event_type": "cleaner_complete",
-                "shop_name": SHOP_NAME,
-                "cleaner_name": CLEANER_NAME,
-                "log_seq": _log_seq,
-                "input_rows": len(shop2_df),
-                "output_records": 0,
-                "elapsed_seconds": elapsed,
-            },
-        )
+        log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(shop2_df), output_records=0, start_time=start_time, log_seq=_log_seq)
         return pd.DataFrame(
             columns=["part_number", "shop_name", "price_new", "recorded_at"]
         )
 
-    out = pd.DataFrame(
-        out_rows, columns=["part_number", "shop_name", "price_new", "recorded_at"]
-    )
+    out = assemble_output_df(out_rows, coerce_price=False)
 
-    elapsed = round(time.time() - start_time, 2)
-    logger.info(
-        "shop2 cleaner completed",
-        extra={
-            "event_type": "cleaner_complete",
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "log_seq": _log_seq,
-            "input_rows": len(shop2_df),
-            "output_records": len(out),
-            "elapsed_seconds": elapsed,
-        },
-    )
+    log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(shop2_df), output_records=len(out), start_time=start_time, log_seq=_log_seq)
 
     return out

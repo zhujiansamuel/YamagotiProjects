@@ -12,7 +12,7 @@ shop1 清洗器 — 買取商店
 """
 from typing import Dict, Optional, List, Iterable, Union
 from ..helpers import parse_dt_aware
-from ..cleaner_tools import _load_iphone17_info_df_from_db, _extract_jan_digits, _build_jan_map, extract_price_yen
+from ..cleaner_tools import _load_iphone17_info_df_from_db, _extract_jan_digits, _build_jan_map, extract_price_yen, assemble_output_df
 import re
 import json
 import pandas as pd
@@ -113,10 +113,6 @@ def clean_shop1(df: pd.DataFrame) -> pd.DataFrame:
             "recorded_at": recorded_at,
         })
 
-    out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
-    if not out.empty:
-        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
-        out["part_number"] = out["part_number"].astype(str)
-        out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
+    out = assemble_output_df(rows)
     # print("+++++++++++++++out",out)
     return out
