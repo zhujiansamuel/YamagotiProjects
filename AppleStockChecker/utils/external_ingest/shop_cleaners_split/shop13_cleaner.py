@@ -12,7 +12,7 @@ shop13 清洗器 — 家電市場
 """
 from typing import Protocol, Dict, Callable, Optional,List
 from ...external_ingest.helpers import parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db, extract_price_yen
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db, extract_price_yen, assemble_output_df, validate_columns
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -46,10 +46,8 @@ def clean_shop13(df: pd.DataFrame) -> pd.DataFrame:
       - recorded_at = parse_dt_aware(time-scraped)
     """
     # --- 必要列检查 ---
-    need_cols = ["新品価格", "買取商品2", "time-scraped"]
-    for c in need_cols:
-        if c not in df.columns:
-            raise ValueError(f"shop13 清洗器缺少必要列：{c}")
+    validate_columns(df, ["新品価格", "買取商品2", "time-scraped"],
+                     cleaner_name="shop13", shop_name="家電市場")
 
     # --- 载入 iPhone17 信息（含颜色），并补充归一化机种名 ---
     info_df = _load_iphone17_info_df_from_db().copy()
@@ -96,8 +94,5 @@ def clean_shop13(df: pd.DataFrame) -> pd.DataFrame:
                 "recorded_at": t,
             })
 
-    out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
-    if not out.empty:
-        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
-        out["part_number"] = out["part_number"].astype(str)
+    out = assemble_output_df(rows, coerce_price=False)
     return out

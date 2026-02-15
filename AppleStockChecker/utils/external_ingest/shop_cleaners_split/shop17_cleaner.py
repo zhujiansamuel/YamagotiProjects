@@ -16,6 +16,10 @@ from ..cleaner_tools import (
     OLLAMA_URL,
     OLLAMA_MODEL_ID,
     EXTRACTION_MODE,
+    assemble_output_df,
+    log_cleaner_start,
+    log_cleaner_complete,
+    validate_columns,
 )
 import os
 from functools import lru_cache
@@ -467,30 +471,11 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
     CLEANER_NAME = "shop17"
     SHOP_NAME = "ゲストモバイル"
 
-    logger.info(
-        "Starting shop17 cleaner",
-        extra={
-            "event_type": "cleaner_start",
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "input_rows": len(df),
-            "start_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-        }
-    )
+    log_cleaner_start(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), log_seq=_log_seq)
 
-    for c in ["type", "新未開封品", "色減額", "time-scraped"]:
-        if c not in df.columns:
-            logger.error(
-                f"Missing required column: {c}",
-                extra={
-                    "event_type": "validation_error",
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "missing_column": c,
-                    "available_columns": list(df.columns),
-                }
-            )
-            raise ValueError(f"shop17 清洗器缺少必要列：{c}")
+    _log_seq = validate_columns(df, ["type", "新未開封品", "色減額", "time-scraped"],
+                                cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                                logger=logger, log_seq=_log_seq)
 
     info_df = _load_iphone17_info_df_from_db()
     cmap_all = _build_color_map(info_df)
@@ -559,24 +544,8 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
         )
         rows.extend(new_rows)
 
-    out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
-    if not out.empty:
-        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
-        out["part_number"] = out["part_number"].astype(str)
-        out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
+    out = assemble_output_df(rows)
 
-    elapsed_time = time.time() - start_time
-    logger.info(
-        f"Shop17 cleaner completed",
-        extra={
-            "event_type": "cleaner_complete",
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "input_rows": len(df),
-            "output_records": len(out),
-            "elapsed_seconds": round(elapsed_time, 2),
-            "end_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-        }
-    )
+    log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=len(out), start_time=start_time, log_seq=_log_seq)
 
     return out

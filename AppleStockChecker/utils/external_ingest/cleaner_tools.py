@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 import logging
 import os
+import time
 import pandas as pd
 import re
 
@@ -1044,3 +1045,192 @@ def resolve_color_prices(
         )
 
     return output_rows, _seq
+
+
+# ======================================================================
+# 1. DataFrame 输出组装
+# ======================================================================
+
+_OUTPUT_COLUMNS = ["part_number", "shop_name", "price_new", "recorded_at"]
+
+
+def assemble_output_df(
+    rows: List[dict],
+    *,
+    coerce_price: bool = True,
+) -> pd.DataFrame:
+    """
+    将行列表组装为标准输出 DataFrame 并做统一的后处理。
+
+    处理:
+      1. 创建 DataFrame (columns = part_number, shop_name, price_new, recorded_at)
+      2. dropna(subset=["part_number", "price_new"])
+      3. part_number → str
+      4. price_new → Int64 (可选, coerce_price=True 时)
+
+    参数:
+        rows: [{"part_number", "shop_name", "price_new", "recorded_at"}, ...]
+        coerce_price: 是否将 price_new 转为 Int64 (默认 True)
+
+    返回:
+        pd.DataFrame — 列: part_number(str), shop_name, price_new(Int64), recorded_at
+    """
+    out = pd.DataFrame(rows, columns=_OUTPUT_COLUMNS)
+    if not out.empty:
+        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
+        out["part_number"] = out["part_number"].astype(str)
+        if coerce_price:
+            out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
+    return out
+
+
+# ======================================================================
+# 2. 清洗器 开始/完了 日志
+# ======================================================================
+
+def log_cleaner_start(
+    logger: logging.Logger,
+    *,
+    cleaner_name: str,
+    shop_name: str,
+    input_rows: int,
+    log_seq: int = 0,
+    extraction_mode: Optional[str] = None,
+) -> None:
+    """清洗器开始时的统一日志。"""
+    extra: dict = {
+        "event_type": "cleaner_start",
+        "shop_name": shop_name,
+        "cleaner_name": cleaner_name,
+        "log_seq": log_seq,
+        "input_rows": input_rows,
+    }
+    if extraction_mode is not None:
+        extra["extraction_mode"] = extraction_mode
+    logger.info(f"{cleaner_name} cleaner started", extra=extra)
+
+
+def log_cleaner_complete(
+    logger: logging.Logger,
+    *,
+    cleaner_name: str,
+    shop_name: str,
+    input_rows: int,
+    output_records: int,
+    start_time: float,
+    log_seq: int = 0,
+) -> None:
+    """清洗器完了時的统一日志。"""
+    elapsed = round(time.time() - start_time, 2)
+    logger.info(
+        f"{cleaner_name} cleaner completed",
+        extra={
+            "event_type": "cleaner_complete",
+            "shop_name": shop_name,
+            "cleaner_name": cleaner_name,
+            "log_seq": log_seq,
+            "input_rows": input_rows,
+            "output_records": output_records,
+            "elapsed_seconds": elapsed,
+        },
+    )
+
+
+# ======================================================================
+# 3. 行スキップ日志
+# ======================================================================
+
+def log_row_skip(
+    logger: logging.Logger,
+    *,
+    cleaner_name: str,
+    shop_name: str,
+    row_index: int,
+    skip_reason: str,
+    log_seq: int = 0,
+    **extra_fields: object,
+) -> None:
+    """行がスキップされた際の統一 DEBUG ログ。
+
+    Parameters
+    ----------
+    extra_fields : keyword arguments
+        追加コンテキスト (model_text, capacity_gb, data_raw, …) を
+        そのまま extra dict にマージする。
+    """
+    extra: dict = {
+        "event_type": "row_skip",
+        "shop_name": shop_name,
+        "cleaner_name": cleaner_name,
+        "log_seq": log_seq,
+        "row_index": row_index,
+        "skip_reason": skip_reason,
+    }
+    extra.update(extra_fields)
+    logger.debug(
+        f"Row {row_index}: skip ({skip_reason})",
+        extra=extra,
+    )
+
+
+# ======================================================================
+# 4. 必須列バリデーション
+# ======================================================================
+
+def validate_columns(
+    df: pd.DataFrame,
+    required: List[str],
+    *,
+    cleaner_name: str,
+    shop_name: str,
+    logger: Optional[logging.Logger] = None,
+    log_seq: int = 0,
+    lenient: bool = False,
+) -> int:
+    """必須列の存在を検証し、欠落時にログ出力 + エラーを投げる。
+
+    Parameters
+    ----------
+    lenient : bool
+        True の場合、欠落列を None で埋めて処理を続行する (shop2 方式)。
+        False の場合 (デフォルト)、ValueError を送出する。
+
+    Returns
+    -------
+    int
+        更新後の log_seq (ログ出力した分だけインクリメント)。
+    """
+    seq = log_seq
+    for c in required:
+        if c not in df.columns:
+            if logger is not None:
+                if lenient:
+                    logger.warning(
+                        f"Missing column, filling with None: {c}",
+                        extra={
+                            "event_type": "validation_error",
+                            "shop_name": shop_name,
+                            "cleaner_name": cleaner_name,
+                            "log_seq": seq,
+                            "missing_column": c,
+                            "available_columns": list(df.columns),
+                        },
+                    )
+                else:
+                    logger.error(
+                        f"Missing required column: {c}",
+                        extra={
+                            "event_type": "validation_error",
+                            "shop_name": shop_name,
+                            "cleaner_name": cleaner_name,
+                            "log_seq": seq,
+                            "missing_column": c,
+                            "available_columns": list(df.columns),
+                        },
+                    )
+                seq += 1
+            if lenient:
+                df[c] = None
+            else:
+                raise ValueError(f"{cleaner_name} 清洗器缺少必要列：{c}")
+    return seq

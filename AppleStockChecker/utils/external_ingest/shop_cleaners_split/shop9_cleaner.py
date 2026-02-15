@@ -53,6 +53,11 @@ from ..cleaner_tools import (
     OLLAMA_URL,
     OLLAMA_MODEL_ID,
     EXTRACTION_MODE,
+    assemble_output_df,
+    log_cleaner_start,
+    log_cleaner_complete,
+    log_row_skip,
+    validate_columns,
 )
 
 # 初始化 logger
@@ -788,34 +793,12 @@ def clean_shop9(
     start_time = time.time()
     _log_seq = 0
 
-    logger.info(
-        "shop9 cleaner started",
-        extra={
-            "event_type": "cleaner_start",
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "log_seq": _log_seq,
-            "input_rows": len(df),
-            "extraction_mode": EXTRACTION_MODE,
-        },
-    )
+    log_cleaner_start(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), log_seq=_log_seq, extraction_mode=EXTRACTION_MODE)
     _log_seq += 1
 
-    for need in (COL_MODEL, COL_PRICE, COL_COLOR, COL_TIME):
-        if need not in df.columns:
-            logger.error(
-                f"Missing required column: {need}",
-                extra={
-                    "event_type": "validation_error",
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "log_seq": _log_seq,
-                    "missing_column": need,
-                    "available_columns": list(df.columns),
-                },
-            )
-            _log_seq += 1
-            raise ValueError(f"shop9 清洗器缺少必要列：{need}")
+    _log_seq = validate_columns(df, [COL_MODEL, COL_PRICE, COL_COLOR, COL_TIME],
+                                cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                                logger=logger, log_seq=_log_seq)
 
     info_df = _load_iphone17_info_df_from_db()
     pn_map = _build_color_map(info_df)
@@ -835,19 +818,9 @@ def clean_shop9(
         raw_color_cell = df[COL_COLOR].iat[i]
 
         if not m or pd.isna(c):
-            logger.debug(
-                f"Row {i}: skip (model/cap missing)",
-                extra={
-                    "event_type": "row_processing_summary",
-                    "log_seq": _log_seq,
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "row_index": i,
-                    "raw_model": str(raw_model),
-                    "model_norm": str(m),
-                    "skip_reason": "model_or_cap_missing",
-                },
-            )
+            log_row_skip(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                         row_index=i, skip_reason="model_or_cap_missing", log_seq=_log_seq,
+                         raw_model=str(raw_model), model_norm=str(m))
             _log_seq += 1
             continue
         c = int(c)
@@ -855,19 +828,9 @@ def clean_shop9(
         key = (m, c)
         color_to_pn = pn_map.get(key)
         if not color_to_pn:
-            logger.debug(
-                f"Row {i}: skip (no pn_map for key)",
-                extra={
-                    "event_type": "row_processing_summary",
-                    "log_seq": _log_seq,
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "row_index": i,
-                    "model_norm": str(m),
-                    "capacity_gb": c,
-                    "skip_reason": "no_pn_map",
-                },
-            )
+            log_row_skip(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                         row_index=i, skip_reason="no_pn_map", log_seq=_log_seq,
+                         model_norm=str(m), capacity_gb=c)
             _log_seq += 1
             continue
 
@@ -906,24 +869,8 @@ def clean_shop9(
         )
         rows.extend(new_rows)
 
-    out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
-    if not out.empty:
-        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
-        out["part_number"] = out["part_number"].astype(str)
-        out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
+    out = assemble_output_df(rows)
 
-    elapsed = round(time.time() - start_time, 2)
-    logger.info(
-        "shop9 cleaner completed",
-        extra={
-            "event_type": "cleaner_complete",
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "log_seq": _log_seq,
-            "input_rows": len(df),
-            "output_records": len(out),
-            "elapsed_seconds": elapsed,
-        },
-    )
+    log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=len(out), start_time=start_time, log_seq=_log_seq)
 
     return out

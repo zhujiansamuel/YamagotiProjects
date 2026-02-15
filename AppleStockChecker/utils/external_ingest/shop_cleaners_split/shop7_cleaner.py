@@ -15,6 +15,11 @@ from ..cleaner_tools import (
     resolve_color_prices,
     _label_matches_color_unified,
     LABEL_SPLIT_RE_shop7,
+    assemble_output_df,
+    log_cleaner_start,
+    log_cleaner_complete,
+    log_row_skip,
+    validate_columns,
 )
 import re
 import time
@@ -137,36 +142,13 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
     t_start = time.time()
     _log_seq = 0
 
-    logger.info(
-        "shop7 cleaner started",
-        extra={
-            "event_type": "cleaner_start",
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "log_seq": _log_seq,
-            "input_rows": len(df),
-            "extraction_mode": "regex",
-        },
-    )
+    log_cleaner_start(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), log_seq=_log_seq, extraction_mode="regex")
     _log_seq += 1
 
     # ── Step 1: 加载参考数据 & 输入验证 ──────────────────────────────
-    need_cols = ["data", "data2", "data3", "time-scraped"]
-    for c in need_cols:
-        if c not in df.columns:
-            logger.error(
-                f"Missing required column: {c}",
-                extra={
-                    "event_type": "validation_error",
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "log_seq": _log_seq,
-                    "missing_column": c,
-                    "available_columns": list(df.columns),
-                },
-            )
-            _log_seq += 1
-            raise ValueError(f"shop7 清洗器缺少必要列：{c}")
+    _log_seq = validate_columns(df, ["data", "data2", "data3", "time-scraped"],
+                                cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                                logger=logger, log_seq=_log_seq)
 
     info_df = _load_iphone17_info_df_from_db()
 
@@ -242,20 +224,10 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
 
         if not model_norm or pd.isna(c):
             _log_seq += 1
-            logger.debug(
-                f"Row {i}: skip (model/cap missing)",
-                extra={
-                    "event_type": "row_skip",
-                    "log_seq": _log_seq,
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "row_index": i,
-                    "model_text": model_text,
-                    "model_norm": model_norm or "",
-                    "capacity_gb": int(c) if pd.notna(c) else None,
-                    "skip_reason": "model_or_cap_missing",
-                },
-            )
+            log_row_skip(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                         row_index=i, skip_reason="model_or_cap_missing", log_seq=_log_seq,
+                         model_text=model_text, model_norm=model_norm or "",
+                         capacity_gb=int(c) if pd.notna(c) else None)
             continue
 
         cap_gb = int(c)
@@ -263,20 +235,9 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         color_map = pn_map.get(key)
         if not color_map:
             _log_seq += 1
-            logger.debug(
-                f"Row {i}: skip (no color_map for key={key})",
-                extra={
-                    "event_type": "row_skip",
-                    "log_seq": _log_seq,
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "row_index": i,
-                    "model_text": model_text,
-                    "model_norm": model_norm,
-                    "capacity_gb": cap_gb,
-                    "skip_reason": "no_color_map",
-                },
-            )
+            log_row_skip(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                         row_index=i, skip_reason="no_color_map", log_seq=_log_seq,
+                         model_text=model_text, model_norm=model_norm, capacity_gb=cap_gb)
             continue
 
         # ---- Step 3: 下一行是否为颜色减价行 ----
@@ -315,23 +276,8 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         rows.extend(new_rows)
 
     # ── 构建输出 DataFrame ───────────────────────────────────────────
-    out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
-    if not out.empty:
-        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
-        out["part_number"] = out["part_number"].astype(str)
-        out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
+    out = assemble_output_df(rows)
 
-    elapsed = round(time.time() - t_start, 2)
-    logger.info(
-        "shop7 cleaner completed",
-        extra={
-            "event_type": "cleaner_complete",
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "log_seq": _log_seq,
-            "output_rows": len(out),
-            "elapsed_seconds": elapsed,
-        },
-    )
+    log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=len(out), start_time=t_start, log_seq=_log_seq)
 
     return out

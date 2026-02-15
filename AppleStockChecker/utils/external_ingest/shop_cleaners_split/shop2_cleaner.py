@@ -53,6 +53,11 @@ from ..cleaner_tools import (
     safe_to_text,
     PriceDecomposition,
     resolve_color_prices,
+    assemble_output_df,
+    log_cleaner_start,
+    log_cleaner_complete,
+    log_row_skip,
+    validate_columns,
     OLLAMA_URL,
     OLLAMA_MODEL_ID,
     EXTRACTION_MODE,
@@ -460,17 +465,7 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
     start_time = time.time()
     _log_seq = 0
 
-    logger.info(
-        "shop2 cleaner started",
-        extra={
-            "event_type": "cleaner_start",
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "log_seq": _log_seq,
-            "input_rows": len(shop2_df),
-            "extraction_mode": EXTRACTION_MODE,
-        },
-    )
+    log_cleaner_start(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(shop2_df), log_seq=_log_seq, extraction_mode=EXTRACTION_MODE)
     _log_seq += 1
 
     # 统一列名（小写）
@@ -478,39 +473,14 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
     df.columns = [c.strip().lower() for c in df.columns]
 
     # 必要列存在性检查（若缺则补 None，保持兼容）
-    need_cols = ["data2-1", "data2-2", "data3", "data5", "time-scraped"]
-    for c in need_cols:
-        if c not in df.columns:
-            logger.warning(
-                f"Missing column, filling with None: {c}",
-                extra={
-                    "event_type": "validation_error",
-                    "log_seq": _log_seq,
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "missing_column": c,
-                    "available_columns": list(df.columns),
-                },
-            )
-            _log_seq += 1
-            df[c] = None
+    _log_seq = validate_columns(df, ["data2-1", "data2-2", "data3", "data5", "time-scraped"],
+                                cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                                logger=logger, log_seq=_log_seq, lenient=True)
 
     # 只保留 simfree 未開封
     df = df[df["data2-2"].apply(_is_target)].copy().reset_index(drop=True)
     if df.empty:
-        elapsed = round(time.time() - start_time, 2)
-        logger.info(
-            "shop2 cleaner completed (no target rows)",
-            extra={
-                "event_type": "cleaner_complete",
-                "shop_name": SHOP_NAME,
-                "cleaner_name": CLEANER_NAME,
-                "log_seq": _log_seq,
-                "input_rows": len(shop2_df),
-                "output_records": 0,
-                "elapsed_seconds": elapsed,
-            },
-        )
+        log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(shop2_df), output_records=0, start_time=start_time, log_seq=_log_seq)
         return pd.DataFrame(
             columns=["part_number", "shop_name", "price_new", "recorded_at"]
         )
@@ -557,78 +527,37 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
         raw_rule = row.get("data5")
 
         if not raw_modelcap:
-            logger.debug(
-                "Skipping row: data2-1 is empty",
-                extra={
-                    "event_type": "row_processing_summary",
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "row_index": pos,
-                    "skip_reason": "data2-1 empty",
-                },
-            )
+            log_row_skip(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                         row_index=pos, skip_reason="data2-1 empty")
             continue
 
         cap_gb = _parse_capacity_gb(raw_modelcap)
         if not cap_gb:
-            logger.debug(
-                "Skipping row: capacity_gb parse failed",
-                extra={
-                    "event_type": "row_processing_summary",
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "row_index": pos,
-                    "skip_reason": "capacity_gb parse failed",
-                    "data2_1_raw": _truncate_for_log(raw_modelcap, 100),
-                },
-            )
+            log_row_skip(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                         row_index=pos, skip_reason="capacity_gb parse failed",
+                         data2_1_raw=_truncate_for_log(raw_modelcap, 100))
             continue
 
         model_name = _normalize_model_generic(raw_modelcap)
         if not model_name:
-            logger.debug(
-                "Skipping row: model_name normalization failed",
-                extra={
-                    "event_type": "row_processing_summary",
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "row_index": pos,
-                    "skip_reason": "model_name normalization failed",
-                    "data2_1_raw": _truncate_for_log(raw_modelcap, 100),
-                },
-            )
+            log_row_skip(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                         row_index=pos, skip_reason="model_name normalization failed",
+                         data2_1_raw=_truncate_for_log(raw_modelcap, 100))
             continue
 
         key = (model_name, int(cap_gb))
         cmap = color_maps.get(key)
         if not cmap:
-            logger.debug(
-                "Skipping row: no info match for model+capacity",
-                extra={
-                    "event_type": "row_processing_summary",
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "row_index": pos,
-                    "skip_reason": "no info match",
-                    "model_name": model_name,
-                    "capacity_gb": cap_gb,
-                },
-            )
+            log_row_skip(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                         row_index=pos, skip_reason="no info match",
+                         model_name=model_name, capacity_gb=cap_gb)
             continue
 
         base_price = extract_price_yen(raw_price)
         if base_price is None:
-            logger.debug(
-                "Skipping row: base_price parse failed",
-                extra={
-                    "event_type": "row_processing_summary",
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "row_index": pos,
-                    "skip_reason": "base_price parse failed",
-                    "data3_raw": _truncate_for_log(str(raw_price), 100),
-                },
-            )
+            log_row_skip(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                         row_index=pos, skip_reason="base_price parse failed",
+                         data3_raw=_truncate_for_log(str(raw_price), 100))
             continue
 
         # ---- 提取 ----
@@ -663,39 +592,13 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
         out_rows.extend(new_rows)
 
     if not out_rows:
-        elapsed = round(time.time() - start_time, 2)
-        logger.info(
-            "shop2 cleaner completed (no output rows)",
-            extra={
-                "event_type": "cleaner_complete",
-                "shop_name": SHOP_NAME,
-                "cleaner_name": CLEANER_NAME,
-                "log_seq": _log_seq,
-                "input_rows": len(shop2_df),
-                "output_records": 0,
-                "elapsed_seconds": elapsed,
-            },
-        )
+        log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(shop2_df), output_records=0, start_time=start_time, log_seq=_log_seq)
         return pd.DataFrame(
             columns=["part_number", "shop_name", "price_new", "recorded_at"]
         )
 
-    out = pd.DataFrame(
-        out_rows, columns=["part_number", "shop_name", "price_new", "recorded_at"]
-    )
+    out = assemble_output_df(out_rows, coerce_price=False)
 
-    elapsed = round(time.time() - start_time, 2)
-    logger.info(
-        "shop2 cleaner completed",
-        extra={
-            "event_type": "cleaner_complete",
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "log_seq": _log_seq,
-            "input_rows": len(shop2_df),
-            "output_records": len(out),
-            "elapsed_seconds": elapsed,
-        },
-    )
+    log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(shop2_df), output_records=len(out), start_time=start_time, log_seq=_log_seq)
 
     return out

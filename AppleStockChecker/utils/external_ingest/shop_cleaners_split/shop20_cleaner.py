@@ -10,6 +10,7 @@ shop20 清洗器
 """
 from typing import Protocol, Dict, Callable, Optional,List
 from ...external_ingest.helpers import to_int_yen, parse_dt_aware
+from ..cleaner_tools import assemble_output_df, validate_columns
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -111,9 +112,8 @@ def clean_shop20(df: pd.DataFrame) -> pd.DataFrame:
       - recorded_at 使用该行的 time-scraped
     """
     # 必要列检查
-    for c in ["json", "time-scraped"]:
-        if c not in df.columns:
-            raise ValueError(f"shop20 清洗器缺少必要列：{c}")
+    validate_columns(df, ["json", "time-scraped"],
+                     cleaner_name="shop20", shop_name="毎日買取")
 
     info_df = _load_iphone17_info_df_for_shop20()
     jan_map = _build_jan_to_pn_map_shop20(info_df)
@@ -174,9 +174,5 @@ def clean_shop20(df: pd.DataFrame) -> pd.DataFrame:
                 "recorded_at": rec_at,
             })
 
-    out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
-    if not out.empty:
-        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
-        out["part_number"] = out["part_number"].astype(str)
-        out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
+    out = assemble_output_df(rows)
     return out
