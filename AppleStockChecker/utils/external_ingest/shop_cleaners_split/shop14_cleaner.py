@@ -43,6 +43,8 @@ from ..cleaner_tools import (
     assemble_output_df,
     log_cleaner_start,
     log_cleaner_complete,
+    coerce_amount_yen,
+    dispatch_extraction,
     lx,
     HAS_LANGEXTRACT,
     log_llm_extraction_error,
@@ -106,37 +108,8 @@ def _split_labels(labels: str) -> List[str]:
     return [p.strip() for p in parts if p and p.strip()]
 
 
-def _coerce_amount_yen(v) -> Optional[int]:
-    if v is None:
-        return None
-    if isinstance(v, (int, float)):
-        try:
-            return int(v)
-        except Exception:
-            return None
-
-    s = str(v).strip()
-    if not s:
-        return None
-
-    sign = 1
-    if s[:1] in {"+", "＋"}:
-        s = s[1:].strip()
-    elif s[:1] in {"-", "−", "－"}:
-        sign = -1
-        s = s[1:].strip()
-
-    n = to_int_yen(s)
-    if n is None:
-        s2 = re.sub(r"[^\d]", "", s)
-        if not s2:
-            return None
-        try:
-            n = int(s2)
-        except Exception:
-            return None
-
-    return sign * int(n)
+# _coerce_amount_yen → cleaner_tools.coerce_amount_yen 统一导入
+_coerce_amount_yen = coerce_amount_yen
 
 
 def _labels_from_text_fallback(extraction_text: str) -> str:
@@ -601,26 +574,14 @@ def _extract_specs_shop14_parse(
     返回: (parsed_dict, extraction_method)
     parsed_dict = {"all_delta": ..., "abs": [...], "delta": [...]}
     """
-    if mode == "regex":
-        parsed = _extract_specs_shop14_regex(text)
-        return parsed, "regex"
-
-    if mode == "llm":
-        parsed = _extract_specs_shop14_llm(text)
-        return parsed, "llm"
-
-    # auto: regex first, LLM fallback
-    parsed = _extract_specs_shop14_regex(text)
-    has_results = (
-        parsed.get("all_delta") is not None
-        or parsed.get("abs")
-        or parsed.get("delta")
+    return dispatch_extraction(
+        mode,
+        regex_fn=lambda: _extract_specs_shop14_regex(text),
+        llm_fn=lambda: _extract_specs_shop14_llm(text),
+        has_result_fn=lambda r: (
+            r.get("all_delta") is not None or r.get("abs") or r.get("delta")
+        ),
     )
-    if has_results:
-        return parsed, "regex"
-
-    parsed = _extract_specs_shop14_llm(text)
-    return parsed, "llm"
 
 
 def _extract_specs_shop14_dispatch(

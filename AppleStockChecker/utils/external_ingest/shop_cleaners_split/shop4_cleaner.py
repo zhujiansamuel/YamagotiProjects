@@ -54,6 +54,9 @@ from ..cleaner_tools import (
     log_cleaner_complete,
     log_llm_extraction_error,
     validate_columns,
+    coerce_amount_yen,
+    dispatch_extraction,
+    llm_guardrail_check,
     lx,
     HAS_LANGEXTRACT,
     LABEL_SPLIT_RE_shop4 as LABEL_SPLIT_RE,
@@ -85,23 +88,8 @@ _norm = _norm_strip
 # ----------------------------------------------------------------------
 # LABEL_SPLIT_RE: 从 cleaner_tools.LABEL_SPLIT_RE_shop4 导入
 
-def _coerce_int_maybe(v) -> Optional[int]:
-    if v is None:
-        return None
-    if isinstance(v, int):
-        return v
-    if isinstance(v, float):
-        return int(v)
-    s = str(v).strip()
-    if not s:
-        return None
-    sign = 1
-    if s[0] in ("-", "−", "－"):
-        sign = -1
-    amt = _normalize_amount_text(s)
-    if amt is None:
-        return None
-    return sign * int(amt)
+# _coerce_int_maybe → cleaner_tools.coerce_amount_yen 统一导入
+_coerce_int_maybe = coerce_amount_yen
 
 def _split_labels(label: str) -> List[str]:
     return [p.strip() for p in LABEL_SPLIT_RE.split(label or "") if p and p.strip()]
@@ -529,10 +517,6 @@ def _extract_specs_shop4_llm(
         if not label:
             continue
 
-        # Guardrail: label 必须在原文中出现
-        if label not in block_text:
-            continue
-
         attrs = getattr(ex, "attributes", None)
         attrs = attrs if isinstance(attrs, dict) else {}
         delta = _coerce_int_maybe(attrs.get("delta_yen"))
@@ -543,9 +527,8 @@ def _extract_specs_shop4_llm(
             else:
                 continue
 
-        # Guardrail: delta 金额的绝对值必须在原文中出现（防幻觉金额）
-        block_text_no_commas = block_text.replace(",", "").replace("，", "")
-        if delta != 0 and str(abs(int(delta))) not in block_text_no_commas:
+        # Guardrail A & B: label/amount 必须在原文出现（cleaner_tools 统一实现）
+        if not llm_guardrail_check(label, delta, block_text):
             continue
 
         start_pos = _get_start_pos(ex)
@@ -590,28 +573,12 @@ def _extract_specs_shop4_dispatch(
 
     返回 PriceDecomposition
     """
-    mode = EXTRACTION_MODE
-
-    if mode == "regex":
-        _, ds, _ = _extract_specs_shop4_regex_block(df, start_idx)
-        method = "regex"
-
-    elif mode == "llm":
-        _, ds, _ = _extract_specs_shop4_llm(
-            df, start_idx, row_index=row_index,
-        )
-        method = "llm"
-
-    else:
-        # ---- auto: 正則優先，正則無颜色结果时 LLM 兜底 ----
-        regex_result, ds, _ = _extract_specs_shop4_regex_block(df, start_idx)
-        if regex_result:
-            method = "regex"
-        else:
-            _, ds, _ = _extract_specs_shop4_llm(
-                df, start_idx, row_index=row_index,
-            )
-            method = "llm"
+    (_, ds, _), method = dispatch_extraction(
+        EXTRACTION_MODE,
+        regex_fn=lambda: _extract_specs_shop4_regex_block(df, start_idx),
+        llm_fn=lambda: _extract_specs_shop4_llm(df, start_idx, row_index=row_index),
+        has_result_fn=lambda r: bool(r[0]),  # r = (adjustments, delta_specs, label_map)
+    )
 
     return PriceDecomposition(
         delta_specs=list(ds),

@@ -51,6 +51,7 @@ from ..cleaner_tools import (
     log_cleaner_start,
     log_cleaner_complete,
     validate_columns,
+    dispatch_extraction,
     lx,
     HAS_LANGEXTRACT,
     log_llm_extraction_error,
@@ -639,30 +640,17 @@ def _extract_specs_shop15_dispatch(
 
     返回 PriceDecomposition。
     """
-    mode = EXTRACTION_MODE
-
-    if mode == "regex":
-        bp, specs = _extract_specs_shop15_regex(price_text)
-        method = "regex"
-
-    elif mode == "llm":
-        bp, specs = _extract_specs_shop15_llm(
-            price_text, idx=idx,
-        )
-        method = "llm"
-
-    else:
-        # ---- auto: 正则优先，正则无 specs 时 LLM 兜底 ----
-        bp_re, specs_re = _extract_specs_shop15_regex(price_text)
-        if specs_re:
-            bp, specs, method = bp_re, specs_re, "regex"
-        else:
-            bp_llm, specs_llm = _extract_specs_shop15_llm(
-                price_text, idx=idx,
-            )
-            # LLM 的 base_price 优先，其次正则的
-            bp = bp_llm if bp_llm is not None else bp_re
-            specs, method = specs_llm, "llm"
+    (bp, specs), method = dispatch_extraction(
+        EXTRACTION_MODE,
+        regex_fn=lambda: _extract_specs_shop15_regex(price_text),
+        llm_fn=lambda: _extract_specs_shop15_llm(price_text, idx=idx),
+        has_result_fn=lambda r: bool(r[1]),  # r = (bp, specs); specs 非空即有结果
+    )
+    # auto 模式下 LLM 的 base_price 为 None 时，回退到正则的 base_price
+    if method == "llm" and bp is None:
+        bp_re = _extract_specs_shop15_regex(price_text)[0]
+        if bp_re is not None:
+            bp = bp_re
 
     delta_specs = [(label, value) for label, kind, value in specs if kind == "delta"]
     abs_specs = [(label, value) for label, kind, value in specs if kind == "abs"]

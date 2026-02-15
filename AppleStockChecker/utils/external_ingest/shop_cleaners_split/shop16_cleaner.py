@@ -54,6 +54,8 @@ from ..cleaner_tools import (
     log_cleaner_start,
     log_cleaner_complete,
     validate_columns,
+    dispatch_extraction,
+    llm_guardrail_check,
     lx,
     HAS_LANGEXTRACT,
     log_llm_extraction_error,
@@ -576,17 +578,13 @@ def _extract_specs_shop16_llm(
         deltas = corrected
 
     # Guardrail C: 逐条证据过滤 —— label/金额必须在原文出现
-    text_no_commas = price_text.replace(",", "")
     filtered_deltas: List[Tuple[str, int]] = []
     for label_raw, delta in deltas:
         lb = _normalize_label_shop16(label_raw)
         if not lb:
             continue
-        if lb not in price_text:
-            continue
-        if str(abs(int(delta))) not in text_no_commas:
-            continue
-        filtered_deltas.append((lb, int(delta)))
+        if llm_guardrail_check(lb, delta, price_text):
+            filtered_deltas.append((lb, int(delta)))
     deltas = filtered_deltas
 
     filtered_absps: List[Tuple[str, int]] = []
@@ -594,11 +592,8 @@ def _extract_specs_shop16_llm(
         lb = _normalize_label_shop16(label_raw)
         if not lb:
             continue
-        if lb not in price_text:
-            continue
-        if str(int(amt)) not in text_no_commas:
-            continue
-        filtered_absps.append((lb, int(amt)))
+        if llm_guardrail_check(lb, amt, price_text):
+            filtered_absps.append((lb, int(amt)))
     absps = filtered_absps
 
     # LLM 完全失败且无颜色信息时，回退到正则
@@ -623,30 +618,17 @@ def _extract_specs_shop16_dispatch(
 
     返回 PriceDecomposition
     """
-    mode = EXTRACTION_MODE
-
-    if mode == "regex":
-        bp, deltas, absps = _extract_specs_shop16_regex(price_text)
-        method = "regex"
-
-    elif mode == "llm":
-        bp, deltas, absps = _extract_specs_shop16_llm(
-            price_text, idx=idx,
-        )
-        method = "llm"
-
-    else:
-        # ---- auto: 正则优先，正则无颜色结果时 LLM 兜底 ----
-        bp_re, deltas_re, absps_re = _extract_specs_shop16_regex(price_text)
-        if deltas_re or absps_re:
-            bp, deltas, absps, method = bp_re, deltas_re, absps_re, "regex"
-        else:
-            bp_llm, deltas_llm, absps_llm = _extract_specs_shop16_llm(
-                price_text, idx=idx,
-            )
-            # LLM 的 base_price 优先，其次正则的
-            bp = bp_llm if bp_llm is not None else bp_re
-            deltas, absps, method = deltas_llm, absps_llm, "llm"
+    (bp, deltas, absps), method = dispatch_extraction(
+        EXTRACTION_MODE,
+        regex_fn=lambda: _extract_specs_shop16_regex(price_text),
+        llm_fn=lambda: _extract_specs_shop16_llm(price_text, idx=idx),
+        has_result_fn=lambda r: bool(r[1] or r[2]),  # r = (bp, deltas, absps)
+    )
+    # auto 模式下 LLM 的 base_price 为 None 时，回退到正则的 base_price
+    if method == "llm" and bp is None:
+        bp_re = _extract_specs_shop16_regex(price_text)[0]
+        if bp_re is not None:
+            bp = bp_re
 
     # base_price=None 时不能使用 delta（base+delta 无法计算）
     if bp is None:

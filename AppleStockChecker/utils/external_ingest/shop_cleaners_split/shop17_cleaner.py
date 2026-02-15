@@ -20,6 +20,7 @@ from ..cleaner_tools import (
     log_cleaner_start,
     log_cleaner_complete,
     validate_columns,
+    dispatch_extraction,
     lx,
     HAS_LANGEXTRACT,
     log_llm_extraction_error,
@@ -414,19 +415,11 @@ def _extract_specs_shop17_dispatch(
 
     返回 PriceDecomposition
     """
-    if EXTRACTION_MODE == "regex":
-        deltas = _extract_specs_shop17_regex(text)
-        method = "regex"
-    elif EXTRACTION_MODE == "llm":
-        deltas = _extract_specs_shop17_llm(text, shop_name, cleaner_name, row_context)
-        method = "llm"
-    else:  # auto
-        deltas = _extract_specs_shop17_regex(text)
-        if deltas:
-            method = "regex"
-        else:
-            deltas = _extract_specs_shop17_llm(text, shop_name, cleaner_name, row_context)
-            method = "llm"
+    deltas, method = dispatch_extraction(
+        EXTRACTION_MODE,
+        regex_fn=lambda: _extract_specs_shop17_regex(text),
+        llm_fn=lambda: _extract_specs_shop17_llm(text, shop_name, cleaner_name, row_context),
+    )
 
     if not deltas:
         method = "none"

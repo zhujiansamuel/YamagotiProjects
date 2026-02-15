@@ -56,6 +56,11 @@ from ..cleaner_tools import (
     log_cleaner_complete,
     log_llm_extraction_error,
     validate_columns,
+    clean_label_token,
+    dispatch_extraction,
+    DELTA_PATTERN_STRICT as _DELTA_PATTERN_STRICT_IMPORTED,
+    DELTA_PATTERN_LOOSE as _DELTA_PATTERN_LOOSE_IMPORTED,
+    SIGNED_AMOUNT_PATTERN,
     lx,
     HAS_LANGEXTRACT,
     LABEL_SPLIT_RE_shop3 as _LABEL_SPLIT_RE,
@@ -89,36 +94,18 @@ _norm = _norm_strip
 # Step 1-2: 文本归一化 & 金额解析
 # ----------------------------------------------------------------------
 
-def _clean_label_token(tok: str) -> str:
-    if tok is None:
-        return ""
-    t = str(tok).strip()
-    t = re.sub(r"\(.*?\)", "", t)
-    t = re.sub(r"（.*?）", "", t)
-    return t.strip()
+# _clean_label_token → cleaner_tools.clean_label_token 统一导入
+_clean_label_token = clean_label_token
 
 # ----------------------------------------------------------------------
 # Step 4: 正则提取差价
 # ----------------------------------------------------------------------
 # _LABEL_SPLIT_RE: 从 cleaner_tools.LABEL_SPLIT_RE_shop3 导入
 
-_SIGNED_AMOUNT_PAT = re.compile(r"([+\-−－])\s*([0-9０-９][0-9０-９,，]*)")
-
-_DELTA_PATTERN_STRICT = re.compile(
-    r"""(?P<labels>[^+\-−－\d¥￥円]+?)
-        (?P<sign>[+\-−－])\s*
-        (?P<amount>[０-９0-9][０-９0-9,，]*)\s*(?:円)?
-    """,
-    re.UNICODE | re.VERBOSE,
-)
-
-_DELTA_PATTERN_LOOSE = re.compile(
-    r"""(?P<labels>[\u3000\u30A0-\u30FF\u4E00-\u9FFF\w\-\s\/、，,・]+?)
-        (?P<sign>[+\-−－])\s*
-        (?P<amount>[０-９0-9][０-９0-9,，]*)\s*(?:円)?
-    """,
-    re.UNICODE | re.VERBOSE,
-)
+# 正则模式 → cleaner_tools 统一导入
+_SIGNED_AMOUNT_PAT = SIGNED_AMOUNT_PATTERN
+_DELTA_PATTERN_STRICT = _DELTA_PATTERN_STRICT_IMPORTED
+_DELTA_PATTERN_LOOSE = _DELTA_PATTERN_LOOSE_IMPORTED
 
 def _extract_specs_shop3_regex(text: str) -> List[Tuple[str, int]]:
     """
@@ -435,22 +422,11 @@ def _extract_specs_shop3_dispatch(
 
     返回 PriceDecomposition
     """
-    mode = EXTRACTION_MODE
-
-    if mode == "regex":
-        deltas = _extract_specs_shop3_regex(text)
-        method = "regex"
-    elif mode == "llm":
-        deltas = _extract_specs_shop3_llm(text, row_index=row_index)
-        method = "llm"
-    else:
-        # ---- auto: 正则优先，正则无颜色结果时 LLM 兜底 ----
-        deltas = _extract_specs_shop3_regex(text)
-        if deltas:
-            method = "regex"
-        else:
-            deltas = _extract_specs_shop3_llm(text, row_index=row_index)
-            method = "llm"
+    deltas, method = dispatch_extraction(
+        EXTRACTION_MODE,
+        regex_fn=lambda: _extract_specs_shop3_regex(text),
+        llm_fn=lambda: _extract_specs_shop3_llm(text, row_index=row_index),
+    )
 
     return PriceDecomposition(
         base_price=base_price,
