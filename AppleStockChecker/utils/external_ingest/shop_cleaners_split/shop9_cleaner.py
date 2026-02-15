@@ -60,6 +60,8 @@ from ..cleaner_tools import (
     log_row_skip,
     log_llm_extraction_error,
     validate_columns,
+    coerce_signed_int,
+    dispatch_extraction,
     lx,
     HAS_LANGEXTRACT,
 )
@@ -103,41 +105,8 @@ def _norm_cls(x: str) -> str:
 # Step 1: 金額解析
 # ----------------------------------------------------------------------
 
-def _coerce_signed_int(x) -> Optional[int]:
-    if x is None:
-        return None
-    if isinstance(x, (int,)) and not isinstance(x, bool):
-        return int(x)
-
-    s = str(x)
-    # 全角数字/符号 -> 半角
-    s = s.translate(str.maketrans("０１２３４５６７８９＋－−，", "0123456789+--,"))
-
-    sign = 1
-    digits = []
-    sign_seen = False
-    started = False
-    for ch in s:
-        if not started and not sign_seen and ch in "+-":
-            sign_seen = True
-            sign = -1 if ch == "-" else 1
-            continue
-        if ch.isdigit():
-            started = True
-            digits.append(ch)
-            continue
-        if started and ch in {",", " "}:
-            # 千分位分隔符忽略
-            continue
-        if started:
-            break
-
-    if not digits:
-        return None
-    try:
-        return sign * int("".join(digits))
-    except Exception:
-        return None
+# _coerce_signed_int → cleaner_tools.coerce_signed_int 统一导入
+_coerce_signed_int = coerce_signed_int
 
 # _norm_amount_to_int は cleaner_tools._normalize_amount_text に統一
 _norm_amount_to_int = _normalize_amount_text
@@ -697,11 +666,15 @@ def _extract_specs_shop9_dispatch(
 
     返回 PriceDecomposition
     """
-    mode = EXTRACTION_MODE
+    (abs_map, delta_map, abs_specs, delta_specs, cal, cdl), method = dispatch_extraction(
+        EXTRACTION_MODE,
+        regex_fn=lambda: _extract_specs_shop9_regex(s_price, s_color, color_to_pn),
+        llm_fn=lambda: _extract_specs_shop9_llm(s_price, s_color, color_to_pn, row_index=row_index),
+        has_result_fn=lambda r: bool(r[0] or r[1]),  # r = (abs_map, delta_map, ...)
+    )
 
-    if mode == "regex":
-        abs_map, delta_map, abs_specs, delta_specs, cal, cdl = \
-            _extract_specs_shop9_regex(s_price, s_color, color_to_pn)
+    # regex 路径追加 abs overrides（仅 regex/auto-regex 需要）
+    if method == "regex":
         overrides = _direct_abs_overrides_for_row(
             raw_color_text=s_color, color_to_pn=color_to_pn,
         )
@@ -709,32 +682,6 @@ def _extract_specs_shop9_dispatch(
             for col_norm, v in overrides.items():
                 abs_map[col_norm] = int(v)
                 abs_specs.append((col_norm, int(v)))
-        method = "regex"
-    elif mode == "llm":
-        abs_map, delta_map, abs_specs, delta_specs, cal, cdl = \
-            _extract_specs_shop9_llm(
-                s_price, s_color, color_to_pn, row_index=row_index,
-            )
-        method = "llm"
-    else:
-        # ---- auto: regex 优先，regex 无颜色结果时 LLM 兜底 ----
-        abs_map, delta_map, abs_specs, delta_specs, cal, cdl = \
-            _extract_specs_shop9_regex(s_price, s_color, color_to_pn)
-        if abs_map or delta_map:
-            overrides = _direct_abs_overrides_for_row(
-                raw_color_text=s_color, color_to_pn=color_to_pn,
-            )
-            if overrides:
-                for col_norm, v in overrides.items():
-                    abs_map[col_norm] = int(v)
-                    abs_specs.append((col_norm, int(v)))
-            method = "regex"
-        else:
-            abs_map, delta_map, abs_specs, delta_specs, cal, cdl = \
-                _extract_specs_shop9_llm(
-                    s_price, s_color, color_to_pn, row_index=row_index,
-                )
-            method = "llm"
 
     # ---- "ALL" 归一化 ----
     final_delta_specs: List[Tuple[str, int]] = list(delta_specs)

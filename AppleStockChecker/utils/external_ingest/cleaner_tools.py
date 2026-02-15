@@ -745,6 +745,309 @@ def _normalize_amount_text(s: str) -> Optional[int]:
         return None
 
 
+# ======================================================================
+# 公共类型强转函数（从 shop2/4/9/11/14 提取合并）
+# ======================================================================
+
+_INT_RE = re.compile(r"[+-]?\d+")
+
+# 符号字符集（shop2 定义，多处引用）
+SIGN_MINUS_CHARS = frozenset({"-", "−", "－", "–", "—", "―"})
+SIGN_PLUS_CHARS = frozenset({"+", "＋"})
+
+
+def coerce_int(val) -> Optional[int]:
+    """
+    把 int/float/str 的数字（含 '円'、'¥'、逗号、全角符号）稳健转成 int。
+
+    合并自 shop2._coerce_int / shop11._coerce_int / shop4._coerce_int_maybe。
+    统一处理：None / NaN / bool / int / float / 字符串（去逗号/去"円"/去全角符号）。
+    """
+    if val is None:
+        return None
+    try:
+        if pd.isna(val):
+            return None
+    except Exception:
+        pass
+
+    if isinstance(val, bool):
+        return None
+    if isinstance(val, int):
+        return val
+    if isinstance(val, float):
+        return int(val)
+
+    s = str(val).strip()
+    if not s or s.lower() in {"nan", "none", "null"}:
+        return None
+    s = s.replace(",", "").replace("円", "").replace("¥", "")
+    s = s.replace("−", "-").replace("－", "-").replace("＋", "+")
+    m = _INT_RE.search(s)
+    if not m:
+        return None
+    return int(m.group(0))
+
+
+def coerce_signed_int(x) -> Optional[int]:
+    """
+    全角数字/符号→半角，提取带符号整数。
+
+    合并自 shop9._coerce_signed_int。
+    处理：全角数字、全角 +/-、逗号分隔符。
+    """
+    if x is None:
+        return None
+    if isinstance(x, int) and not isinstance(x, bool):
+        return int(x)
+
+    s = str(x)
+    # 全角数字/符号 -> 半角
+    s = s.translate(str.maketrans("０１２３４５６７８９＋－−，", "0123456789+--,"))
+
+    sign = 1
+    digits = []
+    sign_seen = False
+    started = False
+    for ch in s:
+        if not started and not sign_seen and ch in "+-":
+            sign_seen = True
+            sign = -1 if ch == "-" else 1
+            continue
+        if ch.isdigit():
+            started = True
+            digits.append(ch)
+            continue
+        if started and ch in {",", " "}:
+            # 千分位分隔符忽略
+            continue
+        if started:
+            break
+
+    if not digits:
+        return None
+    try:
+        return sign * int("".join(digits))
+    except Exception:
+        return None
+
+
+def coerce_amount_yen(v) -> Optional[int]:
+    """
+    带符号金额解析，支持 +/- 前缀和 to_int_yen 兜底。
+
+    合并自 shop14._coerce_amount_yen。
+    处理：符号前缀 → to_int_yen → 纯数字兜底。
+    """
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        try:
+            return int(v)
+        except Exception:
+            return None
+
+    s = str(v).strip()
+    if not s:
+        return None
+
+    sign = 1
+    if s[:1] in SIGN_PLUS_CHARS:
+        s = s[1:].strip()
+    elif s[:1] in SIGN_MINUS_CHARS:
+        sign = -1
+        s = s[1:].strip()
+
+    n = to_int_yen(s)
+    if n is None:
+        s2 = re.sub(r"[^\d]", "", s)
+        if not s2:
+            return None
+        try:
+            n = int(s2)
+        except Exception:
+            return None
+
+    return sign * int(n)
+
+
+# ======================================================================
+# 公共提取模式调度（从 shop2/3/4/9/11/12/14 提取合并）
+# ======================================================================
+
+def dispatch_extraction(
+    mode: str,
+    regex_fn: Callable,
+    llm_fn: Callable,
+    *,
+    has_result_fn: Optional[Callable] = None,
+) -> tuple:
+    """
+    三模式（regex / llm / auto）提取调度的通用实现。
+
+    合并自各 shop 的 _extract_specs_shop*_dispatch 中重复的 if/elif/else 逻辑。
+
+    参数:
+        mode: "regex" | "llm" | "auto"（通常来自 EXTRACTION_MODE）
+        regex_fn: 无参调用，返回提取结果（类型由 shop 自定）
+        llm_fn: 无参调用，返回提取结果
+        has_result_fn: 判断 regex 结果是否"有内容"的函数。
+                       默认 bool(result)。用于 auto 模式下决定是否 fallback 到 LLM。
+
+    返回:
+        (result, method_str)
+        method_str: "regex" | "llm"
+
+    示例:
+        result, method = dispatch_extraction(
+            EXTRACTION_MODE,
+            regex_fn=lambda: _extract_specs_regex(text),
+            llm_fn=lambda: _extract_specs_llm(text, row_index=i),
+        )
+    """
+    check = has_result_fn or bool
+
+    if mode == "regex":
+        return regex_fn(), "regex"
+
+    if mode == "llm":
+        return llm_fn(), "llm"
+
+    # auto: regex 优先，无结果时 LLM 兜底
+    result = regex_fn()
+    if check(result):
+        return result, "regex"
+
+    return llm_fn(), "llm"
+
+
+# ======================================================================
+# 公共正则模式 & 标签清洗（从 shop3/4/9/12 等提取合并）
+# ======================================================================
+
+def clean_label_token(tok: str) -> str:
+    """
+    清洗标签 token：去除括号内容（半角+全角），strip 空白。
+
+    合并自 shop3._clean_label_token（shop3/4/12 等多处使用相同逻辑）。
+    """
+    if tok is None:
+        return ""
+    t = str(tok).strip()
+    t = re.sub(r"\(.*?\)", "", t)
+    t = re.sub(r"（.*?）", "", t)
+    return t.strip()
+
+
+# 颜色±金额 正则模式（各 shop 共用的基础变体）
+# DELTA_PATTERN_STRICT: 严格模式 —— 标签后紧跟 ±金额（shop3/12 等使用）
+DELTA_PATTERN_STRICT = re.compile(
+    r"""(?P<labels>[^+\-−－\d¥￥円]+?)
+        (?P<sign>[+\-−－])\s*
+        (?P<amount>[０-９0-9][０-９0-9,，]*)\s*(?:円)?
+    """,
+    re.UNICODE | re.VERBOSE,
+)
+
+# DELTA_PATTERN_LOOSE: 宽松模式 —— 允许日文/汉字/连字符等标签字符（shop3 fallback）
+DELTA_PATTERN_LOOSE = re.compile(
+    r"""(?P<labels>[\u3000\u30A0-\u30FF\u4E00-\u9FFF\w\-\s\/、，,・]+?)
+        (?P<sign>[+\-−－])\s*
+        (?P<amount>[０-９0-9][０-９0-9,，]*)\s*(?:円)?
+    """,
+    re.UNICODE | re.VERBOSE,
+)
+
+# ABS_PRICE_PATTERN: 绝对价格模式 —— 标签后跟金额，无 ± 符号（shop9/12 等使用）
+ABS_PRICE_PATTERN = re.compile(
+    r"""(?P<labels>[^0-9０-９¥￥円]+?)\s*(?:¥|￥)?\s*(?P<amount>[０-９0-9][０-９0-9,，]*)\s*(?:円)?""",
+    re.I,
+)
+
+# SIGNED_AMOUNT_PATTERN: 提取文本中所有 ±金额（shop3 的 _extract_signed_amounts_from_text）
+SIGNED_AMOUNT_PATTERN = re.compile(r"([+\-−－])\s*([0-9０-９][0-9０-９,，]*)")
+
+
+# ======================================================================
+# 公共 LLM Guardrails（从 shop2/3/4/12 提取合并）
+# ======================================================================
+
+def llm_guardrail_check(
+    label: str,
+    amount: int,
+    source_text: str,
+    *,
+    check_label: bool = True,
+    check_amount: bool = True,
+) -> bool:
+    """
+    LLM 提取结果的通用防幻觉验证。
+
+    合并自 shop2/3/4/12 中重复出现的 Guardrail A/B 逻辑。
+
+    Guardrail A: label（颜色标签）必须在原文中出现
+    Guardrail B: amount（金额）的绝对值必须在原文中出现（去逗号后比较）
+
+    参数:
+        label: LLM 提取的颜色标签
+        amount: LLM 提取的金额（int）
+        source_text: 原始文本
+        check_label: 是否检查标签存在性（默认 True）
+        check_amount: 是否检查金额存在性（默认 True）
+
+    返回:
+        True = 通过验证，False = 疑似幻觉应丢弃
+    """
+    if not source_text:
+        return False
+
+    # Guardrail A: label 在原文中
+    if check_label and label:
+        if label not in source_text:
+            return False
+
+    # Guardrail B: 金额绝对值在原文中（去逗号比较）
+    if check_amount and amount is not None and amount != 0:
+        text_no_commas = source_text.replace(",", "").replace("，", "")
+        if str(abs(int(amount))) not in text_no_commas:
+            return False
+
+    return True
+
+
+def apply_llm_guardrails(
+    rules: dict,
+    source_text: str,
+    *,
+    check_label: bool = True,
+    check_amount: bool = True,
+) -> dict:
+    """
+    对 {label: amount} 字典批量应用 LLM guardrails，返回过滤后的字典。
+
+    合并自 shop2._extract_specs_shop2_llm 中的过滤循环。
+
+    参数:
+        rules: {group_label: delta_yen} 字典
+        source_text: 原始文本
+        check_label/check_amount: 同 llm_guardrail_check
+
+    返回:
+        过滤后的 {label: amount} 字典
+    """
+    if not rules:
+        return {}
+    return {
+        label: int(amount)
+        for label, amount in rules.items()
+        if llm_guardrail_check(
+            label, amount, source_text,
+            check_label=check_label,
+            check_amount=check_amount,
+        )
+    }
+
+
 def _build_jan_map(info_df: pd.DataFrame) -> Dict[str, str]:
     """
     构建 { jan_digits -> part_number } 映射。

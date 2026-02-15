@@ -59,6 +59,11 @@ from ..cleaner_tools import (
     log_row_skip,
     log_llm_extraction_error,
     validate_columns,
+    coerce_int,
+    dispatch_extraction,
+    apply_llm_guardrails,
+    SIGN_MINUS_CHARS,
+    SIGN_PLUS_CHARS,
     lx,
     HAS_LANGEXTRACT,
     OLLAMA_URL,
@@ -110,37 +115,10 @@ def _is_target(s: str) -> bool:
 # Step 4: 规则解析辅助函数
 # ----------------------------------------------------------------------
 
-_INT_RE = re.compile(r"[+-]?\d+")
-
-def _coerce_int(val) -> Optional[int]:
-    """把 int/float/str 的数字（含 '円'、'¥'、逗号、全角符号）稳健转成 int。"""
-    if val is None:
-        return None
-    try:
-        if pd.isna(val):
-            return None
-    except Exception:
-        pass
-
-    if isinstance(val, bool):
-        return None
-    if isinstance(val, int):
-        return val
-    if isinstance(val, float):
-        return int(val)
-
-    s = str(val).strip()
-    if not s or s.lower() in {"nan", "none", "null"}:
-        return None
-    s = s.replace(",", "").replace("円", "").replace("¥", "")
-    s = s.replace("−", "-").replace("－", "-").replace("＋", "+")
-    m = _INT_RE.search(s)
-    if not m:
-        return None
-    return int(m.group(0))
-
-_SIGN_MINUS = {"-", "−", "－", "–", "—", "―"}
-_SIGN_PLUS = {"+", "＋"}
+# _coerce_int / _INT_RE / _SIGN_MINUS / _SIGN_PLUS → cleaner_tools 统一导入
+_coerce_int = coerce_int
+_SIGN_MINUS = SIGN_MINUS_CHARS
+_SIGN_PLUS = SIGN_PLUS_CHARS
 
 def _parse_rule_token_simple(token: str) -> Optional[Tuple[str, int]]:
     """
@@ -376,17 +354,8 @@ def _extract_specs_shop2_llm(
             error=e, text=s, row_index=row_index,
         )
 
-    # Guardrail A & B: label/amount 必须在原文出现
-    text_no_commas = s.replace(",", "")
-    filtered_rules: dict[str, int] = {}
-    for group_label, delta in llm_rules.items():
-        # Guardrail A: group_label 在原文中
-        if group_label not in s:
-            continue
-        # Guardrail B: delta 金额绝对值在原文中
-        if str(abs(int(delta))) not in text_no_commas:
-            continue
-        filtered_rules[group_label] = int(delta)
+    # Guardrail A & B: label/amount 必须在原文出现（cleaner_tools 统一实现）
+    filtered_rules = apply_llm_guardrails(llm_rules, s)
 
     # 正则补全：LLM 漏掉的 key 用正则结果补齐
     supplement = _extract_specs_shop2_regex(s)
@@ -419,22 +388,11 @@ def _extract_specs_shop2_dispatch(
 
     返回 PriceDecomposition
     """
-    mode = EXTRACTION_MODE
-
-    if mode == "regex":
-        rules = _extract_specs_shop2_regex(val)
-        method = "regex"
-    elif mode == "llm":
-        rules = _extract_specs_shop2_llm(val, row_index=row_index)
-        method = "llm"
-    else:
-        # ---- auto: 正则優先，正則無結果時 LLM 兜底 ----
-        rules = _extract_specs_shop2_regex(val)
-        if rules:
-            method = "regex"
-        else:
-            rules = _extract_specs_shop2_llm(val, row_index=row_index)
-            method = "llm"
+    rules, method = dispatch_extraction(
+        EXTRACTION_MODE,
+        regex_fn=lambda: _extract_specs_shop2_regex(val),
+        llm_fn=lambda: _extract_specs_shop2_llm(val, row_index=row_index),
+    )
 
     return PriceDecomposition(
         base_price=base_price,

@@ -55,6 +55,8 @@ from ..cleaner_tools import (
     log_cleaner_start,
     log_cleaner_complete,
     validate_columns,
+    coerce_int,
+    dispatch_extraction,
     lx,
     HAS_LANGEXTRACT,
     log_llm_extraction_error,
@@ -79,22 +81,8 @@ SHOP_NAME = "モバステ"
 
 _norm = _norm_strip
 
-def _coerce_int(v) -> Optional[int]:
-    if v is None:
-        return None
-    try:
-        if isinstance(v, bool):
-            return None
-        if isinstance(v, (int,)):
-            return int(v)
-        s = str(v).strip()
-        if not s:
-            return None
-        # 允许 "1,000" / "-1000" 之类
-        s = s.replace(",", "")
-        return int(float(s))
-    except Exception:
-        return None
+# _coerce_int → cleaner_tools.coerce_int 统一导入
+_coerce_int = coerce_int
 
 # ----------------------------------------------------------------------
 # Step 3: LLM 机型/容量解析（storage_name -> model_norm, cap_gb）
@@ -574,27 +562,17 @@ def _extract_specs_shop11_dispatch(
             source_text_raw=source_text_raw,
         )
 
-    if mode == "regex":
-        deltas_re = _extract_specs_shop11_regex(caution_txt)
-        return _build_decomp(deltas_re, "regex")
+    def _regex_fn():
+        return _extract_specs_shop11_regex(caution_txt)
 
-    if mode == "llm":
+    def _llm_fn():
         color_deltas = _extract_specs_shop11_llm(
             caution_txt, available_colors, color_map,
         )
-        delta_specs = [(cn, dv) for cn, dv in color_deltas.items()]
-        return _build_decomp(delta_specs, "llm")
+        return [(cn, dv) for cn, dv in color_deltas.items()]
 
-    # ---- auto: 正則優先，正則無結果时 LLM 兜底 ----
-    deltas_re = _extract_specs_shop11_regex(caution_txt)
-    if deltas_re:
-        return _build_decomp(deltas_re, "regex")
-
-    color_deltas_llm = _extract_specs_shop11_llm(
-        caution_txt, available_colors, color_map,
-    )
-    delta_specs_llm = [(cn, dv) for cn, dv in color_deltas_llm.items()]
-    return _build_decomp(delta_specs_llm, "llm")
+    delta_specs, method = dispatch_extraction(mode, _regex_fn, _llm_fn)
+    return _build_decomp(delta_specs, method)
 
 # ----------------------------------------------------------------------
 # Step 8: 清洗主函数

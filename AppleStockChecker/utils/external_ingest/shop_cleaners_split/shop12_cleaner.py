@@ -54,6 +54,9 @@ from ..cleaner_tools import (
     log_cleaner_complete,
     validate_columns,
     log_row_skip,
+    dispatch_extraction,
+    DELTA_PATTERN_STRICT,
+    ABS_PRICE_PATTERN,
     lx,
     HAS_LANGEXTRACT,
     log_llm_extraction_error,
@@ -114,14 +117,11 @@ _norm_amount_to_int = _normalize_amount_text
 # Step 3: 正则提取函数
 # ----------------------------------------------------------------------
 
-_FALLBACK_ABS_RE = re.compile(
-    r"""(?P<labels>[^\d¥￥円:：/、，,;；※]+?)\s*(?:[:：]?\s*)?(?:¥|￥)?\s*(?P<amount>[０-９0-9][０-９0-9,，]*)\s*(?:円)?""",
-    re.UNICODE | re.VERBOSE,
-)
-_FALLBACK_DELTA_RE = re.compile(
-    r"""(?P<labels>[^+\-−－\d¥￥円/、，,;；※]+?)\s*(?P<sign>[+\-−－])\s*(?P<amount>[０-９0-9][０-９0-9,，]*)\s*(?:円)?""",
-    re.UNICODE | re.VERBOSE,
-)
+# 正则模式：使用 cleaner_tools 统一的基础模式
+# shop12 的 _FALLBACK_ABS_RE 与 ABS_PRICE_PATTERN 基本一致
+_FALLBACK_ABS_RE = ABS_PRICE_PATTERN
+# shop12 的 _FALLBACK_DELTA_RE 与 DELTA_PATTERN_STRICT 基本一致
+_FALLBACK_DELTA_RE = DELTA_PATTERN_STRICT
 # LABEL_SPLIT_RE_shop12: 从 cleaner_tools 导入
 
 def _fallback_parse_rules(text: str) -> Tuple[List[Tuple[str, int]], List[Tuple[str, int]]]:
@@ -444,26 +444,12 @@ def _extract_specs_shop12_dispatch(
 
     返回 PriceDecomposition
     """
-    mode = EXTRACTION_MODE
-
-    if mode == "regex":
-        abs_list, delta_list = _extract_specs_shop12_regex(remark_for_llm)
-        method = "regex"
-    elif mode == "llm":
-        abs_list, delta_list = _extract_specs_shop12_llm(
-            remark_for_llm, idx=idx,
-        )
-        method = "llm"
-    else:
-        # ---- auto: 正则优先，正则无颜色结果时 LLM 兜底 ----
-        abs_list, delta_list = _extract_specs_shop12_regex(remark_for_llm)
-        if abs_list or delta_list:
-            method = "regex"
-        else:
-            abs_list, delta_list = _extract_specs_shop12_llm(
-                remark_for_llm, idx=idx,
-            )
-            method = "llm"
+    (abs_list, delta_list), method = dispatch_extraction(
+        EXTRACTION_MODE,
+        regex_fn=lambda: _extract_specs_shop12_regex(remark_for_llm),
+        llm_fn=lambda: _extract_specs_shop12_llm(remark_for_llm, idx=idx),
+        has_result_fn=lambda r: bool(r[0] or r[1]),  # r = (abs_list, delta_list)
+    )
 
     # ---- "全色" delta → 覆盖全部，清空 abs ----
     delta_specs: List[Tuple[str, int]] = []
