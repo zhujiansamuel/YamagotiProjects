@@ -26,11 +26,8 @@ shop16 清洗器 — 携帯空間
 """
 
 import logging
-import os
 import re
 import time
-import textwrap
-from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -38,7 +35,6 @@ from ...external_ingest.helpers import to_int_yen, parse_dt_aware
 from ..cleaner_tools import (
     _parse_capacity_gb,
     _normalize_model_generic,
-    _truncate_for_log,
     _load_iphone17_info_df_from_db,
     _build_color_map,
     _norm_strip,
@@ -47,18 +43,12 @@ from ..cleaner_tools import (
     _label_matches_color_unified,
     LABEL_SPLIT_RE_shop16 as SPLIT_TOKENS_RE,
     LABEL_SPLIT_RE_shop16_SIMPLE,
-    OLLAMA_URL,
-    OLLAMA_MODEL_ID,
     EXTRACTION_MODE,
     assemble_output_df,
     log_cleaner_start,
     log_cleaner_complete,
     validate_columns,
     dispatch_extraction,
-    llm_guardrail_check,
-    lx,
-    HAS_LANGEXTRACT,
-    log_llm_extraction_error,
 )
 
 # 初始化 logger
@@ -278,330 +268,25 @@ def _extract_specs_shop16_regex(
     absps = _extract_specs_shop16_regex_abs(price_text)
     return base_price, deltas, absps
 
-# ----------------------------------------------------------------------
-# Step 7: LLM 配置 & 核心提取函数
-# ----------------------------------------------------------------------
+# Step 7-8: LLM 提取 — 已提取到 shop_cleaners_split_llm/llm_shop16.py
+from ..shop_cleaners_split_llm.llm_shop16 import (
+    extract_specs_shop16_llm as _extract_specs_shop16_llm_impl,
+)
 
-SHOP16_PRICE_PROMPT = textwrap.dedent("""\
-You extract pricing information from Japanese iPhone buyback price strings (買取価格).
-Extract ONLY what is explicitly stated in the text; do not guess.
-
-Classes to extract:
-1) base_price:
-   - the unlabeled base price in yen (e.g. "86,100円", "￥86100").
-2) color_delta:
-   - per-color adjustment relative to base_price in yen (e.g. "黒:-1000円", "青 +5000円").
-   - If multiple colors share a delta (e.g. "青/オレンジ -5000円"), output one color_delta per color label.
-3) color_abs:
-   - per-color absolute price in yen (e.g. "黒￥86100", "青￥87100").
-
-Rules:
-- extraction_text must be an exact span from the input text (no paraphrase).
-- Do not invent colors or amounts.
-- Attributes schema:
-  * base_price: {"amount_yen": "<int>"}
-  * color_delta: {"color_label": "<label>", "delta_yen": "<signed int>"}
-  * color_abs: {"color_label": "<label>", "amount_yen": "<int>"}
-""")
-
-def _to_signed_int_yen(x: object) -> Optional[int]:
-    if x is None:
-        return None
-    s = str(x).strip()
-    if not s:
-        return None
-
-    # 优先：找带符号的数（通常是差价）
-    signed = list(re.finditer(r"([+\-−－])\s*(\d[\d,]*)", s))
-    if signed:
-        m = signed[-1]
-        sign = m.group(1)
-        amt = to_int_yen(m.group(2))
-        if amt is None:
-            return None
-        return -int(amt) if sign in ("-", "−", "－") else int(amt)
-
-    # 其次：取最后一个数字（避免把 base_price 当 delta）
-    nums = list(re.finditer(r"(\d[\d,]*)", s))
-    if not nums:
-        return None
-    amt = to_int_yen(nums[-1].group(1))
-    return int(amt) if amt is not None else None
-
-def _shop16_price_examples():
-    return [
-        lx.data.ExampleData(
-            text="86,100円 黒:-1,000円 青:+500円",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="base_price",
-                    extraction_text="86,100円",
-                    attributes={"amount_yen": "86100"},
-                ),
-                lx.data.Extraction(
-                    extraction_class="color_delta",
-                    extraction_text="黒",
-                    attributes={"color_label": "黒", "delta_yen": "-1000"},
-                ),
-                lx.data.Extraction(
-                    extraction_class="color_delta",
-                    extraction_text="青",
-                    attributes={"color_label": "青", "delta_yen": "+500"},
-                ),
-            ],
-        ),
-        lx.data.ExampleData(
-            text="86100円 / 青/オレンジ -5000円",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="base_price",
-                    extraction_text="86100円",
-                    attributes={"amount_yen": "86100"},
-                ),
-                lx.data.Extraction(
-                    extraction_class="color_delta",
-                    extraction_text="青",
-                    attributes={"color_label": "青", "delta_yen": "-5000"},
-                ),
-                lx.data.Extraction(
-                    extraction_class="color_delta",
-                    extraction_text="オレンジ",
-                    attributes={"color_label": "オレンジ", "delta_yen": "-5000"},
-                ),
-            ],
-        ),
-        lx.data.ExampleData(
-            text="黒￥86100/青￥87100",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="color_abs",
-                    extraction_text="黒",
-                    attributes={"color_label": "黒", "amount_yen": "86100"},
-                ),
-                lx.data.Extraction(
-                    extraction_class="color_abs",
-                    extraction_text="青",
-                    attributes={"color_label": "青", "amount_yen": "87100"},
-                ),
-            ],
-        ),
-        lx.data.ExampleData(
-            text="￥90000 ホワイト +0円／ブラック -3000円",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="base_price",
-                    extraction_text="￥90000",
-                    attributes={"amount_yen": "90000"},
-                ),
-                lx.data.Extraction(
-                    extraction_class="color_delta",
-                    extraction_text="ホワイト",
-                    attributes={"color_label": "ホワイト", "delta_yen": "0"},
-                ),
-                lx.data.Extraction(
-                    extraction_class="color_delta",
-                    extraction_text="ブラック",
-                    attributes={"color_label": "ブラック", "delta_yen": "-3000"},
-                ),
-            ],
-        ),
-        lx.data.ExampleData(
-            text="92,000円 ブルー：+2,000円 グリーン:-1000円",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="base_price",
-                    extraction_text="92,000円",
-                    attributes={"amount_yen": "92000"},
-                ),
-                lx.data.Extraction(
-                    extraction_class="color_delta",
-                    extraction_text="ブルー",
-                    attributes={"color_label": "ブルー", "delta_yen": "+2000"},
-                ),
-                lx.data.Extraction(
-                    extraction_class="color_delta",
-                    extraction_text="グリーン",
-                    attributes={"color_label": "グリーン", "delta_yen": "-1000"},
-                ),
-            ],
-        ),
-        lx.data.ExampleData(
-            text="￥197000\n\nオレンジ-1000",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="base_price",
-                    extraction_text="￥197000",
-                    attributes={"amount_yen": "197000"},
-                ),
-                lx.data.Extraction(
-                    extraction_class="color_delta",
-                    extraction_text="オレンジ-1000",
-                    attributes={"color_label": "オレンジ", "delta_yen": "-1000"},
-                ),
-            ],
-        ),
-    ]
-
-@lru_cache(maxsize=4096)
-def _extract_specs_shop16_llm_core(
-    price_text: str,
-) -> Tuple[Optional[int], List[Tuple[str, int]], List[Tuple[str, int]], List[dict]]:
-    """
-    返回：
-      base_price: Optional[int]
-      deltas: [(label, delta_yen)]
-      abs_prices: [(label, abs_yen)]
-      debug_extractions: [{"class","text","attrs","span"}]
-    """
-    s = (price_text or "").strip()
-    if not s:
-        return None, [], [], []
-
-    if not HAS_LANGEXTRACT:
-        raise ImportError("缺少依赖：pip install langextract")
-
-    examples = _shop16_price_examples()
-
-    kwargs = dict(
-        text_or_documents=s,
-        prompt_description=SHOP16_PRICE_PROMPT,
-        examples=examples,
-        model_id=OLLAMA_MODEL_ID,
-        model_url=OLLAMA_URL,
-        fence_output=False,
-        use_schema_constraints=False,
-        extraction_passes=1,
-        max_char_buffer=300,
-    )
-    # 与官方 release 示例兼容（有些版本需要显式指定）
-    try:
-        kwargs["language_model_type"] = lx.inference.OllamaLanguageModel
-    except Exception:
-        pass
-
-    result = lx.extract(**kwargs)
-
-    # 某些情况下可能返回 list；统一成 list 处理
-    docs = result if isinstance(result, list) else [result]
-
-    base_price: Optional[int] = None
-    deltas: List[Tuple[str, int]] = []
-    abs_prices: List[Tuple[str, int]] = []
-    debug_extractions: List[dict] = []
-
-    for doc in docs:
-        exs = list(getattr(doc, "extractions", None) or [])
-        for ex in exs:
-            cls = getattr(ex, "extraction_class", "") or ""
-            txt = getattr(ex, "extraction_text", "") or ""
-            attrs = getattr(ex, "attributes", {}) or {}
-
-            ci = getattr(ex, "char_interval", None)
-            span = None
-            if ci is not None:
-                span = {"start": getattr(ci, "start_pos", None), "end": getattr(ci, "end_pos", None)}
-            debug_extractions.append({"class": cls, "text": txt, "attrs": dict(attrs), "span": span})
-
-            if cls == "base_price" and base_price is None:
-                v = attrs.get("amount_yen")
-                amt = to_int_yen(v) if v is not None else to_int_yen(txt)
-                if amt is not None:
-                    base_price = int(amt)
-
-            elif cls == "color_delta":
-                raw_label = str(attrs.get("color_label") or txt or "").strip()
-                dv = attrs.get("delta_yen")
-                delta = _to_signed_int_yen(dv if dv is not None else "")
-                # 若模型没给 delta_yen，则尝试从原文里兜底
-                if delta is None:
-                    delta = _to_signed_int_yen(txt)
-
-                if delta is not None:
-                    for lb in _split_labels_shop16(raw_label):
-                        deltas.append((lb, int(delta)))
-
-            elif cls == "color_abs":
-                raw_label = str(attrs.get("color_label") or txt or "").strip()
-                av = attrs.get("amount_yen")
-                amt = to_int_yen(av) if av is not None else to_int_yen(txt)
-
-                if amt is not None:
-                    for lb in _split_labels_shop16(raw_label):
-                        abs_prices.append((lb, int(amt)))
-
-    return base_price, deltas, abs_prices, debug_extractions
-
-# ----------------------------------------------------------------------
-# Step 8: LLM + Guardrails（仅 LLM 路径使用）
-# ----------------------------------------------------------------------
 
 def _extract_specs_shop16_llm(
     price_text: str, idx: object = None,
 ) -> Tuple[Optional[int], List[Tuple[str, int]], List[Tuple[str, int]]]:
-    """
-    LLM 提取 + Guardrail A/B/C（仅 LLM 路径使用）。
-    """
-    base_llm = None
-    deltas: List[Tuple[str, int]] = []
-    absps: List[Tuple[str, int]] = []
-    llm_ok = False
-
-    try:
-        base_llm, deltas, absps, _dbg = _extract_specs_shop16_llm_core(price_text)
-        llm_ok = True
-    except Exception as e:
-        llm_ok = False
-        log_llm_extraction_error(logger, cleaner_name="shop16", shop_name="携帯空間", error=e, text=price_text, row_index=idx)
-
-    base_price = base_llm
-    if base_price is None:
-        base_price = _extract_base_price_shop16(price_text)
-    base_price = int(base_price) if base_price is not None else None
-
-    # Guardrail A: 只有基础价 -> 丢弃所有 color_delta/color_abs（防幻觉）
-    if _is_base_only_price_text(price_text):
-        deltas = []
-        absps = []
-
-    # Guardrail B: 共享差价纠错
-    shared_delta_map = _extract_shared_delta_map_shop16(price_text)
-    if shared_delta_map and deltas:
-        corrected: List[Tuple[str, int]] = []
-        for label_raw, delta in deltas:
-            lb = _normalize_label_shop16(label_raw)
-            if not lb:
-                continue
-            if lb in shared_delta_map:
-                corrected.append((lb, int(shared_delta_map[lb])))
-            else:
-                corrected.append((lb, int(delta)))
-        deltas = corrected
-
-    # Guardrail C: 逐条证据过滤 —— label/金额必须在原文出现
-    filtered_deltas: List[Tuple[str, int]] = []
-    for label_raw, delta in deltas:
-        lb = _normalize_label_shop16(label_raw)
-        if not lb:
-            continue
-        if llm_guardrail_check(lb, delta, price_text):
-            filtered_deltas.append((lb, int(delta)))
-    deltas = filtered_deltas
-
-    filtered_absps: List[Tuple[str, int]] = []
-    for label_raw, amt in absps:
-        lb = _normalize_label_shop16(label_raw)
-        if not lb:
-            continue
-        if llm_guardrail_check(lb, amt, price_text):
-            filtered_absps.append((lb, int(amt)))
-    absps = filtered_absps
-
-    # LLM 完全失败且无颜色信息时，回退到正则
-    if (not llm_ok) and (not deltas) and (not absps):
-        deltas = _extract_specs_shop16_regex_deltas(price_text)
-        absps = _extract_specs_shop16_regex_abs(price_text)
-
-    return base_price, deltas, absps
+    return _extract_specs_shop16_llm_impl(
+        price_text, idx=idx,
+        extract_base_price_fn=_extract_base_price_shop16,
+        is_base_only_fn=_is_base_only_price_text,
+        extract_shared_delta_map_fn=_extract_shared_delta_map_shop16,
+        normalize_label_fn=_normalize_label_shop16,
+        split_labels_fn=_split_labels_shop16,
+        regex_deltas_fn=_extract_specs_shop16_regex_deltas,
+        regex_abs_fn=_extract_specs_shop16_regex_abs,
+    )
 
 # ----------------------------------------------------------------------
 # Step 9: 提取模式调度

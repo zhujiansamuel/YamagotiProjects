@@ -17,7 +17,7 @@ shop12 清洗器 — トゥインクル
     │   │       └─ _fallback_parse_rules()            ← 核心正则: _FALLBACK_ABS_RE / _FALLBACK_DELTA_RE
     │   │
     │   └─ llm 路径:
-    │       └─ _extract_specs_shop12_llm()  ← Step 4: LLM 提取 + 防幻觉
+    │       └─ _extract_specs_shop12_llm()  ← Step 4: LLM 提取 + 防幻觉 (shop_cleaners_split_llm/llm_shop12.py)
     │           └─ _extract_specs_shop12_llm_core()    ← LLM 核心: effective_class 修正 + 去重
     │
     ├─ _label_matches_color_unified()           ← Step 6: 标签→颜色匹配（cleaner_tools 统一）
@@ -26,11 +26,8 @@ shop12 清洗器 — トゥインクル
 """
 
 import logging
-import os
 import re
 import time
-import textwrap
-from functools import lru_cache
 from typing import List, Optional, Tuple
 
 import pandas as pd
@@ -42,10 +39,8 @@ from ..cleaner_tools import (
     _normalize_model_generic,
     _load_iphone17_info_df_from_db,
     _build_color_map,
-    _truncate_for_log,
     _norm_strip,
     _normalize_amount_text,
-    normalize_text_basic,
     PriceDecomposition,
     resolve_color_prices,
     _label_matches_color_unified,
@@ -57,12 +52,7 @@ from ..cleaner_tools import (
     dispatch_extraction,
     DELTA_PATTERN_STRICT,
     ABS_PRICE_PATTERN,
-    lx,
-    HAS_LANGEXTRACT,
-    log_llm_extraction_error,
     LABEL_SPLIT_RE_shop12,
-    OLLAMA_URL,
-    OLLAMA_MODEL_ID,
     EXTRACTION_MODE,
 )
 
@@ -179,251 +169,22 @@ def _extract_specs_shop12_regex(
     return _fallback_parse_rules(remark_for_llm)
 
 # ----------------------------------------------------------------------
-# Step 4: LLM 配置 & 核心提取函数
+# Step 4: LLM 提取 — 已提取到 shop_cleaners_split_llm/llm_shop12.py
 # ----------------------------------------------------------------------
 
-_LX_PROMPT = textwrap.dedent(r"""
-你要从输入文本（備考1）中抽取"颜色对应的价格规则"。只抽取以下两类：
+from ..shop_cleaners_split_llm.llm_shop12 import (
+    extract_specs_shop12_llm as _extract_specs_shop12_llm_impl,
+)
 
-1) delta（差额）
-- 形式：<颜色标签><+或-><金额>円
-- 例：orange-1000円  => delta_yen=-1000, color_label="orange"
-- 例：Blue+2000円    => delta_yen=+2000, color_label="Blue"
-- 例：全色-2000円     => delta_yen=-2000, color_label="全色"
-
-2) abs_price（绝对价）
-- 形式：<颜色标签> ¥<金額> 或 <颜色标签> <金額>円
-- 例：Silver ¥230,500 => price_yen=230500, color_label="Silver"
-
-规则：
-- extraction_text 必须是输入里的"原文片段"，不要改写/不要翻译。
-- 如果一行里有多种颜色分别给价或给差额，要分别输出多条 extraction。
-- 如果文本里出现"開封/開封品/※開封/開封済"，这些内容不参与抽取（可以忽略）。
-- 就算文本非常短（例如仅有 'orange-1000円'），只要存在规则也必须抽取出来。
-""").strip()
-
-def _lx_examples():
-    return [
-        lx.data.ExampleData(
-            text="orange-1000円",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="delta",
-                    extraction_text="orange-1000円",
-                    attributes={"color_label": "orange", "delta_yen": -1000},
-                ),
-            ],
-        ),
-        lx.data.ExampleData(
-            text="Orange-2000円",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="delta",
-                    extraction_text="Orange-2000円",
-                    attributes={"color_label": "Orange", "delta_yen": -2000},
-                ),
-            ],
-        ),
-        lx.data.ExampleData(
-            text="Silver ¥230,500\nBlue ¥229,000",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="abs_price",
-                    extraction_text="Silver ¥230,500",
-                    attributes={"color_label": "Silver", "price_yen": 230500},
-                ),
-                lx.data.Extraction(
-                    extraction_class="abs_price",
-                    extraction_text="Blue ¥229,000",
-                    attributes={"color_label": "Blue", "price_yen": 229000},
-                ),
-            ],
-        ),
-        lx.data.ExampleData(
-            text="Blue-4000円\nBlack-4000円",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="delta",
-                    extraction_text="Blue-4000円",
-                    attributes={"color_label": "Blue", "delta_yen": -4000},
-                ),
-                lx.data.Extraction(
-                    extraction_class="delta",
-                    extraction_text="Black-4000円",
-                    attributes={"color_label": "Black", "delta_yen": -4000},
-                ),
-            ],
-        ),
-
-    ]
-
-@lru_cache(maxsize=8192)
-def _extract_specs_shop12_llm_core(remark_for_llm: str) -> Tuple[List[Tuple[str, int]], List[Tuple[str, int]], List[Tuple[str, str, dict]]]:
-    """
-    返回:
-      abs_list  = [(label_raw, absolute_price_yen), ...]
-      delta_list= [(label_raw, delta_yen), ...]
-      llm_dbg   = [(effective_class, extraction_text, attrs), ...]
-    这里的 effective_class 是经过"带货币符号/有正负号"的规则修正后的结果，
-    不再完全相信 LLM 的 extraction_class。
-    """
-    remark_for_llm = (remark_for_llm or "").strip()
-    if not remark_for_llm:
-        return [], [], []
-
-    if not HAS_LANGEXTRACT:
-        return [], [], []
-
-    try:
-        llm_input = "色別価格ルール:\n" + remark_for_llm
-
-        res = lx.extract(
-            text_or_documents=llm_input,
-            prompt_description=_LX_PROMPT,
-            examples=_lx_examples(),
-            model_id=OLLAMA_MODEL_ID,
-            model_url=OLLAMA_URL,
-            temperature=float(os.getenv("SHOP12_LLM_TEMPERATURE", "0.0")),
-            fence_output=False,
-            use_schema_constraints=False,
-            max_char_buffer=2000,
-            language_model_params={
-                "timeout": int(os.getenv("SHOP12_LLM_TIMEOUT", "120")),
-                "num_ctx": int(os.getenv("SHOP12_LLM_NUM_CTX", "4096")),
-            },
-        )
-
-        exts = getattr(res, "extractions", []) or []
-        llm_dbg: List[Tuple[str, str, dict]] = []
-        abs_list: List[Tuple[str, int]] = []
-        delta_list: List[Tuple[str, int]] = []
-
-        for e in exts:
-            cls_raw = (getattr(e, "extraction_class", "") or "").strip()
-            txt = getattr(e, "extraction_text", "") or ""
-            attrs = dict(getattr(e, "attributes", {}) or {})
-
-            # ---------- 关键逻辑：由文本内容来决定 effective_class ----------
-            # 有 + / - 号 + 数字 => delta
-            has_sign = bool(re.search(r"[+\-−－]\s*[０-９0-9]", txt))
-            # 有 日元符号(¥ / ￥ / 円) => 价格
-            has_currency = bool(re.search(r"[¥￥円]", txt))
-
-            if has_sign:
-                # 像 "Orange-1000円" / "全色-2000円"
-                effective_cls = "delta"
-            elif has_currency:
-                # 像 "Orange ¥193,500" / "Silver 230,500円"
-                effective_cls = "abs_price"
-            else:
-                # 兜底：用 LLM 原始的分类
-                effective_cls = cls_raw or "delta"
-
-            llm_dbg.append((effective_cls, txt, attrs))
-
-            # ---------- 解析 label ----------
-            label = (
-                str(attrs.get("color_label") or attrs.get("color") or attrs.get("colour") or "")
-                .strip()
-            )
-            if not label:
-                # 再粗暴一点：如果前面有一串非数字非货币符号，就当颜色
-                m_lbl = re.match(r"^[^\d0-9¥￥円+\-−－]+", txt)
-                if m_lbl:
-                    label = m_lbl.group(0).strip()
-            if not label:
-                continue
-
-            # ---------- abs_price 逻辑 ----------
-            if effective_cls == "abs_price":
-                # LLM 可能给的是 price_yen，也可能误放在 delta_yen，统一兜一下
-                raw_price = attrs.get("price_yen")
-                if raw_price is None:
-                    raw_price = attrs.get("delta_yen")
-                if raw_price is None:
-                    raw_price = txt
-                price_i = _norm_amount_to_int(raw_price)
-                if price_i is None:
-                    price_i = _norm_amount_to_int(txt)
-                if price_i is None:
-                    continue
-                # 绝对价一律用正数
-                price_i = abs(int(price_i))
-                abs_list.append((label, price_i))
-                continue
-
-            # ---------- delta 逻辑 ----------
-            if effective_cls == "delta":
-                raw_delta = attrs.get("delta_yen")
-                delta_i: Optional[int] = None
-
-                if isinstance(raw_delta, (int,)):
-                    delta_i = int(raw_delta)
-                else:
-                    # 先从属性里解析
-                    if raw_delta is not None:
-                        delta_i = _norm_amount_to_int(raw_delta)
-
-                # 属性里拿不到，再从文本里按 "符号 + 金额" 模式解析
-                if delta_i is None:
-                    m = re.search(r"([+\-−－])\s*([０-９0-9][０-９0-9,，]*)", txt)
-                    if m:
-                        sign = m.group(1)
-                        amt = _norm_amount_to_int(m.group(2))
-                        if amt is not None:
-                            delta_i = -amt if sign in ("-", "−", "－") else amt
-
-                if delta_i is None:
-                    continue
-                delta_list.append((label, int(delta_i)))
-                continue
-
-        # 同一 label 去重（后者覆盖前者）
-        if abs_list:
-            tmp = {}
-            for k, v in abs_list:
-                tmp[k] = v
-            abs_list = list(tmp.items())
-        if delta_list:
-            tmp = {}
-            for k, v in delta_list:
-                tmp[k] = v
-            delta_list = list(tmp.items())
-
-        return abs_list, delta_list, llm_dbg
-
-    except Exception as e:
-        log_llm_extraction_error(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, error=e, text=remark_for_llm, row_index=None)
-        return [], [], []
 
 def _extract_specs_shop12_llm(
     remark_for_llm: str,
     idx: object = None,
 ) -> Tuple[List[Tuple[str, int]], List[Tuple[str, int]]]:
-    """
-    LLM 提取 + Guardrails（仅 LLM 路径使用）。
-    Guardrail: effective_class 修正 + 去重（内置于 _extract_specs_shop12_llm_core）。
-    LLM 失败时回退到正则。
-    """
-    abs_list, delta_list, _llm_dbg = _extract_specs_shop12_llm_core(remark_for_llm)
-
-    # Guardrail: LLM 完全失败（空结果）时，回退到正则
-    if not abs_list and not delta_list and remark_for_llm:
-        logger.debug(
-            "LLM returned empty, falling back to regex",
-            extra={
-                "event_type": "llm_extraction_error",
-                "shop_name": SHOP_NAME,
-                "cleaner_name": CLEANER_NAME,
-                "row_index": idx,
-                "remark_preview": _truncate_for_log(remark_for_llm, 100),
-            }
-        )
-        f_abs, f_delta = _fallback_parse_rules(remark_for_llm)
-        if f_abs or f_delta:
-            abs_list, delta_list = f_abs, f_delta
-
-    return abs_list, delta_list
+    return _extract_specs_shop12_llm_impl(
+        remark_for_llm, idx=idx,
+        fallback_parse_rules_fn=_fallback_parse_rules,
+    )
 
 # ----------------------------------------------------------------------
 # Step 5: 提取模式调度

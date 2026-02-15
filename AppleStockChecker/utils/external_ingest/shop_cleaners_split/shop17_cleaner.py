@@ -146,17 +146,6 @@ COLOR_DELTA_RE_shop17 = re.compile(
 )
 
 # ----------------------------------------------------------------------
-# LangExtract / Ollama 集成配置
-# ----------------------------------------------------------------------
-
-# lx / HAS_LANGEXTRACT 从 cleaner_tools 统一导入
-try:
-    from langextract.data import ExampleData, Extraction
-except Exception:
-    ExampleData = None
-    Extraction = None
-
-# ----------------------------------------------------------------------
 # 颜色匹配函数
 # ----------------------------------------------------------------------
 # ----------------------------------------------------------------------
@@ -214,130 +203,11 @@ def _extract_specs_shop17_regex(text: str) -> List[Tuple[str, int]]:
 
     return out
 
-# ----------------------------------------------------------------------
-# LangExtract + Ollama: LLM 驱动的颜色差额抽取
-# ----------------------------------------------------------------------
-COLOR_DELTA_PROMPT_SHOP17 = textwrap.dedent("""
-あなたは中古iPhone買取表の「色減額」欄を解析するアシスタントです。
-入力は1つのセルのテキストです。この中には色ごとの減額情報のほかに、
-「郵送は翌日着のみ保証」「持ち込みのみ保証」「利用制限△-10000」などの
-色と関係ない条件も含まれます。
+# LLM 提取 — 已提取到 shop_cleaners_split_llm/llm_shop17.py
+from ..shop_cleaners_split_llm.llm_shop17 import (
+    extract_specs_shop17_llm as _extract_specs_shop17_llm_impl,
+)
 
-タスク:
-- 色名ごとの減額（または増額）だけを抽出してください。
-- 色名の例: スカイブルー, スペースブラック, クラウドホワイト, ライトゴールド, シルバー, ブルー など。
-- 「利用制限△-10000」や「保証開始3か月未満減額なし」など、色と無関係な金額・文言は無視してください。
-- 「色名なし」(例: シルバーなし) はその色の delta=0 として扱います。
-- 色名が付いていない「減額なし」(例: △減額なし) は無視します。
-
-出力ポリシー:
-- extraction_class は必ず "color_delta" にしてください。
-- extraction_text には、表に書かれている「色と金額のフレーズ全体」
-  （例: "スカイブルー-3,000", "クラウドホワイト：なし", "シルバーなし"）をそのまま入れてください。
-- attributes には必ず次のキーを入れてください:
-  - "color": 色名だけ（例: "スカイブルー"）
-  - "delta": その色の価格差（整数。値引きは負の数。例: -3000）
-  - "raw": 抜き出した元の部分文字列（extraction_text と同じでもよい）
-
-その他ルール:
-- 価格は円単位で扱い、「円」「,」などは無視して整数に変換してください。
-- 色名が複数ある場合は、それぞれ1つずつ color_delta を出力してください。
-- 文章内の改行や空行は無視して構いません。
-""").strip()
-
-@lru_cache()
-def _get_color_delta_examples_shop17() -> List[ExampleData]:
-    if not HAS_LANGEXTRACT:
-        return []
-
-    examples: List[ExampleData] = []
-
-    # Example 0: スカイブルーのみ
-    examples.append(
-        ExampleData(
-            text="色減額:スカイブルー-3,000\n\n郵送は翌日着のみ保証\n\n利用制限△-10000",
-            extractions=[
-                Extraction(
-                    extraction_class="color_delta",
-                    extraction_text="スカイブルー-3,000",
-                    attributes={
-                        "color": "スカイブルー",
-                        "delta": "-3000",
-                        "raw": "スカイブルー-3,000",
-                    },
-                )
-            ],
-        )
-    )
-
-    # Example 1: 2 色 + 利用制限△
-    examples.append(
-        ExampleData(
-            text="色減額:スカイブルー-4,000/スペースブラック-4,000\n\n持ち込みのみ保証\n\n利用制限△-10000",
-            extractions=[
-                Extraction(
-                    extraction_class="color_delta",
-                    extraction_text="スカイブルー-4,000",
-                    attributes={
-                        "color": "スカイブルー",
-                        "delta": "-4000",
-                        "raw": "スカイブルー-4,000",
-                    },
-                ),
-                Extraction(
-                    extraction_class="color_delta",
-                    extraction_text="スペースブラック-4,000",
-                    attributes={
-                        "color": "スペースブラック",
-                        "delta": "-4000",
-                        "raw": "スペースブラック-4,000",
-                    },
-                ),
-            ],
-        )
-    )
-
-    # Example 2: 你这条问题里的真实样例
-    examples.append(
-        ExampleData(
-            text="色減額:シルバーなし/ブルー-1000\n\n郵送は翌日着のみ保証\n\n△減額なし 保証開始3か月未満減額なし",
-            extractions=[
-                Extraction(
-                    extraction_class="color_delta",
-                    extraction_text="シルバーなし",
-                    attributes={
-                        "color": "シルバー",
-                        "delta": "0",
-                        "raw": "シルバーなし",
-                    },
-                ),
-                Extraction(
-                    extraction_class="color_delta",
-                    extraction_text="ブルー-1000",
-                    attributes={
-                        "color": "ブルー",
-                        "delta": "-1000",
-                        "raw": "ブルー-1000",
-                    },
-                ),
-            ],
-        )
-    )
-
-    return examples
-
-def _parse_delta_attr_to_int(val) -> Optional[int]:
-    if val is None:
-        return None
-    s = str(val)
-    s = s.replace("円", "").replace(",", "").replace(" ", "").replace("　", "")
-    s = s.replace("−", "-").replace("－", "-")
-    if not s:
-        return None
-    try:
-        return int(s)
-    except Exception:
-        return None
 
 def _extract_specs_shop17_llm(
     text: str,
@@ -345,58 +215,13 @@ def _extract_specs_shop17_llm(
     cleaner_name: Optional[str] = None,
     row_context: Optional[Dict] = None
 ) -> List[Tuple[str, int]]:
-    if not HAS_LANGEXTRACT:
-        return []
-    if not text or not str(text).strip():
-        return []
-
-    s = _normalize_color_text_shop17(_pick_unopened_section(str(text)))
-
-    if re.fullmatch(r"\s*(?:なし|減額なし)\s*", s):
-        return []
-
-    try:
-        result = lx.extract(
-            text_or_documents=s,
-            prompt_description=COLOR_DELTA_PROMPT_SHOP17,
-            examples=_get_color_delta_examples_shop17(),
-            model_id=OLLAMA_MODEL_ID,
-            model_url=OLLAMA_URL,
-            temperature=0.0,
-            fence_output=False,
-            use_schema_constraints=False,
-            # 这里是关键：关闭 few-shot 对齐校验，避免 WARNING
-            prompt_validation_level="OFF",
-            prompt_validation_strict=False,
-        )
-    except Exception as e:
-        log_llm_extraction_error(logger, cleaner_name="shop17", shop_name=SHOP_NAME_OVERRIDE, error=e, text=s, row_index=row_context.get("row_index") if row_context else None)
-        return []
-
-    out: List[Tuple[str, int]] = []
-    extractions = getattr(result, "extractions", None) or []
-    for ext in extractions:
-        try:
-            if ext.extraction_class != "color_delta":
-                continue
-            attrs = ext.attributes or {}
-            color = (attrs.get("color") or ext.extraction_text or "").strip()
-            if not _is_plausible_color_label_shop17(color):
-                continue
-            delta_int = _parse_delta_attr_to_int(attrs.get("delta"))
-            if delta_int is None:
-                # fallback：从 extraction_text 再捞一次金额
-                txt = (ext.extraction_text or "").strip()
-                m = re.search(r"([+\-−－]?\d[\d,]*)", txt)
-                if m:
-                    delta_int = _parse_delta_attr_to_int(m.group(1))
-            if delta_int is None:
-                continue
-            out.append((color, delta_int))
-        except Exception:
-            continue
-
-    return out
+    return _extract_specs_shop17_llm_impl(
+        text, shop_name=shop_name, cleaner_name=cleaner_name,
+        row_context=row_context,
+        normalize_color_text_fn=_normalize_color_text_shop17,
+        pick_unopened_section_fn=_pick_unopened_section,
+        is_plausible_color_label_fn=_is_plausible_color_label_shop17,
+    )
 
 def _extract_specs_shop17_dispatch(
     text: str,

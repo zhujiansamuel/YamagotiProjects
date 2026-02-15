@@ -212,162 +212,18 @@ def _extract_specs_shop2_regex(val) -> dict:
 # Step 6: LLM + Guardrails 版规则提取
 # ----------------------------------------------------------------------
 
-if HAS_LANGEXTRACT:
-    _COLOR_RULE_PROMPT = textwrap.dedent(
-        """\
-        あなたは中古スマホ買取表の「色ごとの減額条件」を解析するツールです。
-        入力は data5 列に入っている短い日本語テキストです。例:
-        - "青-1000"
-        - "銀-5000+++青-3000"
-        - "青-1000円\n※開封品 ¥183,000"
-        など、色名と金額（減額/増額）が混在して書かれています。
+# LLM 相关代码已提取到 shop_cleaners_split_llm/llm_shop2.py
+from ..shop_cleaners_split_llm.llm_shop2 import (
+    setup_shop2_llm_deps,
+    extract_specs_shop2_llm as _extract_specs_shop2_llm_impl,
+)
 
-        タスク:
-        - data5 の中から「色グループ」と「基準価格からの差額（円）」をすべて抽出してください。
-        - 減額は負の値、増額は正の値とします。
-        - 抽出対象は、基準価格(data3)に対する相対額だけです。開封品価格など他の情報は無視してください。
+# 注入正则依赖到 LLM 模块
+setup_shop2_llm_deps(_parse_rule_token_simple, _extract_specs_shop2_regex)
 
-        出力スキーマ:
-        - 抽出するエンティティはすべて extraction_class="color_rule" とします。
-        - 各 color_rule の attributes には次のキーを入れてください:
-          - "group_label": 文字列。元テキスト中の色グループ名（例: "青", "銀", "スペースブラック", "全色"）
-          - "delta_yen": 整数。基準価格からの差額（円）。減額は負の値、増額は正の値。
 
-        注意:
-        - "青-1000" や "銀-5000" のような書き方は「基準価格から 1000 円/5000 円減額」を意味します。
-        - "青+2000" のような表現があれば、それは「基準価格から 2000 円増額」です。
-        - テキストの中に色の情報がなく、金額だけの場合は無視してください。
-        - 解釈に迷う場合は、その項目を抽出しないでください（安全側）。
-        """
-    )
-
-    _COLOR_RULE_EXAMPLES: List = [
-        lx.data.ExampleData(
-            text="青-1000\n※開封品 ¥183,000",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="color_rule",
-                    extraction_text="青-1000",
-                    attributes={"group_label": "青", "delta_yen": -1000},
-                )
-            ],
-        ),
-        lx.data.ExampleData(
-            text="銀-5000+++青-3000\n※開封品 ¥183,000",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="color_rule",
-                    extraction_text="銀-5000",
-                    attributes={"group_label": "銀", "delta_yen": -5000},
-                ),
-                lx.data.Extraction(
-                    extraction_class="color_rule",
-                    extraction_text="青-3000",
-                    attributes={"group_label": "青", "delta_yen": -3000},
-                ),
-            ],
-        ),
-    ]
-else:
-    _COLOR_RULE_PROMPT = ""
-    _COLOR_RULE_EXAMPLES = []
-
-import json
-
-@lru_cache(maxsize=1024)
-def _extract_specs_shop2_llm_core(rule_text: str) -> dict:
-    """LLM 核心提取（无 guardrails），结果被缓存。"""
-    s = (rule_text or "").strip()
-    if not s:
-        return {}
-
-    if not HAS_LANGEXTRACT:
-        return _extract_specs_shop2_regex(s)
-
-    try:
-        result = lx.extract(
-            text_or_documents=s,
-            prompt_description=_COLOR_RULE_PROMPT,
-            examples=_COLOR_RULE_EXAMPLES,
-            model_id=OLLAMA_MODEL_ID,
-            model_url=OLLAMA_URL,
-            fence_output=False,
-            use_schema_constraints=False,
-        )
-
-        doc = result.to_dict() if hasattr(result, "to_dict") else json.loads(
-            json.dumps(result, default=lambda o: getattr(o, "__dict__", str(o)))
-        )
-
-        rules: dict[str, int] = {}
-
-        for ext in doc.get("extractions", []) or []:
-            attrs = ext.get("attributes") or {}
-            extraction_text = safe_to_text(ext.get("extraction_text"))
-
-            # 1) 优先从 extraction_text 按行解析（更贴近原文，且可一次吃掉多条）
-            if extraction_text:
-                for piece in extraction_text.replace("\r", "\n").split("\n"):
-                    parsed = _parse_rule_token_simple(piece)
-                    if parsed:
-                        g, d = parsed
-                        rules[g] = d
-
-            # 2) 再用 attributes 兜底（处理 extraction_text 不含金额的情况）
-            group_label = safe_to_text(attrs.get("group_label"))
-            delta = _coerce_int(attrs.get("delta_yen"))
-            if group_label and (delta is not None):
-                rules[group_label] = int(delta)
-
-        # LLM 一条都没解析出来就回退
-        if not rules:
-            return _extract_specs_shop2_regex(s)
-
-        return rules
-
-    except Exception:
-        return _extract_specs_shop2_regex(s)
-
-def _extract_specs_shop2_llm(
-    val,
-    row_index: object = None,
-) -> dict:
-    """
-    LLM 提取 + Guardrail A/B + 正则补全（仅 LLM 路径使用）。
-    Guardrails:
-      A) group_label 必须在原文中出现
-      B) delta 金額の绝对值必须在原文中出现
-    然后用正则结果补全 LLM 漏掉的 key。
-    """
-    s = safe_to_text(val)
-    if not s:
-        return {}
-
-    llm_ok = False
-    llm_rules: dict = {}
-    try:
-        llm_rules = _extract_specs_shop2_llm_core(s)
-        llm_ok = True
-    except Exception as e:
-        log_llm_extraction_error(
-            logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
-            error=e, text=s, row_index=row_index,
-        )
-
-    # Guardrail A & B: label/amount 必须在原文出现（cleaner_tools 统一实现）
-    filtered_rules = apply_llm_guardrails(llm_rules, s)
-
-    # 正则补全：LLM 漏掉的 key 用正则结果补齐
-    supplement = _extract_specs_shop2_regex(s)
-    merged = dict(filtered_rules)
-    for k, v in supplement.items():
-        merged.setdefault(k, v)
-
-    # LLM 完全失败时，回退到纯正则
-    if (not llm_ok) and (not merged):
-        return _extract_specs_shop2_regex(s)
-
-    return merged
+def _extract_specs_shop2_llm(val, row_index: object = None) -> dict:
+    return _extract_specs_shop2_llm_impl(val, row_index=row_index)
 
 # ----------------------------------------------------------------------
 # Step 7: 提取模式调度
