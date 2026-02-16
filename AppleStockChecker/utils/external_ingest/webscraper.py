@@ -6,9 +6,32 @@ from typing import Optional
 import httpx
 import pandas as pd
 from django.conf import settings
-from .helpers import read_csv_smart
 
 TIMEOUT = 60.0
+
+
+def read_csv_smart(data: bytes, *, encodings=("utf-8-sig", "utf-8", "cp932", "shift_jis"), seps=(",", "\t", ";", "|")) -> pd.DataFrame:
+    # 先用 c 引擎快读，不行再用 python 引擎
+    for enc in encodings:
+        for sep in seps:
+            try:
+                df = pd.read_csv(io.BytesIO(data), encoding=enc, sep=sep, engine="c", on_bad_lines="skip")
+                if df.shape[1] == 1 and any(x in str(df.columns[0]) for x in [",", "\t", ";", "|"]):
+                    raise ValueError("wrong sep")
+                return df
+            except Exception:
+                pass
+    for enc in encodings:
+        for sep in seps:
+            try:
+                return pd.read_csv(io.BytesIO(data), encoding=enc, sep=sep, engine="python", on_bad_lines="skip")
+            except Exception:
+                pass
+    # 兜底：按 Excel 读（万一远端返回的是 xlsx）
+    try:
+        return pd.read_excel(io.BytesIO(data))
+    except Exception as e:
+        raise RuntimeError(f"无法解析为 CSV/Excel: {e}")
 
 async def fetch_webscraper_export(job_id: str, *, format: str = "csv") -> bytes:
     """

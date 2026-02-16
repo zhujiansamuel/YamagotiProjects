@@ -13,8 +13,8 @@ from typing import List, Optional
 
 import pandas as pd
 
-from ...external_ingest.helpers import parse_dt_aware
-from ..cleaner_tools import extract_price_yen, assemble_output_df, validate_columns, _load_jan_to_pn_from_csv, log_cleaner_start
+from ...external_ingest.cleaner_tools import parse_dt_aware
+from ..cleaner_tools import extract_price_yen, assemble_output_df, validate_columns, _load_iphone17_info_df_from_db, _build_jan_map, log_cleaner_start
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,8 @@ def _clean_shop6_kaidoruya(df: pd.DataFrame, variant: str) -> pd.DataFrame:
     if src.empty:
         return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
 
-    jan_to_pn = _load_jan_to_pn_from_csv()
+    info_df = _load_iphone17_info_df_from_db()
+    jan_to_pn = _build_jan_map(info_df)
 
     # 解析列：JAN 从 phone；PN 兜底从 data8
     jan_series = src["phone"].astype(str).str.replace(r"[^\d]", "", regex=True)

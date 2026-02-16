@@ -4,7 +4,7 @@ shop10 清洗器 — ドラゴンモバイル
 
   原始 DataFrame（data2 / price / time-scraped）
     │
-    ├─ _load_iphone17_info_df()   ← Step 1: 机型信息（model_name_norm, capacity_gb）
+    ├─ _load_iphone17_info_df_from_db()   ← Step 1: 机型信息（model_name_norm, capacity_gb）
     ├─ _normalize_model_generic() ← Step 2: 机型归一化（cleaner_tools）
     ├─ _parse_capacity_gb()       ← Step 3: 容量解析（cleaner_tools）
     ├─ extract_price_yen()        ← Step 4: 价格提取（cleaner_tools）
@@ -16,18 +16,14 @@ import re
 
 import pandas as pd
 
-from ...external_ingest.helpers import parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, extract_price_yen, assemble_output_df, validate_columns, _load_info_df_from_csv, log_cleaner_start
+from ...external_ingest.cleaner_tools import parse_dt_aware
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, extract_price_yen, assemble_output_df, validate_columns, _load_iphone17_info_df_from_db, log_cleaner_start
 
 logger = logging.getLogger(__name__)
 
 def clean_shop10(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> pd.DataFrame:
     log_cleaner_start(logger, cleaner_name="shop10", shop_name="ドラゴンモバイル", input_rows=len(df))
-    info_df = _load_info_df_from_csv(
-        required_cols={"part_number", "model_name", "capacity_gb"},
-        output_cols=["part_number", "model_name_norm", "capacity_gb"],
-        add_model_norm=True,
-    )
+    info_df = _load_iphone17_info_df_from_db(add_model_norm=True)
 
     validate_columns(df, ["data2", "price", "time-scraped"],
                      cleaner_name="shop10", shop_name="ドラゴンモバイル")

@@ -15,7 +15,7 @@ import logging
 
 import pandas as pd
 
-from ...external_ingest.helpers import parse_dt_aware
+from ...external_ingest.cleaner_tools import parse_dt_aware
 from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db, extract_price_yen, assemble_output_df, validate_columns, log_cleaner_start
 
 logger = logging.getLogger(__name__)

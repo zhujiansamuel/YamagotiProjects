@@ -5,7 +5,6 @@
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 import logging
 import os
@@ -13,7 +12,53 @@ import time
 import pandas as pd
 import re
 
-from .helpers import to_int_yen
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime, parse_date
+
+
+def to_int_yen(s: object) -> Optional[int]:
+    if s is None: return None
+    txt = str(s).strip()
+    if not re.search(r"\d", txt): return None
+    # 范围 "105,000～110,000"
+    parts = re.split(r"[~～\-–—]", txt)
+    candidates = []
+    for p in parts:
+        # 排除 12-14 位纯数字（像 JAN/电话）
+        if re.fullmatch(r"\d{12,14}", p.strip()):
+            continue
+        digits = re.sub(r"[^\d万]", "", p)
+        if not digits:
+            continue
+        if "万" in digits:
+            m = re.search(r"([\d\.]+)万", digits)
+            base = float(m.group(1)) if m else 0.0
+            candidates.append(int(base * 10000))
+        else:
+            candidates.append(int(re.sub(r"[^\d]", "", digits)))
+    if not candidates:
+        return None
+    val = max(candidates)
+    # 合理区间过滤
+    if val < 1000 or val > 5_000_000:
+        return None
+    return val
+
+
+def parse_dt_aware(s: object) -> timezone.datetime:
+    if not s:
+        return timezone.now()
+    txt = str(s).strip()
+    dt = parse_datetime(txt)
+    if dt is None:
+        d = parse_date(txt)
+        if d:
+            dt = timezone.datetime(d.year, d.month, d.day)
+    if dt is None:
+        return timezone.now()
+    if timezone.is_naive(dt):
+        dt = timezone.make_aware(dt, timezone.get_current_timezone())
+    return dt
 
 
 # ----------------------------------------------------------------------
@@ -33,102 +78,6 @@ try:
 except Exception:
     lx = None  # type: ignore[assignment]
     HAS_LANGEXTRACT = False
-
-
-# ----------------------------------------------------------------------
-# CSV 信息文件路径解析（shop5/6/10/20 等仍从 CSV 读取的 shop 共用）
-# ----------------------------------------------------------------------
-
-def _resolve_info_csv_path() -> Path:
-    """
-    解析 iphone17_info CSV/Excel 文件路径。
-
-    优先级：Django settings > 环境变量 > 默认路径。
-    供 shop5/6/10/20 等仍然从文件而非数据库读取的清洗器使用。
-    """
-    try:
-        from django.conf import settings
-        p = getattr(settings, "EXTERNAL_IPHONE17_INFO_PATH", None)
-        if p:
-            return Path(p)
-    except Exception:
-        pass
-    envp = os.getenv("IPHONE17_INFO_CSV")
-    if envp and Path(envp).exists():
-        return Path(envp)
-    return Path(__file__).resolve().parents[1] / "data" / "iphone17_info.csv"
-
-
-def _read_info_csv(path: Path) -> pd.DataFrame:
-    """
-    读取 iphone17_info CSV 或 Excel 文件，返回原始 DataFrame。
-    """
-    if not path.exists():
-        raise FileNotFoundError(f"未找到 iphone17_info：{path}")
-    if re.search(r"\.(xlsx|xlsm|xls|ods)$", str(path), re.I):
-        return pd.read_excel(path)
-    return pd.read_csv(path, encoding="utf-8-sig")
-
-
-def _load_info_df_from_csv(
-    *,
-    required_cols: Optional[set] = None,
-    output_cols: Optional[List[str]] = None,
-    add_model_norm: bool = False,
-) -> pd.DataFrame:
-    """
-    从 CSV/Excel 读取 iphone17_info 并做标准预处理。
-
-    供 shop5/6/10/20 等仍然从文件读取的清洗器使用。
-    数据库路径的清洗器应使用 _load_iphone17_info_df_from_db()。
-
-    参数:
-        required_cols: 必须存在的列集合（默认 {"part_number","model_name","capacity_gb"}）
-        output_cols: 最终返回的列列表（默认按 required_cols 推断）
-        add_model_norm: 是否添加 model_name_norm 列
-    """
-    path = _resolve_info_csv_path()
-    df = _read_info_csv(path)
-
-    if required_cols is None:
-        required_cols = {"part_number", "model_name", "capacity_gb"}
-    missing = required_cols - set(df.columns)
-    if missing:
-        raise ValueError(f"iphone17_info 缺少必要列：{missing}")
-
-    df = df.copy()
-    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
-
-    if add_model_norm:
-        df["model_name_norm"] = df["model_name"].map(_normalize_model_generic)
-
-    dropna_cols = [c for c in ["part_number", "model_name", "capacity_gb", "model_name_norm"]
-                   if c in df.columns]
-    df = df.dropna(subset=dropna_cols)
-
-    if output_cols:
-        df = df[[c for c in output_cols if c in df.columns]]
-
-    return df
-
-
-def _load_jan_to_pn_from_csv() -> Dict[str, str]:
-    """
-    从 CSV/Excel 信息文件构建 { jan_13位 : part_number } 映射。
-
-    供 shop5/6 等仍从文件读取 JAN 的清洗器使用。
-    若信息文件无 jan 列，返回空字典。
-    """
-    path = _resolve_info_csv_path()
-    if not path.exists():
-        return {}
-    df = _read_info_csv(path)
-    if "part_number" not in df.columns or "jan" not in df.columns:
-        return {}
-    df = df.copy()
-    df["jan"] = df["jan"].astype(str).str.replace(r"[^\d]", "", regex=True)
-    df = df[df["jan"].str.fullmatch(r"\d{13}", na=False)]
-    return dict(zip(df["jan"].astype(str), df["part_number"].astype(str)))
 
 
 # ----------------------------------------------------------------------
@@ -206,11 +155,18 @@ def extract_price_yen(raw: object) -> Optional[int]:
     return to_int_yen(s)
 
 
-def _load_iphone17_info_df_from_db() -> pd.DataFrame:
+def _load_iphone17_info_df_from_db(
+    *,
+    add_model_norm: bool = False,
+) -> pd.DataFrame:
     """
     从数据库中读取 iPhone 机型信息，返回 DataFrame
 
     输出列：part_number, model_name, capacity_gb, color, jan（如果 jan 字段有值）
+    当 add_model_norm=True 时额外输出 model_name_norm（归一化型号，供 shop10 等使用）
+
+    Parameters:
+        add_model_norm: 是否添加 model_name_norm 列（默认 False，兼容既有调用方）
 
     Returns:
         pd.DataFrame: 包含 iPhone 机型信息的 DataFrame
@@ -247,6 +203,12 @@ def _load_iphone17_info_df_from_db() -> pd.DataFrame:
         cols = ["part_number", "model_name", "capacity_gb", "color"]
     else:
         cols = ["part_number", "model_name", "capacity_gb", "color", "jan"]
+
+    if add_model_norm:
+        df["model_name_norm"] = df["model_name"].map(_normalize_model_generic)
+        cols = ["part_number", "model_name", "model_name_norm", "capacity_gb", "color"]
+        if "jan" in df.columns:
+            cols.append("jan")
 
     return df[cols].reset_index(drop=True)
 

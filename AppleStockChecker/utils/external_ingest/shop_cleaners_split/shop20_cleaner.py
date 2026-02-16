@@ -4,7 +4,7 @@ shop20 清洗器
 
   原始 DataFrame
     │
-    ├─ _load_info_df_from_csv()            ← Step 1: 机型信息（cleaner_tools 共用）
+    ├─ _load_iphone17_info_df_from_db()    ← Step 1: 机型信息（cleaner_tools 共用）
     ├─ _extract_jan_digits()               ← Step 2: JAN 提取（cleaner_tools 共用）
     ├─ _build_jan_map()                    ← Step 2b: JAN→PN 映射（cleaner_tools 共用）
     └─ clean_shop20()                      ← Step 3: 主函数，输出 part_number / price_new / recorded_at
@@ -15,8 +15,8 @@ import logging
 
 import pandas as pd
 
-from ...external_ingest.helpers import to_int_yen, parse_dt_aware
-from ..cleaner_tools import assemble_output_df, validate_columns, _load_info_df_from_csv, _extract_jan_digits, _build_jan_map, log_cleaner_start
+from ...external_ingest.cleaner_tools import to_int_yen, parse_dt_aware
+from ..cleaner_tools import assemble_output_df, validate_columns, _load_iphone17_info_df_from_db, _extract_jan_digits, _build_jan_map, log_cleaner_start
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +45,7 @@ def clean_shop20(df: pd.DataFrame) -> pd.DataFrame:
     validate_columns(df, ["json", "time-scraped"],
                      cleaner_name="shop20", shop_name="毎日買取")
 
-    info_df = _load_info_df_from_csv(
-        required_cols={"part_number", "model_name", "capacity_gb", "color"},
-        output_cols=["part_number", "model_name", "capacity_gb", "color", "jan"],
-    )
+    info_df = _load_iphone17_info_df_from_db()
     jan_map = _build_jan_map(info_df)
 
     rows: List[dict] = []

@@ -16,7 +16,7 @@ import textwrap
 from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
 
-from ...external_ingest.helpers import to_int_yen
+from ...external_ingest.cleaner_tools import to_int_yen
 from ..cleaner_tools import (
     log_llm_extraction_error,
     llm_guardrail_check,

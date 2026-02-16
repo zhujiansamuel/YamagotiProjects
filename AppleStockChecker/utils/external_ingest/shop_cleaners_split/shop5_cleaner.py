@@ -13,8 +13,8 @@ from typing import List, Optional
 
 import pandas as pd
 
-from ...external_ingest.helpers import parse_dt_aware
-from ..cleaner_tools import extract_price_yen, assemble_output_df, validate_columns, _load_jan_to_pn_from_csv, log_cleaner_start
+from ...external_ingest.cleaner_tools import parse_dt_aware
+from ..cleaner_tools import extract_price_yen, assemble_output_df, validate_columns, _load_iphone17_info_df_from_db, _build_jan_map, log_cleaner_start
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +58,9 @@ def _clean_shop5_soramimi(df: pd.DataFrame, variant: str) -> pd.DataFrame:
     if src.empty:
         return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
 
-    # 3) 载入 JAN -> PN 映射
-    jan_to_pn = _load_jan_to_pn_from_csv()
+    # 3) 载入 JAN -> PN 映射（从数据库）
+    info_df = _load_iphone17_info_df_from_db()
+    jan_to_pn = _build_jan_map(info_df)
 
     # 4) 逐列解析
     jan_series = src["data"].map(_extract_jan_from_data)
