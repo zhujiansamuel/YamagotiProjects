@@ -4,8 +4,6 @@ from ...external_ingest.cleaner_tools import parse_dt_aware
 from ..cleaner_tools import (
     _parse_capacity_gb,
     _normalize_model_generic,
-    _load_iphone17_info_df_from_db,
-    _build_color_map,
     _norm_strip,
     _normalize_amount_text,
     normalize_text_basic,
@@ -15,11 +13,9 @@ from ..cleaner_tools import (
     resolve_color_prices,
     _label_matches_color_unified,
     LABEL_SPLIT_RE_shop7,
-    assemble_output_df,
-    log_cleaner_start,
-    log_cleaner_complete,
     log_row_skip,
-    validate_columns,
+    setup_color_cleaner,
+    finalize_color_cleaner,
 )
 import re
 import time
@@ -139,20 +135,14 @@ def _extract_specs_shop7_regex(text: str) -> List[Tuple[str, int]]:
 # ----------------------------------------------------------------------
 
 def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> pd.DataFrame:
-    t_start = time.time()
-    _log_seq = 0
+    ctx, early = setup_color_cleaner(
+        df, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+        required_cols=["data", "data2", "data3", "time-scraped"],
+        extraction_mode="regex",
+    )
+    if ctx is None:
+        return early
 
-    log_cleaner_start(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), log_seq=_log_seq, extraction_mode="regex")
-    _log_seq += 1
-
-    # ── Step 1: 加载参考数据 & 输入验证 ──────────────────────────────
-    _log_seq = validate_columns(df, ["data", "data2", "data3", "time-scraped"],
-                                cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
-                                logger=logger, log_seq=_log_seq)
-
-    info_df = _load_iphone17_info_df_from_db()
-
-    # ── Step 1b: 行级过滤 ────────────────────────────────────────────
     # time-scraped 为空的行排除
     rows_before = len(df)
     df = df.copy().reset_index(drop=True)
@@ -160,54 +150,45 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
     df = df[mask_time_ok].reset_index(drop=True)
 
     if df.empty:
-        log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=rows_before, output_records=0, start_time=t_start, log_seq=_log_seq)
-        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
+        return finalize_color_cleaner(ctx, [])
 
-    # ── Step 2: 批量解析 model / capacity / price / recorded_at ──────
     model_norm_series = df["data2"].map(_norm_model_for_shop7)
     cap_gb_series = df["data2"].map(_parse_capacity_gb)
     price_series = df["data3"].map(extract_price_yen)
     recorded_at = df["time-scraped"].map(parse_dt_aware)
 
-    # 构建 (model, cap) → {color_norm: (pn, color_raw)} 映射
-    pn_map = _build_color_map(info_df)
-
-    # ── Step 3~5: 主循环 — 逐行解析颜色减价 & 匹配输出 ──────────────
     rows: List[dict] = []
     n = len(df)
 
     for i in range(n):
-        # ---- 取 base_price ----
         base_price = price_series.iat[i]
         if base_price is None:
             continue
         base_price = int(base_price)
 
-        # ---- 取 model / capacity / recorded_at ----
         model_text = safe_to_text(df["data2"].iat[i]).strip()
         model_norm = model_norm_series.iat[i]
         c = cap_gb_series.iat[i]
         rec_at = recorded_at.iat[i]
 
         if not model_norm or pd.isna(c):
-            _log_seq += 1
-            log_row_skip(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
-                         row_index=i, skip_reason="model_or_cap_missing", log_seq=_log_seq,
+            ctx.log_seq += 1
+            log_row_skip(ctx.logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                         row_index=i, skip_reason="model_or_cap_missing", log_seq=ctx.log_seq,
                          model_text=model_text, model_norm=model_norm or "",
                          capacity_gb=int(c) if pd.notna(c) else None)
             continue
 
         cap_gb = int(c)
         key = (model_norm, cap_gb)
-        color_map = pn_map.get(key)
+        color_map = ctx.color_map.get(key)
         if not color_map:
-            _log_seq += 1
-            log_row_skip(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
-                         row_index=i, skip_reason="no_color_map", log_seq=_log_seq,
+            ctx.log_seq += 1
+            log_row_skip(ctx.logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                         row_index=i, skip_reason="no_color_map", log_seq=ctx.log_seq,
                          model_text=model_text, model_norm=model_norm, capacity_gb=cap_gb)
             continue
 
-        # ---- Step 3: 下一行是否为颜色减价行 ----
         source_text_raw_full = ""
         labels_and_deltas: List[Tuple[str, int]] = []
         j = i + 1
@@ -223,7 +204,6 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
 
         extraction_method = "regex" if labels_and_deltas else "none"
 
-        # ---- Step 4~5: 匹配 + 定价 + 输出（公共函数） ----
         decomp = PriceDecomposition(
             base_price=base_price,
             delta_specs=labels_and_deltas,
@@ -232,19 +212,15 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
             source_text_raw=source_text_raw_full,
         )
 
-        new_rows, _log_seq = resolve_color_prices(
+        new_rows, ctx.log_seq = resolve_color_prices(
             decomp, color_map, _label_matches_color_unified,
             shop_name=SHOP_NAME, cleaner_name=CLEANER_NAME,
             recorded_at=rec_at,
-            logger=logger, log_seq_start=_log_seq,
+            logger=ctx.logger, log_seq_start=ctx.log_seq,
             row_index=i, model_text=model_text,
             model_norm=model_norm, capacity_gb=cap_gb,
         )
         rows.extend(new_rows)
 
-    # ── 构建输出 DataFrame ───────────────────────────────────────────
-    out = assemble_output_df(rows)
-
-    log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=rows_before, output_records=len(out), start_time=t_start, log_seq=_log_seq)
-
-    return out
+    ctx.input_rows = rows_before
+    return finalize_color_cleaner(ctx, rows)

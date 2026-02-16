@@ -44,10 +44,8 @@ from ..cleaner_tools import (
     _norm_strip,
     _normalize_amount_text,
     _label_matches_color_unified,
-    assemble_output_df,
-    log_cleaner_start,
-    log_cleaner_complete,
-    validate_columns,
+    setup_color_cleaner,
+    finalize_color_cleaner,
     dispatch_extraction_to_price_decomposition,
     LABEL_SPLIT_RE_shop4 as LABEL_SPLIT_RE,
     EXTRACTION_MODE,
@@ -288,22 +286,13 @@ from ..shop_cleaners_split_llm.llm_shop4 import (
 # ----------------------------------------------------------------------
 
 def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> pd.DataFrame:
-    start_time = time.time()
-    _log_seq = 0
-
-    log_cleaner_start(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), log_seq=_log_seq, extraction_mode=EXTRACTION_MODE)
-    _log_seq += 1
-
-    _log_seq = validate_columns(df, ["data", "data11", "time-scraped"],
-                                cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
-                                logger=logger, log_seq=_log_seq)
-
-    if df.empty:
-        log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=0, start_time=start_time, log_seq=_log_seq)
-        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
-
-    info_df = _load_iphone17_info_df_from_db()
-    pn_map = _build_color_map(info_df)
+    ctx, early = setup_color_cleaner(
+        df, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+        required_cols=["data", "data11", "time-scraped"],
+        extraction_mode=EXTRACTION_MODE,
+    )
+    if ctx is None:
+        return early
 
     def _next_model_idx(start: int) -> int:
         nn = len(df)
@@ -332,7 +321,7 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         cap_gb = int(cap_gb)
 
         key = (model_norm, cap_gb)
-        color_to_pn = pn_map.get(key)
+        color_to_pn = ctx.color_map.get(key)
         if not color_to_pn:
             continue
 
@@ -340,8 +329,6 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         if base_price is None:
             continue
 
-        # ---- 收集 block 文本（source_text_raw_full） ----
-        # 排除「纯金额行且下一行为机型行」的下一 block 基准价行，避免日志误导
         block_lines_raw = []
         for j in range(i, block_end + 1):
             if j > i and _is_next_model_base_price_row(df, j, n):
@@ -351,7 +338,6 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
                 block_lines_raw.append(raw.strip())
         source_text_raw_full = " | ".join(block_lines_raw)
 
-        # ---- 提取 ----
         decomp = dispatch_extraction_to_price_decomposition(
             EXTRACTION_MODE,
             regex_fn=lambda: _extract_specs_shop4_regex_block(df, i),
@@ -362,7 +348,7 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
             has_result_fn=lambda r: bool(r[0]),
         )
 
-        new_rows, _log_seq = resolve_color_prices(
+        new_rows, ctx.log_seq = resolve_color_prices(
             decomp,
             color_to_pn,
             _label_matches_color_unified,
@@ -370,8 +356,8 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
             cleaner_name=CLEANER_NAME,
             recorded_at=rec_at,
             emit_default_rows=True,
-            logger=logger,
-            log_seq_start=_log_seq,
+            logger=ctx.logger,
+            log_seq_start=ctx.log_seq,
             row_index=i,
             model_text=model_text,
             model_norm=model_norm,
@@ -379,8 +365,4 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         )
         rows.extend(new_rows)
 
-    out = assemble_output_df(rows)
-
-    log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=len(out), start_time=start_time, log_seq=_log_seq)
-
-    return out
+    return finalize_color_cleaner(ctx, rows)

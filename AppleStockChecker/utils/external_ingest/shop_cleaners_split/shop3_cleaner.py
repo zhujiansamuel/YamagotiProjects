@@ -41,8 +41,6 @@ from ...external_ingest.cleaner_tools import to_int_yen, parse_dt_aware
 from ..cleaner_tools import (
     _parse_capacity_gb,
     _normalize_model_generic,
-    _load_iphone17_info_df_from_db,
-    _build_color_map,
     _truncate_for_log,
     _norm_strip,
     _normalize_amount_text,
@@ -51,13 +49,11 @@ from ..cleaner_tools import (
     PriceDecomposition,
     resolve_color_prices,
     _label_matches_color_unified,
-    assemble_output_df,
-    log_cleaner_start,
-    log_cleaner_complete,
     log_llm_extraction_error,
-    validate_columns,
     clean_label_token,
     dispatch_extraction_to_price_decomposition,
+    setup_color_cleaner,
+    finalize_color_cleaner,
     DELTA_PATTERN_STRICT as _DELTA_PATTERN_STRICT_IMPORTED,
     DELTA_PATTERN_LOOSE as _DELTA_PATTERN_LOOSE_IMPORTED,
     SIGNED_AMOUNT_PATTERN,
@@ -165,25 +161,19 @@ from ..shop_cleaners_split_llm.llm_shop3 import (
 # ----------------------------------------------------------------------
 
 def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> pd.DataFrame:
-    start_time = time.time()
-    _log_seq = 0
-
-    log_cleaner_start(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), log_seq=_log_seq, extraction_mode=EXTRACTION_MODE)
-    _log_seq += 1
-
-    _log_seq = validate_columns(df, ["title", "data5", "time-scraped"],
-                                cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
-                                logger=logger, log_seq=_log_seq)
+    ctx, early = setup_color_cleaner(
+        df, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+        required_cols=["title", "data5", "time-scraped"],
+        extraction_mode=EXTRACTION_MODE,
+    )
+    if ctx is None:
+        return early
 
     src = df.copy()
     mask_time_ok = src["time-scraped"].astype(str).str.strip().ne("") & src["time-scraped"].notna()
     src = src[mask_time_ok].reset_index(drop=True)
     if src.empty:
-        log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=0, start_time=start_time, log_seq=_log_seq)
-        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
-
-    info_df = _load_iphone17_info_df_from_db()
-    color_maps = _build_color_map(info_df)
+        return finalize_color_cleaner(ctx, [])
 
     model_norm = src["title"].map(_normalize_model_generic)
     cap_gb     = src["title"].map(_parse_capacity_gb)
@@ -196,11 +186,6 @@ def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
 
     remark = src["减价1"] if "减价1" in src.columns else None
 
-    if remark is not None:
-        remark_text = remark.fillna("").astype(str)
-    else:
-        remark_text = pd.Series(["" for _ in range(len(src))])
-
     rows: List[dict] = []
 
     for i in range(len(src)):
@@ -212,19 +197,14 @@ def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
 
         rem_text = str(remark.iat[i]) if remark is not None else ""
 
-        if not m:
-            continue
-        if pd.isna(c):
-            continue
-        if p0 is None:
+        if not m or pd.isna(c) or p0 is None:
             continue
 
         key = (m, int(c))
-        cmap = color_maps.get(key)
+        cmap = ctx.color_map.get(key)
         if not cmap:
             continue
 
-        # ---- 提取 ----
         decomp = dispatch_extraction_to_price_decomposition(
             EXTRACTION_MODE,
             regex_fn=lambda: _extract_specs_shop3_regex(rem_text),
@@ -233,13 +213,13 @@ def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
             source_text_raw=rem_text,
             result_adapter=lambda r: (r, []),
         )
-        new_rows, _log_seq = resolve_color_prices(
+        new_rows, ctx.log_seq = resolve_color_prices(
             decomp, cmap, _label_matches_color_unified,
             shop_name=SHOP_NAME,
             cleaner_name=CLEANER_NAME,
             recorded_at=t,
-            logger=logger,
-            log_seq_start=_log_seq,
+            logger=ctx.logger,
+            log_seq_start=ctx.log_seq,
             row_index=i,
             model_text=model_text,
             model_norm=m,
@@ -247,8 +227,4 @@ def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         )
         rows.extend(new_rows)
 
-    out = assemble_output_df(rows, coerce_price=False)
-
-    log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=len(out), start_time=start_time, log_seq=_log_seq)
-
-    return out
+    return finalize_color_cleaner(ctx, rows)
