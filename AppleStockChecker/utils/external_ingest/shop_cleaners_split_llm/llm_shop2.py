@@ -140,12 +140,12 @@ def _extract_specs_shop2_llm_core(
             attrs = ext.get("attributes") or {}
             extraction_text = safe_to_text(ext.get("extraction_text"))
 
-            # 1) 优先从 extraction_text 按行解析
+            # 1) 优先从 extraction_text 按行解析（支持复合标签）
             if extraction_text and _parse_rule_token_simple_fn:
                 for piece in extraction_text.replace("\r", "\n").split("\n"):
-                    parsed = _parse_rule_token_simple_fn(piece)
-                    if parsed:
-                        g, d = parsed
+                    parsed_list = _parse_rule_token_simple_fn(piece)
+                    # parsed_list 现在是 List[Tuple[str, int]]，支持复合标签
+                    for g, d in parsed_list:
                         rules[g] = d
 
             # 2) 再用 attributes 兜底
