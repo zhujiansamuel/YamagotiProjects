@@ -37,8 +37,6 @@ from ..cleaner_tools import (
     extract_price_yen,
     _parse_capacity_gb,
     _normalize_model_generic,
-    _load_iphone17_info_df_from_db,
-    _build_color_map,
     _truncate_for_log,
     _norm_strip,
     _normalize_amount_text,
@@ -49,13 +47,11 @@ from ..cleaner_tools import (
     LABEL_SPLIT_RE_shop9,
     SYNONYM_LOOKUP_NORM,
     EXTRACTION_MODE,
-    assemble_output_df,
-    log_cleaner_start,
-    log_cleaner_complete,
     log_row_skip,
-    validate_columns,
     coerce_signed_int,
     dispatch_extraction_to_price_decomposition,
+    setup_color_cleaner,
+    finalize_color_cleaner,
 )
 
 # 初始化 logger
@@ -404,22 +400,13 @@ def clean_shop9(
     debug: bool = True,
     debug_limit: int = 30,
 ) -> pd.DataFrame:
-    start_time = time.time()
-    _log_seq = 0
-
-    log_cleaner_start(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), log_seq=_log_seq, extraction_mode=EXTRACTION_MODE)
-    _log_seq += 1
-
-    _log_seq = validate_columns(df, [COL_MODEL, COL_PRICE, COL_COLOR, COL_TIME],
-                                cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
-                                logger=logger, log_seq=_log_seq)
-
-    if df.empty:
-        log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=0, start_time=start_time, log_seq=_log_seq)
-        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
-
-    info_df = _load_iphone17_info_df_from_db()
-    pn_map = _build_color_map(info_df)
+    ctx, early = setup_color_cleaner(
+        df, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+        required_cols=[COL_MODEL, COL_PRICE, COL_COLOR, COL_TIME],
+        extraction_mode=EXTRACTION_MODE,
+    )
+    if ctx is None:
+        return early
 
     model_norm_ser = df[COL_MODEL].map(_normalize_model_generic)
     cap_gb_ser = df[COL_MODEL].map(_parse_capacity_gb)
@@ -436,32 +423,29 @@ def clean_shop9(
         raw_color_cell = df[COL_COLOR].iat[i]
 
         if not m or pd.isna(c):
-            log_row_skip(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
-                         row_index=i, skip_reason="model_or_cap_missing", log_seq=_log_seq,
+            log_row_skip(ctx.logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                         row_index=i, skip_reason="model_or_cap_missing", log_seq=ctx.log_seq,
                          raw_model=str(raw_model), model_norm=str(m))
-            _log_seq += 1
+            ctx.log_seq += 1
             continue
         c = int(c)
 
         key = (m, c)
-        color_to_pn = pn_map.get(key)
+        color_to_pn = ctx.color_map.get(key)
         if not color_to_pn:
-            log_row_skip(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
-                         row_index=i, skip_reason="no_pn_map", log_seq=_log_seq,
+            log_row_skip(ctx.logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                         row_index=i, skip_reason="no_pn_map", log_seq=ctx.log_seq,
                          model_norm=str(m), capacity_gb=c)
-            _log_seq += 1
+            ctx.log_seq += 1
             continue
 
         s_color = str(raw_color_cell) if raw_color_cell is not None else ""
         s_price = str(raw_price_cell) if raw_price_cell is not None else ""
 
-        # base price：优先 price 列，其次 color 列（保留原逻辑）
         base_price = extract_price_yen(s_price) or extract_price_yen(s_color)
 
-        # source_text_raw_full：两列合并
         source_text_raw_full = f"{s_price} | {s_color}" if s_price and s_color else (s_price or s_color)
 
-        # ---- 提取 ----
         decomp = dispatch_extraction_to_price_decomposition(
             EXTRACTION_MODE,
             regex_fn=lambda: _extract_specs_shop9_regex(s_price, s_color, color_to_pn),
@@ -478,7 +462,7 @@ def clean_shop9(
         )
         decomp_emit_default = base_price is not None
 
-        new_rows, _log_seq = resolve_color_prices(
+        new_rows, ctx.log_seq = resolve_color_prices(
             decomp,
             color_to_pn,
             _label_matches_color_unified,
@@ -486,8 +470,8 @@ def clean_shop9(
             cleaner_name=CLEANER_NAME,
             recorded_at=t,
             emit_default_rows=decomp_emit_default,
-            logger=logger,
-            log_seq_start=_log_seq,
+            logger=ctx.logger,
+            log_seq_start=ctx.log_seq,
             row_index=i,
             model_text=str(raw_model),
             model_norm=str(m),
@@ -495,8 +479,4 @@ def clean_shop9(
         )
         rows.extend(new_rows)
 
-    out = assemble_output_df(rows)
-
-    log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=len(out), start_time=start_time, log_seq=_log_seq)
-
-    return out
+    return finalize_color_cleaner(ctx, rows)

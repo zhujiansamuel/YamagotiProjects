@@ -43,18 +43,12 @@ from ..cleaner_tools import (
     extract_price_yen,
     _parse_capacity_gb,
     _normalize_model_generic,
-    _load_iphone17_info_df_from_db,
-    _build_color_map,
     _truncate_for_log,
     _norm_strip,
     normalize_text_basic,
     PriceDecomposition,
     resolve_color_prices,
     _label_matches_color_unified,
-    assemble_output_df,
-    log_cleaner_start,
-    log_cleaner_complete,
-    validate_columns,
     coerce_int,
     dispatch_extraction_to_price_decomposition,
     lx,
@@ -64,6 +58,8 @@ from ..cleaner_tools import (
     OLLAMA_URL,
     OLLAMA_MODEL_ID,
     EXTRACTION_MODE,
+    setup_color_cleaner,
+    finalize_color_cleaner,
 )
 
 # ----------------------------------------------------------------------
@@ -196,24 +192,15 @@ def _extract_specs_shop11_regex(text: str) -> List[Tuple[str, int]]:
 # ----------------------------------------------------------------------
 
 def clean_shop11(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> pd.DataFrame:
-    t_start = time.time()
-    _log_seq = 0
-
-    log_cleaner_start(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), log_seq=_log_seq, extraction_mode=EXTRACTION_MODE)
-    _log_seq += 1
-
-    _log_seq = validate_columns(df, ["storage_name", "price_unopened", "caution_empty", "time-scraped"],
-                                cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
-                                logger=logger, log_seq=_log_seq)
-
-    if df.empty:
-        log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=0, start_time=t_start, log_seq=_log_seq)
-        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
+    ctx, early = setup_color_cleaner(
+        df, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+        required_cols=["storage_name", "price_unopened", "caution_empty", "time-scraped"],
+        extraction_mode=EXTRACTION_MODE,
+    )
+    if ctx is None:
+        return early
 
     df2 = df.copy().reset_index(drop=True)
-
-    info_df = _load_iphone17_info_df_from_db()
-    cmap_all = _build_color_map(info_df)
 
     rows: List[dict] = []
 
@@ -227,22 +214,20 @@ def clean_shop11(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) ->
         if not storage:
             continue
 
-        model_text = storage  # shop11 的 model_text 来源于 storage_name
+        model_text = storage
 
-        # 1) 只用规则解析（_normalize_model_generic + _parse_capacity_gb），不做 LLM 匹配
         model_norm = _normalize_model_generic(storage)
         cap_fb = _parse_capacity_gb(storage)
         if not model_norm or cap_fb is None:
             continue
         cap_gb = int(cap_fb)
         key = (model_norm, cap_gb)
-        color_map = cmap_all.get(key)
+        color_map = ctx.color_map.get(key)
 
-        # 若 key 对不上，再做一次"保险规范化"尝试（减少 LLM 输出微小差异导致 miss）
         if not color_map:
             model_norm2 = _normalize_model_generic(model_norm) or model_norm
             key2 = (model_norm2, cap_gb)
-            color_map = cmap_all.get(key2)
+            color_map = ctx.color_map.get(key2)
             if color_map:
                 key = key2
                 model_norm = model_norm2
@@ -255,19 +240,16 @@ def clean_shop11(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) ->
             continue
         base_price = int(base_price)
 
-        # recorded_at（保持原有逻辑）
         rec_at_raw = time_raw
         try:
             rec_at = dateparser.parse(str(rec_at_raw)) if pd.notna(rec_at_raw) else None
         except Exception:
             rec_at = rec_at_raw
 
-        # 2) 颜色差额：根据 EXTRACTION_MODE 调度
         avail_colors = tuple(color_map.keys())
         caution_txt = normalize_text_basic(str(caution_raw or ""))
         source_text_raw_full = str(caution_raw or "")
 
-        # ---- 匹配 + 定价 + 输出（公共函数） ----
         decomp = dispatch_extraction_to_price_decomposition(
             EXTRACTION_MODE,
             regex_fn=lambda: _extract_specs_shop11_regex(caution_txt),
@@ -283,15 +265,15 @@ def clean_shop11(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) ->
             result_adapter=lambda r: (r, []),
         )
 
-        new_rows, _log_seq = resolve_color_prices(
+        new_rows, ctx.log_seq = resolve_color_prices(
             decomp,
             color_map,
             _label_matches_color_unified,
             shop_name=SHOP_NAME,
             cleaner_name=CLEANER_NAME,
             recorded_at=rec_at,
-            logger=logger,
-            log_seq_start=_log_seq,
+            logger=ctx.logger,
+            log_seq_start=ctx.log_seq,
             row_index=int(i),
             model_text=model_text,
             model_norm=model_norm,
@@ -299,9 +281,4 @@ def clean_shop11(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) ->
         )
         rows.extend(new_rows)
 
-    # ---- 输出 DataFrame 组装 ----
-    out = assemble_output_df(rows)
-
-    log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=len(out), start_time=t_start, log_seq=_log_seq)
-
-    return out
+    return finalize_color_cleaner(ctx, rows)

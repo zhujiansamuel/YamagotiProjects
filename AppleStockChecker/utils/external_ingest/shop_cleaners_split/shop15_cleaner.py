@@ -37,20 +37,16 @@ from ..cleaner_tools import (
     _parse_capacity_gb,
     _normalize_model_generic,
     _truncate_for_log,
-    _load_iphone17_info_df_from_db,
-    _build_color_map,
     _norm_strip,
     PriceDecomposition,
     resolve_color_prices,
     _label_matches_color_unified,
+    setup_color_cleaner,
+    finalize_color_cleaner,
     LABEL_SPLIT_RE_shop15 as _LABEL_LIST_SPLIT_RE_shop15,
     OLLAMA_URL,
     OLLAMA_MODEL_ID,
     EXTRACTION_MODE,
-    assemble_output_df,
-    log_cleaner_start,
-    log_cleaner_complete,
-    validate_columns,
     dispatch_extraction_to_price_decomposition,
     lx,
     HAS_LANGEXTRACT,
@@ -255,26 +251,17 @@ from ..shop_cleaners_split_llm.llm_shop15 import (
 # ----------------------------------------------------------------------
 
 def clean_shop15(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
-    start_time = time.time()
-    _log_seq = 0  # 日志序号：同一次 clean_shop15 调用内单调递增，用于 ELK 排序
-
-    log_cleaner_start(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), log_seq=_log_seq)
-
-    _log_seq = validate_columns(df, [PRICE_COL, MODEL_COL, "time-scraped"],
-                                cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
-                                logger=logger, log_seq=_log_seq)
-
-    if df.empty:
-        log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=0, start_time=start_time, log_seq=_log_seq)
-        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
-
-    info_df = _load_iphone17_info_df_from_db()
-    cmap_all = _build_color_map(info_df)
+    ctx, early = setup_color_cleaner(
+        df, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+        required_cols=[PRICE_COL, MODEL_COL, "time-scraped"],
+        extraction_mode=EXTRACTION_MODE,
+    )
+    if ctx is None:
+        return early
 
     rows: List[dict] = []
 
     for i, row in df.iterrows():
-        current_row_records: List[dict] = []
         model_text = str(row.get(MODEL_COL) or "").strip()
         if not model_text:
             continue
@@ -286,14 +273,13 @@ def clean_shop15(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
         cap_gb = int(cap_gb)
 
         key = (model_norm, cap_gb)
-        color_map = cmap_all.get(key)
+        color_map = ctx.color_map.get(key)
         if not color_map:
             continue
 
         price_text = row.get(PRICE_COL)
         price_text_s = "" if price_text is None else str(price_text)
 
-        # 根据 EXTRACTION_MODE 提取价格信息
         decomp = dispatch_extraction_to_price_decomposition(
             EXTRACTION_MODE,
             regex_fn=lambda: _extract_specs_shop15_regex(price_text_s),
@@ -318,7 +304,7 @@ def clean_shop15(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
         )
         rec_at = parse_dt_aware(row.get("time-scraped"))
 
-        new_rows, _log_seq = resolve_color_prices(
+        new_rows, ctx.log_seq = resolve_color_prices(
             decomp,
             color_map,
             _label_matches_color_unified,
@@ -326,8 +312,8 @@ def clean_shop15(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
             cleaner_name=CLEANER_NAME,
             recorded_at=rec_at,
             emit_default_rows=False,
-            logger=logger,
-            log_seq_start=_log_seq,
+            logger=ctx.logger,
+            log_seq_start=ctx.log_seq,
             row_index=int(i),
             model_text=model_text,
             model_norm=model_norm,
@@ -335,8 +321,4 @@ def clean_shop15(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
         )
         rows.extend(new_rows)
 
-    out = assemble_output_df(rows)
-
-    log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=len(out), start_time=start_time, log_seq=_log_seq)
-
-    return out
+    return finalize_color_cleaner(ctx, rows)

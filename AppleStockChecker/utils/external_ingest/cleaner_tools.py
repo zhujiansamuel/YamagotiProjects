@@ -2178,3 +2178,90 @@ def clean_with_model_capacity_matching(
     log_cleaner_complete(_logger, cleaner_name=cleaner_name, shop_name=shop_name,
                          input_rows=len(df), output_records=len(out), start_time=start_time)
     return out
+
+
+# ======================================================================
+# 6. C类清洗器 setup / finalize — 颜色感知+价格分解公共骨架
+# ======================================================================
+
+@dataclass
+class ColorCleanerContext:
+    """C类清洗器的公共上下文，由 setup_color_cleaner 创建。"""
+    cleaner_name: str
+    shop_name: str
+    start_time: float
+    log_seq: int
+    input_rows: int
+    info_df: pd.DataFrame
+    color_map: Dict
+    logger: logging.Logger
+    extraction_mode: Optional[str] = None
+
+
+def setup_color_cleaner(
+    df: pd.DataFrame,
+    *,
+    cleaner_name: str,
+    shop_name: str,
+    required_cols: List[str],
+    extraction_mode: Optional[str] = None,
+    lenient: bool = False,
+) -> Tuple[Optional[ColorCleanerContext], Optional[pd.DataFrame]]:
+    """
+    C类清洗器的公共初始化：日志、列校验、空检查、加载参考数据。
+
+    Returns
+    -------
+    (ctx, None) : 初始化成功，ctx 包含 info_df / color_map / log_seq 等
+    (None, empty_df) : df 为空或校验后为空，直接返回 empty_df 即可
+    """
+    _logger = logging.getLogger(f"cleaner_tools.{cleaner_name}")
+    start_time = time.time()
+    _log_seq = 0
+
+    log_cleaner_start(_logger, cleaner_name=cleaner_name, shop_name=shop_name,
+                      input_rows=len(df), log_seq=_log_seq,
+                      extraction_mode=extraction_mode)
+    _log_seq += 1
+
+    _log_seq = validate_columns(df, required_cols,
+                                cleaner_name=cleaner_name, shop_name=shop_name,
+                                logger=_logger, log_seq=_log_seq, lenient=lenient)
+
+    if df.empty:
+        log_cleaner_complete(_logger, cleaner_name=cleaner_name, shop_name=shop_name,
+                             input_rows=len(df), output_records=0,
+                             start_time=start_time, log_seq=_log_seq)
+        return None, pd.DataFrame(columns=_OUTPUT_COLUMNS)
+
+    info_df = _load_iphone17_info_df_from_db()
+    color_map = _build_color_map(info_df)
+
+    ctx = ColorCleanerContext(
+        cleaner_name=cleaner_name,
+        shop_name=shop_name,
+        start_time=start_time,
+        log_seq=_log_seq,
+        input_rows=len(df),
+        info_df=info_df,
+        color_map=color_map,
+        logger=_logger,
+        extraction_mode=extraction_mode,
+    )
+    return ctx, None
+
+
+def finalize_color_cleaner(
+    ctx: ColorCleanerContext,
+    rows: List[dict],
+    *,
+    coerce_price: bool = False,
+) -> pd.DataFrame:
+    """
+    C类清洗器的公共收尾：组装输出 DataFrame + 完成日志。
+    """
+    out = assemble_output_df(rows, coerce_price=coerce_price)
+    log_cleaner_complete(ctx.logger, cleaner_name=ctx.cleaner_name, shop_name=ctx.shop_name,
+                         input_rows=ctx.input_rows, output_records=len(out),
+                         start_time=ctx.start_time, log_seq=ctx.log_seq)
+    return out
