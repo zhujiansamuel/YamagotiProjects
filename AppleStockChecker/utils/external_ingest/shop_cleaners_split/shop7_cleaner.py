@@ -158,7 +158,6 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
     df = df.copy().reset_index(drop=True)
     mask_time_ok = df["time-scraped"].astype(str).str.strip().ne("") & df["time-scraped"].notna()
     df = df[mask_time_ok].reset_index(drop=True)
-    rows_dropped_time = rows_before - len(df)
 
     if df.empty:
         log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=rows_before, output_records=0, start_time=t_start, log_seq=_log_seq)
@@ -172,27 +171,6 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
 
     # 构建 (model, cap) → {color_norm: (pn, color_raw)} 映射
     pn_map = _build_color_map(info_df)
-
-    # ── Step 2b: 数据质量摘要 ────────────────────────────────────────
-    n_has_price = int(price_series.map(lambda x: x is not None).sum())
-    n_has_model = int(model_norm_series.astype(bool).sum())
-    n_has_cap = int(cap_gb_series.notna().sum())
-
-    _log_seq += 1
-    logger.info(
-        f"Data quality: rows={len(df)} has_price={n_has_price} has_model={n_has_model} has_cap={n_has_cap} dropped_no_time={rows_dropped_time}",
-        extra={
-            "event_type": "data_quality_summary",
-            "log_seq": _log_seq,
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "total_rows": len(df),
-            "rows_dropped_no_time": rows_dropped_time,
-            "rows_with_price": n_has_price,
-            "rows_with_model": n_has_model,
-            "rows_with_capacity": n_has_cap,
-        },
-    )
 
     # ── Step 3~5: 主循环 — 逐行解析颜色减价 & 匹配输出 ──────────────
     rows: List[dict] = []

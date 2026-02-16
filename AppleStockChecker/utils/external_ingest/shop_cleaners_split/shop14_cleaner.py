@@ -80,17 +80,6 @@ def _norm_label(lbl: str) -> str:
     return s
 
 
-def _clean_remark_frag(x) -> str:
-    if x is None:
-        return ""
-    s = str(x).strip()
-    if not s or s.lower() == "nan":
-        return ""
-    s = s.lstrip("\ufeff").replace("\u3000", " ").replace("\xa0", " ")
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
-
-
 def _norm_colname(x) -> str:
     s = str(x or "")
     s = s.lstrip("\ufeff")
@@ -98,14 +87,6 @@ def _norm_colname(x) -> str:
     s = s.strip()
     s = re.sub(r"\s+", " ", s)
     return s
-
-
-def _split_labels(labels: str) -> List[str]:
-    s = str(labels or "").strip()
-    if not s:
-        return []
-    parts = LABEL_SPLIT_RE_shop14.split(s)
-    return [p.strip() for p in parts if p and p.strip()]
 
 
 # _coerce_amount_yen → cleaner_tools.coerce_amount_yen 统一导入
@@ -118,13 +99,6 @@ def _labels_from_text_fallback(extraction_text: str) -> str:
     t = re.sub(r"(?:[+\-−－])?\s*(?:¥|￥)?\s*\d[\d,，]*\s*(?:円)?", "", t)
     t = t.strip()
     return t
-
-
-def _strip_label_delims(s: str) -> str:
-    s = str(s or "").strip()
-    s = re.sub(r"^[／/、，,;；\s]+", "", s)
-    s = re.sub(r"[／/、，,;；\s]+$", "", s)
-    return s.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -205,8 +179,19 @@ def _resolve_remark_cols(df: "pd.DataFrame") -> Dict[str, Optional[str]]:
 
 
 # ---------------------------------------------------------------------------
-# Step 6: multi-pair 拆分 helper
+# Step 6-7: 不能内移（regex/llm/clean 共用）— 紧贴 regex 组上方
 # ---------------------------------------------------------------------------
+
+def _clean_remark_frag(x) -> str:
+    if x is None:
+        return ""
+    s = str(x).strip()
+    if not s or s.lower() == "nan":
+        return ""
+    s = s.lstrip("\ufeff").replace("\u3000", " ").replace("\xa0", " ")
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
 
 def _split_color_amount_pairs_multi(txt: str) -> List[Tuple[str, int]]:
     out: List[Tuple[str, int]] = []
@@ -239,6 +224,20 @@ def _extract_specs_shop14_regex(
     纯正则从 remark 文本中抽取颜色价格规则。
     返回: {"all_delta": Optional[int], "abs": [...], "delta": [...]}
     """
+
+    def _strip_label_delims(s: str) -> str:
+        s = str(s or "").strip()
+        s = re.sub(r"^[／/、，,;；\s]+", "", s)
+        s = re.sub(r"[／/、，,;；\s]+$", "", s)
+        return s.strip()
+
+    def _split_labels(labels: str) -> List[str]:
+        s = str(labels or "").strip()
+        if not s:
+            return []
+        parts = LABEL_SPLIT_RE_shop14.split(s)
+        return [p.strip() for p in parts if p and p.strip()]
+
     out: Dict[str, Union[Optional[int], List[Tuple[str, int]]]] = {
         "all_delta": None, "abs": [], "delta": [],
     }

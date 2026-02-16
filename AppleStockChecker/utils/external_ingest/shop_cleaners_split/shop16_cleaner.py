@@ -69,63 +69,17 @@ DESC_COL  = "説明1"
 PRICE_COL = "買取価格"
 
 # ----------------------------------------------------------------------
-# Step 1: 价格文本归一化
-# ----------------------------------------------------------------------
-
-def _normalize_price_text_shop16(s: object) -> str:
-    s = "" if s is None else str(s)
-    s = s.replace("\u3000", " ").replace("\xa0", " ").replace("\t", " ")
-    # 把换行变成分隔（保留"下一行是颜色差价"的结构）
-    s = re.sub(r"[\r\n]+", " / ", s)
-    # 压缩空白
-    s = re.sub(r"\s+", " ", s).strip()
-    # 多个分隔合并
-    s = re.sub(r"(?:\s*/\s*){2,}", " / ", s).strip()
-    return s
-
-# ----------------------------------------------------------------------
-# Step 2: 基础价提取 & 判定
-# ----------------------------------------------------------------------
-
-FIRST_YEN_RE = re.compile(r"(?:￥|\¥)?\s*(\d[\d,]*)\s*円?")
-
-def _extract_base_price_shop16(text: str) -> Optional[int]:
-    if not text:
-        return None
-    m = FIRST_YEN_RE.search(str(text))
-    if not m:
-        return to_int_yen(text)  # 兜底
-    return to_int_yen(m.group(1))
-
-_BASE_ONLY_RE = re.compile(r"^\s*(?:￥|\¥)?\s*\d[\d,]*\s*(?:円)?\s*$")
-
-def _is_base_only_price_text(price_text_norm: str) -> bool:
-    """判断文本是否只包含一个基础价，不含任何颜色差价信息。"""
-    return bool(_BASE_ONLY_RE.match(price_text_norm or ""))
-
-# ----------------------------------------------------------------------
-# Step 3: 标签归一化 & 拆分
+# Step 1-3: 常量与 _norm
 # ----------------------------------------------------------------------
 
 _norm = _norm_strip  # 颜色匹配用归一化（去空格 + 转小写）
 
+FIRST_YEN_RE = re.compile(r"(?:￥|\¥)?\s*(\d[\d,]*)\s*円?")
+_BASE_ONLY_RE = re.compile(r"^\s*(?:￥|\¥)?\s*\d[\d,]*\s*(?:円)?\s*$")
 _TRAILING_AMOUNT_IN_LABEL_RE = re.compile(
     r"(?:[：:])?\s*(?:￥)?\s*[+\-−－]?\s*\d[\d,]*\s*(?:円)?\s*$",
     re.UNICODE,
 )
-
-def _normalize_label_shop16(lbl: str) -> str:
-    s = re.sub(r"[\s\u3000\xa0]+", "", lbl or "")
-    s = re.sub(r"(カラー|色)$", "", s)
-    # 去掉黏在 label 末尾的金额/符号：-1000 / ￥86100 / :-1,000円 等
-    s = _TRAILING_AMOUNT_IN_LABEL_RE.sub("", s)
-    return s.strip()
-
-def _split_labels_shop16(lbl: str) -> List[str]:
-    # 兼容 "青/オレンジ""黒、白""blue/black" 等
-    raw = _normalize_label_shop16(lbl)
-    parts = LABEL_SPLIT_RE_shop16_SIMPLE.split(raw)
-    return [p for p in (_normalize_label_shop16(x) for x in parts) if p]
 
 # ----------------------------------------------------------------------
 # Step 4: 标签→颜色匹配（2025-02 替换为 cleaner_tools 统一实现）
@@ -162,8 +116,76 @@ _GROUP_SHARED_DELTA_RE = re.compile(
 )
 
 # ----------------------------------------------------------------------
-# Step 6: 正则提取函数
+# Step 6: 正则提取函数（不能内移：regex/llm/clean 共用 — 紧贴 regex 组上方）
 # ----------------------------------------------------------------------
+
+def _normalize_price_text_shop16(s: object) -> str:
+    s = "" if s is None else str(s)
+    s = s.replace("\u3000", " ").replace("\xa0", " ").replace("\t", " ")
+    # 把换行变成分隔（保留"下一行是颜色差价"的结构）
+    s = re.sub(r"[\r\n]+", " / ", s)
+    # 压缩空白
+    s = re.sub(r"\s+", " ", s).strip()
+    # 多个分隔合并
+    s = re.sub(r"(?:\s*/\s*){2,}", " / ", s).strip()
+    return s
+
+
+def _extract_base_price_shop16(text: str) -> Optional[int]:
+    if not text:
+        return None
+    m = FIRST_YEN_RE.search(str(text))
+    if not m:
+        return to_int_yen(text)  # 兜底
+    return to_int_yen(m.group(1))
+
+
+def _is_base_only_price_text(price_text_norm: str) -> bool:
+    """判断文本是否只包含一个基础价，不含任何颜色差价信息。"""
+    return bool(_BASE_ONLY_RE.match(price_text_norm or ""))
+
+
+def _normalize_label_shop16(lbl: str) -> str:
+    s = re.sub(r"[\s\u3000\xa0]+", "", lbl or "")
+    s = re.sub(r"(カラー|色)$", "", s)
+    # 去掉黏在 label 末尾的金额/符号：-1000 / ￥86100 / :-1,000円 等
+    s = _TRAILING_AMOUNT_IN_LABEL_RE.sub("", s)
+    return s.strip()
+
+
+def _split_labels_shop16(lbl: str) -> List[str]:
+    # 兼容 "青/オレンジ""黒、白""blue/black" 等
+    raw = _normalize_label_shop16(lbl)
+    parts = LABEL_SPLIT_RE_shop16_SIMPLE.split(raw)
+    return [p for p in (_normalize_label_shop16(x) for x in parts) if p]
+
+
+def _extract_shared_delta_map_shop16(price_text_norm: str) -> Dict[str, int]:
+    """
+    从原文中抽取： 'オレンジ/青 -1500' 这种共享差价 -> {オレンジ:-1500, 青:-1500}
+    这是"纠错用"的确定性证据，不替代 LLM 抽取的主流程。
+    """
+    s = price_text_norm or ""
+    out: Dict[str, int] = {}
+    # 去掉基础价前缀，减少误匹配（基础价一般在最前）
+    m0 = FIRST_YEN_RE.search(s)
+    tail = s[m0.end():] if m0 else s
+
+    for m in _GROUP_SHARED_DELTA_RE.finditer(tail):
+        labels_raw = m.group("labels") or ""
+        sign = m.group("sign") or ""
+        amt = to_int_yen(m.group("amount"))
+        if amt is None:
+            continue
+        delta = -int(amt) if sign in ("-", "−", "－") else int(amt)
+
+        # 拆分 labels（/、，等）
+        for lb in LABEL_SPLIT_RE_shop16_SIMPLE.split(labels_raw):
+            lb = _normalize_label_shop16(lb)
+            if lb:
+                out[lb] = delta
+    return out
+
 
 def _extract_specs_shop16_regex_deltas(text: str) -> List[Tuple[str, int]]:
     """从价格串中抽取多段"颜色±金额"，支持 '青/オレンジ -5000' 这类多标签共用金额。"""
@@ -234,31 +256,6 @@ def _extract_specs_shop16_regex_abs(text: str) -> List[Tuple[str, int]]:
             out.append((label, int(amt)))
     return out
 
-def _extract_shared_delta_map_shop16(price_text_norm: str) -> Dict[str, int]:
-    """
-    从原文中抽取： 'オレンジ/青 -1500' 这种共享差价 -> {オレンジ:-1500, 青:-1500}
-    这是"纠错用"的确定性证据，不替代 LLM 抽取的主流程。
-    """
-    s = price_text_norm or ""
-    out: Dict[str, int] = {}
-    # 去掉基础价前缀，减少误匹配（基础价一般在最前）
-    m0 = FIRST_YEN_RE.search(s)
-    tail = s[m0.end():] if m0 else s
-
-    for m in _GROUP_SHARED_DELTA_RE.finditer(tail):
-        labels_raw = m.group("labels") or ""
-        sign = m.group("sign") or ""
-        amt = to_int_yen(m.group("amount"))
-        if amt is None:
-            continue
-        delta = -int(amt) if sign in ("-", "−", "－") else int(amt)
-
-        # 拆分 labels（/、，等）
-        for lb in LABEL_SPLIT_RE_shop16_SIMPLE.split(labels_raw):
-            lb = _normalize_label_shop16(lb)
-            if lb:
-                out[lb] = delta
-    return out
 
 def _extract_specs_shop16_regex(
     price_text: str,

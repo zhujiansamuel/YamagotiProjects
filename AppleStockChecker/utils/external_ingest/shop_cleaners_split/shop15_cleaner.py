@@ -79,33 +79,7 @@ PRICE_COL = "price"
 # 辅助工具函数
 # ----------------------------------------------------------------------
 
-def _parse_signed_int_yen(s: object) -> Optional[int]:
-    """
-    解析：'229,000' / '229,000円' / '-1000' / '-1,000円' / '+2000円'
-    """
-    if s is None:
-        return None
-    t = str(s).strip()
-    if not t:
-        return None
-
-    # 统一符号
-    t = t.replace("＋", "+").replace("−", "-").replace("－", "-")
-    sign = 1
-    if t.startswith("+"):
-        t = t[1:].strip()
-    elif t.startswith("-"):
-        sign = -1
-        t = t[1:].strip()
-
-    # 去掉非数字/逗号
-    t = re.sub(r"[^\d,]", "", t)
-    if not t:
-        return None
-    try:
-        return sign * int(t.replace(",", ""))
-    except Exception:
-        return None
+_norm = _norm_strip  # 颜色匹配用归一化（去空格 + 转小写）
 
 # ----------------------------------------------------------------------
 # Step 2: 基础价提取
@@ -113,45 +87,6 @@ def _parse_signed_int_yen(s: object) -> Optional[int]:
 
 # 基准价只从开头抓（避免把"ブルー229,000円"的229,000误当 base）
 _BASE_YEN_AT_START_RE = re.compile(r"^\s*(?:￥|¥|\u00a5)?\s*(\d[\d,]*)\s*円?")
-
-def _extract_base_price_at_start(text: object) -> Optional[int]:
-    if text is None:
-        return None
-    s = str(text)
-    m = _BASE_YEN_AT_START_RE.search(s)
-    if not m:
-        return None
-    try:
-        return int(m.group(1).replace(",", ""))
-    except Exception:
-        return None
-
-# ----------------------------------------------------------------------
-# Step 3: 标签归一化 & 拆分
-# ----------------------------------------------------------------------
-
-_norm = _norm_strip  # 颜色匹配用归一化（去空格 + 转小写）
-
-
-def _clean_label_shop15(label: str) -> str:
-    if not label:
-        return ""
-    s = str(label).replace("\u3000", " ")
-    s = re.sub(r"\s+", " ", s).strip()
-    # 去掉可能粘着的分隔符
-    s = s.strip(" 　:：-‐‑–—/／、,，・")
-    return s
-
-# _LABEL_LIST_SPLIT_RE_shop15: 从 cleaner_tools.LABEL_SPLIT_RE_shop15 导入
-
-def _split_color_labels_shop15(label_blob: str) -> List[str]:
-    if not label_blob:
-        return []
-    s = str(label_blob).replace("\u3000", " ")
-    s = re.sub(r"\s+", " ", s).strip()
-    s = s.strip(" 　:：-‐‑–—/／、,，・")
-    parts = [p.strip() for p in _LABEL_LIST_SPLIT_RE_shop15.split(s) if p.strip()]
-    return parts or [s]
 
 # ----------------------------------------------------------------------
 # Step 4: 标签→颜色匹配（2025-02 替换为 cleaner_tools 统一实现）
@@ -190,8 +125,70 @@ MULTI_LABEL_DELTA_BLOCK_RE_shop15 = re.compile(
 )
 
 # ----------------------------------------------------------------------
-# Step 6: 正则提取函数
+# Step 6: 正则提取函数（不能内移：regex 与 llm 共用 — 紧贴 regex 组上方）
 # ----------------------------------------------------------------------
+
+def _parse_signed_int_yen(s: object) -> Optional[int]:
+    """
+    解析：'229,000' / '229,000円' / '-1000' / '-1,000円' / '+2000円'
+    """
+    if s is None:
+        return None
+    t = str(s).strip()
+    if not t:
+        return None
+
+    # 统一符号
+    t = t.replace("＋", "+").replace("−", "-").replace("－", "-")
+    sign = 1
+    if t.startswith("+"):
+        t = t[1:].strip()
+    elif t.startswith("-"):
+        sign = -1
+        t = t[1:].strip()
+
+    # 去掉非数字/逗号
+    t = re.sub(r"[^\d,]", "", t)
+    if not t:
+        return None
+    try:
+        return sign * int(t.replace(",", ""))
+    except Exception:
+        return None
+
+
+def _extract_base_price_at_start(text: object) -> Optional[int]:
+    if text is None:
+        return None
+    s = str(text)
+    m = _BASE_YEN_AT_START_RE.search(s)
+    if not m:
+        return None
+    try:
+        return int(m.group(1).replace(",", ""))
+    except Exception:
+        return None
+
+
+def _clean_label_shop15(label: str) -> str:
+    if not label:
+        return ""
+    s = str(label).replace("\u3000", " ")
+    s = re.sub(r"\s+", " ", s).strip()
+    # 去掉可能粘着的分隔符
+    s = s.strip(" 　:：-‐‑–—/／、,，・")
+    return s
+
+
+def _split_color_labels_shop15(label_blob: str) -> List[str]:
+    if not label_blob:
+        return []
+    s = str(label_blob).replace("\u3000", " ")
+    s = re.sub(r"\s+", " ", s).strip()
+    s = s.strip(" 　:：-‐‑–—/／、,，・")
+    parts = [p.strip() for p in _LABEL_LIST_SPLIT_RE_shop15.split(s) if p.strip()]
+    return parts or [s]
+
 
 def _extract_specs_shop15_regex(
     price_text: str,
@@ -373,14 +370,6 @@ def clean_shop15(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
         rows.extend(new_rows)
 
     out = assemble_output_df(rows)
-
-    # "有历史则更新"：同一 (part_number, shop_name) 只保留最新 recorded_at
-    if not out.empty:
-        out = (
-            out.sort_values(["part_number", "shop_name", "recorded_at"])
-              .drop_duplicates(subset=["part_number", "shop_name"], keep="last")
-              .reset_index(drop=True)
-        )
 
     log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=len(out), start_time=start_time, log_seq=_log_seq)
 

@@ -83,6 +83,25 @@ def _split_labels(label: str) -> List[str]:
 # Step 2: 基准价回溯查找
 # ----------------------------------------------------------------------
 
+def _find_base_price(df: pd.DataFrame, idx: int) -> Optional[int]:
+    """
+    按规范：机种行(data11非空)的上一行 data 是基准价。
+    若上一行取不到，向上最多回溯 3 行找首个含"円"的金额。
+    """
+    for j in range(idx - 1, max(-1, idx - 4), -1):
+        if j < 0:
+            break
+        s = str(df["data"].iat[j]) if "data" in df.columns else ""
+        if s and ("円" in s or re.search(r"\d[\d,]*", s)):
+            price = to_int_yen(s)
+            if price:
+                return int(price)
+    return None
+
+# ----------------------------------------------------------------------
+# Step 3: 正则模式定义 & 单行解析（不能内移：regex_block 与 clean 共用）
+# ----------------------------------------------------------------------
+
 # 纯金额行：仅含数字、逗号、円、空格，无数颜色/全色等文字
 _PURE_PRICE_CHARS = re.compile(r"[０-９0-9,，\s円+\-−－]")
 
@@ -117,23 +136,8 @@ def _is_next_model_base_price_row(df: pd.DataFrame, idx: int, n: int) -> bool:
     return val is not None and str(val).strip() != ""
 
 
-def _find_base_price(df: pd.DataFrame, idx: int) -> Optional[int]:
-    """
-    按规范：机种行(data11非空)的上一行 data 是基准价。
-    若上一行取不到，向上最多回溯 3 行找首个含"円"的金额。
-    """
-    for j in range(idx - 1, max(-1, idx - 4), -1):
-        if j < 0:
-            break
-        s = str(df["data"].iat[j]) if "data" in df.columns else ""
-        if s and ("円" in s or re.search(r"\d[\d,]*", s)):
-            price = to_int_yen(s)
-            if price:
-                return int(price)
-    return None
-
 # ----------------------------------------------------------------------
-# Step 3: 正则模式定义 & 单行解析
+# Step 3b: 正则模式定义
 # ----------------------------------------------------------------------
 
 _COLOR_DELTA_RE = re.compile(

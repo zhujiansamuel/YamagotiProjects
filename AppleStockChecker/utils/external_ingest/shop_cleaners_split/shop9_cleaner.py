@@ -13,8 +13,7 @@ shop9 清洗器 — アキモバ
     ├─ _extract_specs_shop9_dispatch()  ← Step 7: モード調度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
-    │   │   ├─ _extract_abs_prices_regex()        ← Step 5a: 正則提取絶対価
-    │   │   ├─ _extract_deltas_regex()            ← Step 5b: 正則提取差価
+    │   │   ├─ _extract_specs_shop9_regex()       ← Step 5: 正則提取（内含 abs/delta 辅助）
     │   │   └─ _direct_abs_overrides_for_row()    ← Step 5c: テキスト直接覆写
     │   │
     │   └─ llm 路径:
@@ -48,6 +47,7 @@ from ..cleaner_tools import (
     resolve_color_prices,
     _label_matches_color_unified,
     LABEL_SPLIT_RE_shop9,
+    SYNONYM_LOOKUP_NORM,
     EXTRACTION_MODE,
     assemble_output_df,
     log_cleaner_start,
@@ -206,51 +206,6 @@ DELTA_RE = re.compile(
 # Step 5: 正則提取関数
 # ----------------------------------------------------------------------
 
-def _is_pure_number_token(tok: str) -> bool:
-    if not tok:
-        return False
-    t = _norm(tok)
-    t = t.replace(",", "").replace("，", "")
-    return t.isdigit()
-
-def _extract_abs_prices_regex(text: str) -> List[Tuple[str, int]]:
-    out: List[Tuple[str, int]] = []
-    if not text:
-        return out
-    s = str(text)
-    for m in ABS_PRICE_RE.finditer(s):
-        labels_part = (m.group("labels") or "").strip()
-        amt = _norm_amount_to_int(m.group("amount"))
-        if amt is None:
-            continue
-        toks = [t.strip() for t in LABEL_SPLIT_RE_shop9.split(labels_part) if t.strip()]
-        for tok in toks:
-            if _is_pure_number_token(tok):
-                continue
-            out.append((tok, int(amt)))
-    return out
-
-def _extract_deltas_regex(text: str) -> List[Tuple[str, int]]:
-    out: List[Tuple[str, int]] = []
-    if not text:
-        return out
-    s = str(text)
-    for m in DELTA_RE.finditer(s):
-        labels_part = m.group("labels") or ""
-        sign = m.group("sign") or "+"
-        amt = _norm_amount_to_int(m.group("amount"))
-        if amt is None:
-            continue
-        delta = -int(amt) if sign in ("-", "−", "－") else int(amt)
-        toks = [t.strip() for t in LABEL_SPLIT_RE_shop9.split(labels_part) if t.strip()]
-        for tok in toks:
-            if _is_pure_number_token(tok):
-                continue
-            out.append((tok, delta))
-    if not out and "全色" in s:
-        out.append(("全色", 0))
-    return out
-
 def _extract_amount_after_alias(text: str, alias: str) -> Optional[int]:
     """
     在 text 中查找形如 'alias 193,500' / 'alias193,500' / 'alias 193500円' 这种片段，
@@ -315,6 +270,52 @@ def _extract_specs_shop9_regex(
     返回: abs_map, delta_map, abs_specs, delta_specs,
           color_abs_label_map, color_delta_label_map
     """
+
+    def _is_pure_number_token(tok: str) -> bool:
+        if not tok:
+            return False
+        t = _norm(tok)
+        t = t.replace(",", "").replace("，", "")
+        return t.isdigit()
+
+    def _extract_abs_prices_regex(text: str) -> List[Tuple[str, int]]:
+        out: List[Tuple[str, int]] = []
+        if not text:
+            return out
+        s = str(text)
+        for m in ABS_PRICE_RE.finditer(s):
+            labels_part = (m.group("labels") or "").strip()
+            amt = _norm_amount_to_int(m.group("amount"))
+            if amt is None:
+                continue
+            toks = [t.strip() for t in LABEL_SPLIT_RE_shop9.split(labels_part) if t.strip()]
+            for tok in toks:
+                if _is_pure_number_token(tok):
+                    continue
+                out.append((tok, int(amt)))
+        return out
+
+    def _extract_deltas_regex(text: str) -> List[Tuple[str, int]]:
+        out: List[Tuple[str, int]] = []
+        if not text:
+            return out
+        s = str(text)
+        for m in DELTA_RE.finditer(s):
+            labels_part = m.group("labels") or ""
+            sign = m.group("sign") or "+"
+            amt = _norm_amount_to_int(m.group("amount"))
+            if amt is None:
+                continue
+            delta = -int(amt) if sign in ("-", "−", "－") else int(amt)
+            toks = [t.strip() for t in LABEL_SPLIT_RE_shop9.split(labels_part) if t.strip()]
+            for tok in toks:
+                if _is_pure_number_token(tok):
+                    continue
+                out.append((tok, delta))
+        if not out and "全色" in s:
+            out.append(("全色", 0))
+        return out
+
     abs_map: Dict[str, int] = {}
     delta_map: Dict[str, int] = {}
     color_abs_label_map: Dict[str, str] = {}
