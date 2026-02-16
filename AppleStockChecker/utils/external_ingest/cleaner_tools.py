@@ -847,7 +847,7 @@ def _dispatch_extraction(
     """
     三模式（regex / llm / auto）提取调度的通用实现。
 
-    合并自各 shop 的 _extract_specs_shop*_dispatch 中重复的 if/elif/else 逻辑。
+    合并自各 shop 原先的提取调度逻辑（regex/llm/auto if/elif/else）。
 
     参数:
         mode: "regex" | "llm" | "auto"（通常来自 EXTRACTION_MODE）
@@ -884,7 +884,7 @@ def _dispatch_extraction(
 
 
 # ======================================================================
-# 公共提取模式调度 → PriceDecomposition（_extract_specs_shop*_dispatch 公共部分）
+# 公共提取模式调度 → PriceDecomposition（原各 shop dispatch 的公共部分）
 # ======================================================================
 # 说明：统一入口为 dispatch_extraction_to_price_decomposition，封装所有调度与后处理逻辑。
 # 内部 helper 以 _ 前缀，仅供该函数调用。涵盖 shop2/3/4/9/11/12/14/15/16/17。
@@ -958,7 +958,7 @@ def _aggregate_fragment_extraction(
     delta_key: str = "delta",
 ) -> Tuple[Optional[int], List[Tuple[str, int]], List[Tuple[str, int]], str]:
     """
-    多 fragment 聚合提取。合并自 shop14 的 _extract_specs_shop14_dispatch 聚合逻辑。
+    多 fragment 聚合提取。合并自 shop14 的 fragment 聚合逻辑。
 
     对 frags 各值依次调用 parse_fn(frag) -> (parsed_dict, method)，
     将 all_delta / abs / delta 聚合。若全部为空则对 combined 再跑一次 parse_fn。

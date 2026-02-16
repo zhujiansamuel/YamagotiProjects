@@ -12,7 +12,7 @@ shop4 清洗器 — モバイルミックス
     │
     ├─ _extract_specs_shop4_regex_line()      ← Step 3: 正则提取单行色差
     │
-    ├─ _extract_specs_shop4_dispatch() ← Step 4: 模式调度（EXTRACTION_MODE）
+    ├─ dispatch_extraction_to_price_decomposition() ← Step 4: 模式调度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
     │   │   └─ _extract_specs_shop4_regex_block()   ← Step 5a: 正则逐行收集
@@ -284,28 +284,6 @@ from ..shop_cleaners_split_llm.llm_shop4 import (
 )
 
 # ----------------------------------------------------------------------
-# Step 7: 提取模式调度
-# ----------------------------------------------------------------------
-
-def _extract_specs_shop4_dispatch(
-    df: pd.DataFrame,
-    start_idx: int,
-    *,
-    base_price: int,
-    source_text_raw: str,
-    row_index: object = None,
-) -> PriceDecomposition:
-    return dispatch_extraction_to_price_decomposition(
-        EXTRACTION_MODE,
-        regex_fn=lambda: _extract_specs_shop4_regex_block(df, start_idx),
-        llm_fn=lambda: _extract_specs_shop4_llm(df, start_idx, row_index=row_index),
-        base_price=base_price,
-        source_text_raw=source_text_raw,
-        result_adapter=lambda r: (r[1], []),
-        has_result_fn=lambda r: bool(r[0]),
-    )
-
-# ----------------------------------------------------------------------
 # Step 8: 清洗主函数
 # ----------------------------------------------------------------------
 
@@ -374,11 +352,14 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         source_text_raw_full = " | ".join(block_lines_raw)
 
         # ---- 提取 ----
-        decomp = _extract_specs_shop4_dispatch(
-            df, i,
+        decomp = dispatch_extraction_to_price_decomposition(
+            EXTRACTION_MODE,
+            regex_fn=lambda: _extract_specs_shop4_regex_block(df, i),
+            llm_fn=lambda: _extract_specs_shop4_llm(df, i, row_index=i),
             base_price=base_price,
             source_text_raw=source_text_raw_full,
-            row_index=i,
+            result_adapter=lambda r: (r[1], []),
+            has_result_fn=lambda r: bool(r[0]),
         )
 
         new_rows, _log_seq = resolve_color_prices(

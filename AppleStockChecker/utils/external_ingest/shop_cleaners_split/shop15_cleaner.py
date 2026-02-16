@@ -8,7 +8,7 @@ shop15 清洗器 — 買取当番
     │
     ├─ _extract_base_price_at_start()             ← Step 2: 提取基础价
     │
-    ├─ _extract_specs_shop15_dispatch()      ← Step 9: 模式调度（EXTRACTION_MODE）
+    ├─ dispatch_extraction_to_price_decomposition() ← Step 9: 模式调度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
     │   │   └─ _extract_specs_shop15_regex()       ← Step 6: 正则提取 specs
@@ -265,29 +265,6 @@ def _extract_specs_shop15_llm(
     )
 
 # ----------------------------------------------------------------------
-# Step 9: 提取模式调度
-# ----------------------------------------------------------------------
-
-def _extract_specs_shop15_dispatch(
-    price_text: str, idx: object = None, *, source_text_raw: str,
-) -> PriceDecomposition:
-    return dispatch_extraction_to_price_decomposition(
-        EXTRACTION_MODE,
-        regex_fn=lambda: _extract_specs_shop15_regex(price_text),
-        llm_fn=lambda: _extract_specs_shop15_llm(price_text, idx=idx),
-        base_price=None,
-        source_text_raw=source_text_raw,
-        result_adapter=lambda r: (
-            r[0],
-            [(l, v) for l, k, v in r[1] if k == "delta"],
-            [(l, v) for l, k, v in r[1] if k == "abs"],
-        ),
-        has_result_fn=lambda r: bool(r[1]),
-        extract_base_from_result=lambda r: r[0],
-    )
-
-
-# ----------------------------------------------------------------------
 # Step 11: 清洗主函数
 # ----------------------------------------------------------------------
 
@@ -331,7 +308,20 @@ def clean_shop15(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
         price_text_s = "" if price_text is None else str(price_text)
 
         # 根据 EXTRACTION_MODE 提取价格信息
-        decomp = _extract_specs_shop15_dispatch(price_text_s, idx=i, source_text_raw=price_text_s)
+        decomp = dispatch_extraction_to_price_decomposition(
+            EXTRACTION_MODE,
+            regex_fn=lambda: _extract_specs_shop15_regex(price_text_s),
+            llm_fn=lambda: _extract_specs_shop15_llm(price_text_s, idx=i),
+            base_price=None,
+            source_text_raw=price_text_s,
+            result_adapter=lambda r: (
+                r[0],
+                [(l, v) for l, k, v in r[1] if k == "delta"],
+                [(l, v) for l, k, v in r[1] if k == "abs"],
+            ),
+            has_result_fn=lambda r: bool(r[1]),
+            extract_base_from_result=lambda r: r[0],
+        )
         rec_at = parse_dt_aware(row.get("time-scraped"))
 
         new_rows, _log_seq = resolve_color_prices(

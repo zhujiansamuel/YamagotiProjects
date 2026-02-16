@@ -12,7 +12,7 @@ shop3 清洗器 — 買取一丁目
     │
     ├─ extract_price_yen()                 ← Step 3: 基础价提取（cleaner_tools）
     │
-    ├─ _extract_specs_shop3_dispatch()  ← Step 6: 模式调度（EXTRACTION_MODE）
+    ├─ dispatch_extraction_to_price_decomposition() ← Step 6: 模式调度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
     │   │   └─ _extract_specs_shop3_regex()   ← Step 4: 正则提取差价
@@ -155,26 +155,6 @@ from ..shop_cleaners_split_llm.llm_shop3 import (
 )
 
 # ----------------------------------------------------------------------
-# Step 6: 提取模式调度
-# ----------------------------------------------------------------------
-
-def _extract_specs_shop3_dispatch(
-    text: str,
-    *,
-    base_price: int,
-    source_text_raw: str,
-    row_index: object = None,
-) -> PriceDecomposition:
-    return dispatch_extraction_to_price_decomposition(
-        EXTRACTION_MODE,
-        regex_fn=lambda: _extract_specs_shop3_regex(text),
-        llm_fn=lambda: _extract_specs_shop3_llm(text, row_index=row_index),
-        base_price=base_price,
-        source_text_raw=source_text_raw,
-        result_adapter=lambda r: (r, []),
-    )
-
-# ----------------------------------------------------------------------
 # Step 7: 标签→颜色匹配（2025-02 替换为 cleaner_tools 统一实现）
 # ----------------------------------------------------------------------
 # 原 shop3 独立实现已迁移至 cleaner_tools._label_matches_color_unified，
@@ -245,11 +225,13 @@ def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
             continue
 
         # ---- 提取 ----
-        decomp = _extract_specs_shop3_dispatch(
-            rem_text,
+        decomp = dispatch_extraction_to_price_decomposition(
+            EXTRACTION_MODE,
+            regex_fn=lambda: _extract_specs_shop3_regex(rem_text),
+            llm_fn=lambda: _extract_specs_shop3_llm(rem_text, row_index=i),
             base_price=p0,
             source_text_raw=rem_text,
-            row_index=i,
+            result_adapter=lambda r: (r, []),
         )
         new_rows, _log_seq = resolve_color_prices(
             decomp, cmap, _label_matches_color_unified,

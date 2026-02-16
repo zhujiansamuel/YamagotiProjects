@@ -14,7 +14,7 @@ shop2 清洗器 — 海峡通信
     │
     ├─ _parse_capacity_gb()                  ← Step 4: 容量解析
     │
-    ├─ _extract_specs_shop2_dispatch()   ← Step 7: 模式调度（EXTRACTION_MODE）
+    ├─ dispatch_extraction_to_price_decomposition() ← Step 7: 模式调度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
     │   │   └─ _extract_specs_shop2_regex()   ← Step 5: 正则提取规则
@@ -226,26 +226,6 @@ def _extract_specs_shop2_llm(val, row_index: object = None) -> dict:
     return _extract_specs_shop2_llm_impl(val, row_index=row_index)
 
 # ----------------------------------------------------------------------
-# Step 7: 提取模式调度
-# ----------------------------------------------------------------------
-
-def _extract_specs_shop2_dispatch(
-    val,
-    *,
-    base_price: int,
-    source_text_raw: str,
-    row_index: object = None,
-) -> PriceDecomposition:
-    return dispatch_extraction_to_price_decomposition(
-        EXTRACTION_MODE,
-        regex_fn=lambda: _extract_specs_shop2_regex(val),
-        llm_fn=lambda: _extract_specs_shop2_llm(val, row_index=row_index),
-        base_price=base_price,
-        source_text_raw=source_text_raw,
-        result_adapter=lambda r: (list(r.items()), []),
-    )
-
-# ----------------------------------------------------------------------
 # Step 10: 清洗主函数
 # ----------------------------------------------------------------------
 
@@ -350,12 +330,13 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
 
         # ---- 提取 ----
         raw_rule_s = safe_to_text(raw_rule)
-
-        decomp = _extract_specs_shop2_dispatch(
-            raw_rule,
+        decomp = dispatch_extraction_to_price_decomposition(
+            EXTRACTION_MODE,
+            regex_fn=lambda: _extract_specs_shop2_regex(raw_rule),
+            llm_fn=lambda: _extract_specs_shop2_llm(raw_rule, row_index=pos),
             base_price=base_price,
             source_text_raw=raw_rule_s,
-            row_index=pos,
+            result_adapter=lambda r: (list(r.items()), []),
         )
 
         # ---- 过滤空 part_number ----

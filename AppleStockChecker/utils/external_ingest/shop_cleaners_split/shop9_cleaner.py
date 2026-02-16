@@ -10,7 +10,7 @@ shop9 清洗器 — アキモバ
     │
     ├─ _bucket_amount()                      ← Step 2: abs/delta 分類（量級・符号ヒント）
     │
-    ├─ _extract_specs_shop9_dispatch()  ← Step 7: モード調度（EXTRACTION_MODE）
+    ├─ dispatch_extraction_to_price_decomposition() ← Step 7: モード調度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
     │   │   ├─ _extract_specs_shop9_regex()       ← Step 5: 正則提取（内含 abs/delta 辅助）
@@ -396,34 +396,6 @@ setup_shop9_llm_deps(
 )
 
 # ----------------------------------------------------------------------
-# Step 7: 提取モード調度
-# ----------------------------------------------------------------------
-
-def _extract_specs_shop9_dispatch(
-    s_price: str,
-    s_color: str,
-    color_to_pn: Dict[str, str],
-    *,
-    base_price: Optional[int],
-    source_text_raw: str,
-    row_index: object = None,
-) -> PriceDecomposition:
-    return dispatch_extraction_to_price_decomposition(
-        EXTRACTION_MODE,
-        regex_fn=lambda: _extract_specs_shop9_regex(s_price, s_color, color_to_pn),
-        llm_fn=lambda: _extract_specs_shop9_llm(s_price, s_color, color_to_pn, row_index=row_index),
-        base_price=base_price,
-        source_text_raw=source_text_raw,
-        result_adapter=lambda r: (r[3], r[2]),
-        has_result_fn=lambda r: bool(r[0] or r[1]),
-        result_is_maps=True,
-        regex_post_hook=lambda: _direct_abs_overrides_for_row(
-            raw_color_text=s_color, color_to_pn=color_to_pn,
-        ),
-        base_price_when_none=0,
-    )
-
-# ----------------------------------------------------------------------
 # Step 8: 清洗主函数
 # ----------------------------------------------------------------------
 
@@ -490,11 +462,19 @@ def clean_shop9(
         source_text_raw_full = f"{s_price} | {s_color}" if s_price and s_color else (s_price or s_color)
 
         # ---- 提取 ----
-        decomp = _extract_specs_shop9_dispatch(
-            s_price, s_color, color_to_pn,
+        decomp = dispatch_extraction_to_price_decomposition(
+            EXTRACTION_MODE,
+            regex_fn=lambda: _extract_specs_shop9_regex(s_price, s_color, color_to_pn),
+            llm_fn=lambda: _extract_specs_shop9_llm(s_price, s_color, color_to_pn, row_index=i),
             base_price=base_price,
             source_text_raw=source_text_raw_full,
-            row_index=i,
+            result_adapter=lambda r: (r[3], r[2]),
+            has_result_fn=lambda r: bool(r[0] or r[1]),
+            result_is_maps=True,
+            regex_post_hook=lambda: _direct_abs_overrides_for_row(
+                raw_color_text=s_color, color_to_pn=color_to_pn,
+            ),
+            base_price_when_none=0,
         )
         decomp_emit_default = base_price is not None
 

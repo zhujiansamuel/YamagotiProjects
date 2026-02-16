@@ -10,7 +10,7 @@ shop16 清洗器 — 携帯空間
     │
     ├─ _extract_base_price_shop16()       ← Step 2: 提取基础价
     │
-    ├─ _extract_specs_shop16_dispatch()  ← Step 9: 模式调度（EXTRACTION_MODE）
+    ├─ dispatch_extraction_to_price_decomposition() ← Step 9: 模式调度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
     │   │   ├─ _extract_specs_shop16_regex_deltas()      ← Step 6a: 正则提取差价
@@ -289,24 +289,6 @@ def _extract_specs_shop16_llm(
     )
 
 # ----------------------------------------------------------------------
-# Step 9: 提取模式调度
-# ----------------------------------------------------------------------
-
-def _extract_specs_shop16_dispatch(
-    price_text: str, idx: object = None, *, source_text_raw: str,
-) -> PriceDecomposition:
-    return dispatch_extraction_to_price_decomposition(
-        EXTRACTION_MODE,
-        regex_fn=lambda: _extract_specs_shop16_regex(price_text),
-        llm_fn=lambda: _extract_specs_shop16_llm(price_text, idx=idx),
-        base_price=None,
-        source_text_raw=source_text_raw,
-        result_adapter=lambda r: (r[0], r[1], r[2]),
-        has_result_fn=lambda r: bool(r[1] or r[2]),
-        extract_base_from_result=lambda r: r[0],
-    )
-
-# ----------------------------------------------------------------------
 # Step 10: 清洗主函数
 # ----------------------------------------------------------------------
 
@@ -355,8 +337,15 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
         price_text = _normalize_price_text_shop16(price_raw)
 
         # 根据 EXTRACTION_MODE 提取价格信息（regex / llm / auto）
-        decomp = _extract_specs_shop16_dispatch(
-            price_text, idx=idx, source_text_raw=price_text,
+        decomp = dispatch_extraction_to_price_decomposition(
+            EXTRACTION_MODE,
+            regex_fn=lambda: _extract_specs_shop16_regex(price_text),
+            llm_fn=lambda: _extract_specs_shop16_llm(price_text, idx=idx),
+            base_price=None,
+            source_text_raw=price_text,
+            result_adapter=lambda r: (r[0], r[1], r[2]),
+            has_result_fn=lambda r: bool(r[1] or r[2]),
+            extract_base_from_result=lambda r: r[0],
         )
 
         # 没 base 且没 abs：没法落库

@@ -10,7 +10,7 @@ shop12 清洗器 — トゥインクル
     │
     ├─ _norm_amount_to_int()                    ← Step 2: 统一全角数字→int
     │
-    ├─ _extract_specs_shop12_dispatch()   ← Step 5: 模式调度（EXTRACTION_MODE）
+    ├─ dispatch_extraction_to_price_decomposition() ← Step 5: 模式调度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
     │   │   └─ _extract_specs_shop12_regex()    ← Step 3: 正则提取 (abs + delta)
@@ -187,27 +187,6 @@ def _extract_specs_shop12_llm(
     )
 
 # ----------------------------------------------------------------------
-# Step 5: 提取模式调度
-# ----------------------------------------------------------------------
-
-def _extract_specs_shop12_dispatch(
-    remark_for_llm: str,
-    *,
-    base_price: int,
-    source_text_raw: str,
-    idx: object = None,
-) -> PriceDecomposition:
-    return dispatch_extraction_to_price_decomposition(
-        EXTRACTION_MODE,
-        regex_fn=lambda: _extract_specs_shop12_regex(remark_for_llm),
-        llm_fn=lambda: _extract_specs_shop12_llm(remark_for_llm, idx=idx),
-        base_price=base_price,
-        source_text_raw=source_text_raw,
-        result_adapter=lambda r: (r[1], r[0]),
-        has_result_fn=lambda r: bool(r[0] or r[1]),
-    )
-
-# ----------------------------------------------------------------------
 # Step 6: 标签→颜色匹配（2025-02 替换为 cleaner_tools 统一实现）
 # ----------------------------------------------------------------------
 # 原 shop12 独立实现已迁移至 cleaner_tools._label_matches_color_unified，
@@ -270,11 +249,14 @@ def clean_shop12(df: pd.DataFrame, debug: bool = False) -> pd.DataFrame:
         remark_for_llm = _normalize_remark_for_llm(remark_raw)
         source_text_raw_full = str(remark_raw)
 
-        decomp = _extract_specs_shop12_dispatch(
-            remark_for_llm,
+        decomp = dispatch_extraction_to_price_decomposition(
+            EXTRACTION_MODE,
+            regex_fn=lambda: _extract_specs_shop12_regex(remark_for_llm),
+            llm_fn=lambda: _extract_specs_shop12_llm(remark_for_llm, idx=idx),
             base_price=base_price,
             source_text_raw=source_text_raw_full,
-            idx=idx,
+            result_adapter=lambda r: (r[1], r[0]),
+            has_result_fn=lambda r: bool(r[0] or r[1]),
         )
 
         rec_at = parse_dt_aware(row.get("time-scraped"))

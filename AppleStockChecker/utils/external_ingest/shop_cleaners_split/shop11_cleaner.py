@@ -13,7 +13,7 @@ shop11 清洗器 — モバステ
     ├─ Step 3: 机型/容量解析（规则）
     │   └─ _normalize_model_generic + _parse_capacity_gb
     │
-    ├─ _extract_specs_shop11_dispatch()  ← Step 7: 模式调度（EXTRACTION_MODE）
+    ├─ dispatch_extraction_to_price_decomposition() ← Step 7: 模式调度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
     │   │   └─ _extract_specs_shop11_regex()   ← Step 5: 正则提取差价
@@ -202,30 +202,6 @@ def _extract_specs_shop11_llm(
     )
 
 # ----------------------------------------------------------------------
-# Step 7: 提取模式调度
-# ----------------------------------------------------------------------
-
-def _extract_specs_shop11_dispatch(
-    caution_txt: str,
-    available_colors: Tuple[str, ...],
-    color_map: Dict[str, Tuple[str, str]],
-    *,
-    base_price: int,
-    source_text_raw: str,
-) -> PriceDecomposition:
-    return dispatch_extraction_to_price_decomposition(
-        EXTRACTION_MODE,
-        regex_fn=lambda: _extract_specs_shop11_regex(caution_txt),
-        llm_fn=lambda: [
-            (cn, dv) for cn, dv in
-            _extract_specs_shop11_llm(caution_txt, available_colors, color_map).items()
-        ],
-        base_price=base_price,
-        source_text_raw=source_text_raw,
-        result_adapter=lambda r: (r, []),
-    )
-
-# ----------------------------------------------------------------------
 # Step 8: 清洗主函数
 # ----------------------------------------------------------------------
 
@@ -302,10 +278,16 @@ def clean_shop11(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) ->
         source_text_raw_full = str(caution_raw or "")
 
         # ---- 匹配 + 定价 + 输出（公共函数） ----
-        decomp = _extract_specs_shop11_dispatch(
-            caution_txt, avail_colors, color_map,
+        decomp = dispatch_extraction_to_price_decomposition(
+            EXTRACTION_MODE,
+            regex_fn=lambda: _extract_specs_shop11_regex(caution_txt),
+            llm_fn=lambda: [
+                (cn, dv) for cn, dv in
+                _extract_specs_shop11_llm(caution_txt, avail_colors, color_map).items()
+            ],
             base_price=base_price,
             source_text_raw=source_text_raw_full,
+            result_adapter=lambda r: (r, []),
         )
 
         new_rows, _log_seq = resolve_color_prices(

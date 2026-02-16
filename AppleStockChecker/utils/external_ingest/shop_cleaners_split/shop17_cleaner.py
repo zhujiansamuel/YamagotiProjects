@@ -48,7 +48,7 @@ shop17 清洗器 — ゲストモバイル
     │
     ├─ extract_price_yen()         ← Step 2: 基础价提取（cleaner_tools）
     │
-    ├─ _extract_specs_shop17_dispatch()  ← Step 3: 模式调度（EXTRACTION_MODE）
+    ├─ dispatch_extraction_to_price_decomposition() ← Step 3: 模式调度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
     │   │   ├─ _pick_unopened_section()     ← 提取【未開封】段
@@ -223,32 +223,6 @@ def _extract_specs_shop17_llm(
         is_plausible_color_label_fn=_is_plausible_color_label_shop17,
     )
 
-def _extract_specs_shop17_dispatch(
-    text: str,
-    *,
-    base_price: int,
-    source_text_raw: str,
-    shop_name: Optional[str] = None,
-    cleaner_name: Optional[str] = None,
-    row_context: Optional[Dict] = None,
-) -> PriceDecomposition:
-    decomp = dispatch_extraction_to_price_decomposition(
-        EXTRACTION_MODE,
-        regex_fn=lambda: _extract_specs_shop17_regex(text),
-        llm_fn=lambda: _extract_specs_shop17_llm(text, shop_name, cleaner_name, row_context),
-        base_price=base_price,
-        source_text_raw=source_text_raw,
-        result_adapter=lambda r: (r, []),
-    )
-    if not decomp.delta_specs:
-        decomp = PriceDecomposition(
-            base_price=decomp.base_price,
-            delta_specs=[],
-            abs_specs=[],
-            extraction_method="none",
-            source_text_raw=decomp.source_text_raw,
-        )
-    return decomp
 # ----------------------------------------------------------------------
 # 清洗主函数
 # ----------------------------------------------------------------------
@@ -304,14 +278,22 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
         }
 
         # 提取颜色差额
-        decomp = _extract_specs_shop17_dispatch(
-            raw_color_s,
+        decomp = dispatch_extraction_to_price_decomposition(
+            EXTRACTION_MODE,
+            regex_fn=lambda: _extract_specs_shop17_regex(raw_color_s),
+            llm_fn=lambda: _extract_specs_shop17_llm(raw_color_s, SHOP_NAME, CLEANER_NAME, row_context),
             base_price=base_price,
             source_text_raw=raw_color_s,
-            shop_name=SHOP_NAME,
-            cleaner_name=CLEANER_NAME,
-            row_context=row_context,
+            result_adapter=lambda r: (r, []),
         )
+        if not decomp.delta_specs:
+            decomp = PriceDecomposition(
+                base_price=decomp.base_price,
+                delta_specs=[],
+                abs_specs=[],
+                extraction_method="none",
+                source_text_raw=decomp.source_text_raw,
+            )
 
         shop_name = SHOP_NAME
         rec_at = parse_dt_aware(row.get("time-scraped"))

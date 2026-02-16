@@ -329,25 +329,6 @@ def _extract_specs_shop14_parse(
     )
 
 
-def _extract_specs_shop14_dispatch(
-    frags: Dict[str, str],
-    combined: str,
-    *,
-    base_price: int,
-    source_text_raw: str,
-) -> PriceDecomposition:
-    return dispatch_extraction_to_price_decomposition(
-        base_price=base_price,
-        source_text_raw=source_text_raw,
-        frags=frags,
-        combined=combined,
-        parse_fn=lambda t: _extract_specs_shop14_parse(t),
-        all_delta_key="all_delta",
-        abs_key="abs",
-        delta_key="delta",
-    )
-
-
 # ---------------------------------------------------------------------------
 # Step 8: 主清洗函数
 # ---------------------------------------------------------------------------
@@ -412,10 +393,15 @@ def clean_shop14(df: "pd.DataFrame", debug: bool = True) -> "pd.DataFrame":
         combined = " ".join([v for v in frags.values() if v]).strip()
 
         # ---- 提取 + 聚合 ----
-        decomp = _extract_specs_shop14_dispatch(
-            frags, combined,
+        decomp = dispatch_extraction_to_price_decomposition(
             base_price=base_price,
             source_text_raw=combined,
+            frags=frags,
+            combined=combined,
+            parse_fn=lambda t: _extract_specs_shop14_parse(t),
+            all_delta_key="all_delta",
+            abs_key="abs",
+            delta_key="delta",
         )
         new_rows, _log_seq = resolve_color_prices(
             decomp,
