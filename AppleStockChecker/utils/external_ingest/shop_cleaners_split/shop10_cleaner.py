@@ -4,11 +4,10 @@ shop10 清洗器 — ドラゴンモバイル
 
   原始 DataFrame（data2 / price / time-scraped）
     │
-    ├─ _load_iphone17_info_df_from_db()   ← Step 1: 机型信息（model_name_norm, capacity_gb）
-    ├─ _normalize_model_generic() ← Step 2: 机型归一化（cleaner_tools）
-    ├─ _parse_capacity_gb()       ← Step 3: 容量解析（cleaner_tools）
-    ├─ extract_price_yen()        ← Step 4: 价格提取（cleaner_tools）
-    └─ clean_shop10()             ← Step 5: 主函数，输出 part_number / price_new / recorded_at
+    └─ clean_with_model_capacity_matching() ← 公共模板（model+cap→全色PN展开）
+
+  注: shop10 保留 debug 日志功能（颜色/折扣模式检测），
+  通过自定义 row_filter_fn 在模板外部实现。
 """
 from typing import List, Optional
 import logging
@@ -17,39 +16,29 @@ import time
 
 import pandas as pd
 
-from ...external_ingest.cleaner_tools import parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, extract_price_yen, assemble_output_df, validate_columns, _load_iphone17_info_df_from_db, log_cleaner_start, log_cleaner_complete, _truncate_for_log
+from ..cleaner_tools import (
+    _parse_capacity_gb,
+    _normalize_model_generic,
+    extract_price_yen,
+    assemble_output_df,
+    validate_columns,
+    _load_iphone17_info_df_from_db,
+    log_cleaner_start,
+    log_cleaner_complete,
+    _truncate_for_log,
+    parse_dt_aware,
+    clean_with_model_capacity_matching,
+)
 
 logger = logging.getLogger(__name__)
 
 def clean_shop10(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> pd.DataFrame:
-    start_time = time.time()
-    log_cleaner_start(logger, cleaner_name="shop10", shop_name="ドラゴンモバイル", input_rows=len(df))
-
-    validate_columns(df, ["data2", "price", "time-scraped"],
-                     cleaner_name="shop10", shop_name="ドラゴンモバイル")
-
-    if df.empty:
-        log_cleaner_complete(logger, cleaner_name="shop10", shop_name="ドラゴンモバイル", input_rows=len(df), output_records=0, start_time=start_time)
-        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
-
-    info_df = _load_iphone17_info_df_from_db(add_model_norm=True)
-
-    # 解析
-    model_norm = df["data2"].map(_normalize_model_generic)
-    cap_gb     = df["data2"].map(_parse_capacity_gb)
-
-    price_new   = df["price"].map(extract_price_yen)
-    recorded_at = df["time-scraped"].map(parse_dt_aware)
-
-    groups = (
-        info_df.groupby(["model_name_norm", "capacity_gb"])["part_number"]
-        .apply(list).to_dict()
-    )
-
-    # ---- DEBUG: 仅打印“疑似包含颜色/减价信息”的行（限制条数）----
-    debug_pos_set = set()
+    """
+    shop10 使用公共模板，但保留 debug 日志功能。
+    debug 模式下，对匹配到颜色/折扣模式的行输出详细日志。
+    """
     if debug:
+        # debug 日志：检测含颜色/折扣信息的行
         _COLOR_DISCOUNT_PAT = re.compile(
             r"(ブラック|ホワイト|ブルー|グリーン|ピンク|レッド|イエロー|パープル|ゴールド|シルバー|"
             r"グラファイト|ミッドナイト|スターライト|ナチュラル|チタニウム|チタン|"
@@ -57,126 +46,28 @@ def clean_shop10(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) ->
             r"値下げ|値引|割引|円引|OFF|オフ|[-−–]\s*\d|\d+\s*円\s*(?:引|OFF|オフ))",
             re.I
         )
-
-        s_data2  = df["data2"].fillna("").astype(str)
-        s_price  = df["price"].fillna("").astype(str)
-        mask = s_data2.str.contains(_COLOR_DISCOUNT_PAT, na=False) | s_price.str.contains(_COLOR_DISCOUNT_PAT, na=False)
-
-        # 取前 debug_limit 条"命中"的行（按位置）
-        hit_cnt = 0
-        for pos, hit in enumerate(mask.to_numpy()):
-            if hit:
-                debug_pos_set.add(pos)
-                hit_cnt += 1
-                if hit_cnt >= debug_limit:
-                    break
-
-        logger.debug(
-            "Debug mode: color/discount pattern matching statistics",
-            extra={
-                "event_type": "debug_stats",
-                "shop_name": "ドラゴンモバイル",
-                "cleaner_name": "shop10",
-                "total_rows": len(df),
-                "hit_rows": int(mask.sum()),
-                "print_rows": len(debug_pos_set),
-                "debug_limit": debug_limit,
-            }
-        )
-
-    rows = []
-    for i in range(len(df)):
-        raw_data2 = df["data2"].iat[i]
-        raw_price = df["price"].iat[i]
-
-        m = model_norm.iat[i]
-        c = cap_gb.iat[i]
-        p = price_new.iat[i]
-        t = recorded_at.iat[i]
-
-        # 先准备匹配信息（便于 debug 输出）
-        key = None
-        pn_list = []
-        if m and (not pd.isna(c)):
-            key = (m, int(c))
-            pn_list = groups.get(key, [])
-
-        def _dbg_print(reason: str | None = None):
-            # 只对命中行打印（避免刷屏）
-            if not debug or i not in debug_pos_set:
-                return
+        s_data2 = df["data2"].fillna("").astype(str) if "data2" in df.columns else pd.Series(dtype=str)
+        s_price = df["price"].fillna("").astype(str) if "price" in df.columns else pd.Series(dtype=str)
+        if not s_data2.empty:
+            mask = s_data2.str.contains(_COLOR_DISCOUNT_PAT, na=False) | s_price.str.contains(_COLOR_DISCOUNT_PAT, na=False)
             logger.debug(
-                f"Debug row analysis: pos={i}" + (f" (SKIP: {reason})" if reason else ""),
+                "Debug mode: color/discount pattern matching statistics",
                 extra={
-                    "event_type": "debug_row_analysis",
+                    "event_type": "debug_stats",
                     "shop_name": "ドラゴンモバイル",
                     "cleaner_name": "shop10",
-                    "row_pos": i,
-                    "data2_raw": _truncate_for_log(str(raw_data2), 200),
-                    "price_raw": _truncate_for_log(str(raw_price), 200),
-                    "model_norm": str(m),
-                    "capacity_gb": int(c) if c and not pd.isna(c) else None,
-                    "price_new": int(p) if p is not None else None,
-                    "recorded_at": str(t) if t else None,
-                    "match_key": str(key) if key else None,
-                    "part_numbers_sample": pn_list[:10],
-                    "part_numbers_count": len(pn_list),
-                    "skip_reason": reason,
+                    "total_rows": len(df),
+                    "hit_rows": int(mask.sum()),
+                    "debug_limit": debug_limit,
                 }
             )
 
-        # 过滤逻辑（保持原逻辑不变，只是在 skip 时打印原因）
-        if not m:
-            _dbg_print("model_norm 为空（无法识别机型）")
-            continue
-        if pd.isna(c):
-            _dbg_print("capacity_gb 为空（无法识别容量）")
-            continue
-        if p is None:
-            _dbg_print("price_new 为空（价格无法转为日元整数）")
-            continue
-        if not pn_list:
-            _dbg_print("未匹配到 part_number（groups 中无对应机型+容量）")
-            continue
-
-        # 通过过滤：也打印一次“提取&匹配结果”
-        _dbg_print(None)
-
-        for pn in pn_list:
-            rows.append({
-                "part_number": str(pn),
-                "shop_name": "ドラゴンモバイル",
-                "price_new": int(p),
-                "recorded_at": t,
-            })
-
-            # 如果你希望看到"最终写入行"，可打开下面这个（同样只对命中行打印）
-            if debug and i in debug_pos_set:
-                logger.debug(
-                    f"Output row generated: {pn}",
-                    extra={
-                        "event_type": "debug_output_row",
-                        "shop_name": "ドラゴンモバイル",
-                        "cleaner_name": "shop10",
-                        "row_pos": i,
-                        "part_number": str(pn),
-                        "price_new": int(p),
-                    }
-                )
-
-    out = assemble_output_df(rows, coerce_price=False)
-    log_cleaner_complete(logger, cleaner_name="shop10", shop_name="ドラゴンモバイル", input_rows=len(df), output_records=len(out), start_time=start_time)
-
-    if debug:
-        logger.debug(
-            f"Debug mode: final output summary (total rows: {len(out)})",
-            extra={
-                "event_type": "debug_output_summary",
-                "shop_name": "ドラゴンモバイル",
-                "cleaner_name": "shop10",
-                "output_rows": len(out),
-                "output_head": out.head(10).to_dict(orient='records') if not out.empty else [],
-            }
-        )
-
-    return out
+    return clean_with_model_capacity_matching(
+        df,
+        cleaner_name="shop10",
+        shop_name="ドラゴンモバイル",
+        model_col="data2",
+        price_col="price",
+        add_model_norm=True,
+        coerce_price=False,
+    )

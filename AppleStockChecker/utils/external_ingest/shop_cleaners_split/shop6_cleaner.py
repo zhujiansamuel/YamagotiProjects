@@ -4,18 +4,23 @@ shop6 统一清洗器（買取ルデヤ · shop6_1～shop6_4）
 
 shop6_1～shop6_4 为同一店铺不同数据源变体，逻辑相同，统一在此实现。
 通过多注册方式供 registry 映射 shop6_1, shop6_2, shop6_3, shop6_4。
+
+使用公共模板 clean_with_jan_matching。
+JAN 从 phone 列提取，fallback 从 data8 列正则提取 PN。
 """
 from __future__ import annotations
 
 import logging
 import re
-import time
-from typing import List, Optional
+from typing import Optional
 
 import pandas as pd
 
-from ...external_ingest.cleaner_tools import parse_dt_aware
-from ..cleaner_tools import extract_price_yen, assemble_output_df, validate_columns, _load_iphone17_info_df_from_db, _build_jan_map, log_cleaner_start, log_cleaner_complete
+from ..cleaner_tools import (
+    clean_with_jan_matching,
+    extract_price_yen,
+    validate_columns,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,58 +35,47 @@ def _extract_pn_from_text(text: object) -> Optional[str]:
     return m.group(0) if m else None
 
 
-def _clean_shop6_kaidoruya(df: pd.DataFrame, variant: str) -> pd.DataFrame:
+def _iter_records_shop6(df: pd.DataFrame):
     """
-    買取ルデヤ统一清洗逻辑。
+    产出规范化记录。
+    输入列：data7(价格), phone(JAN), data8(PN兜底), time-scraped
+    JAN 从 phone 列提取；若匹配失败，由 fallback_match_fn 从 data8 提取 PN
+    过滤：time-scraped 为空的行跳过
+    """
+    for _, row in df.iterrows():
+        ts = row.get("time-scraped")
+        if ts is None or str(ts).strip() == "":
+            continue
+        # phone 列中提取纯数字作为 JAN
+        phone_raw = str(row.get("phone", ""))
+        jan = re.sub(r"[^\d]", "", phone_raw)
+        if not re.fullmatch(r"\d{13}", jan):
+            jan = None
+        yield {
+            "JAN": jan,
+            "price": row.get("data7"),
+            "time-scraped": ts,
+            "_data8": row.get("data8"),  # 传递给 fallback
+        }
 
-    输入列：data7, phone, data8, time-scraped
-    输出列：part_number, shop_name, price_new, recorded_at
-    shop_name 固定 '買取ルデヤ'
-    """
-    # 必要列检查
+
+def _fallback_match_shop6(rec: dict, info_df) -> Optional[str]:
+    """JAN 无法匹配时，从 data8 列提取 PN 直接返回。"""
+    return _extract_pn_from_text(rec.get("_data8"))
+
+
+def _clean_shop6_kaidoruya(df: pd.DataFrame, variant: str) -> pd.DataFrame:
+    """買取ルデヤ统一清洗逻辑。"""
     validate_columns(df, ["data7", "phone", "data8", "time-scraped"],
                      cleaner_name=f"shop6-{variant}", shop_name="買取ルデヤ")
-
-    start_time = time.time()
-    log_cleaner_start(logger, cleaner_name=f"shop6-{variant}", shop_name="買取ルデヤ", input_rows=len(df))
-
-    # 跳过 time-scraped 为空的行
-    src = df.copy()
-    mask_time = src["time-scraped"].astype(str).str.strip().ne("") & src["time-scraped"].notna()
-    src = src[mask_time]
-    if src.empty:
-        log_cleaner_complete(logger, cleaner_name=f"shop6-{variant}", shop_name="買取ルデヤ", input_rows=len(df), output_records=0, start_time=start_time)
-        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
-
-    info_df = _load_iphone17_info_df_from_db()
-    jan_to_pn = _build_jan_map(info_df)
-
-    # 解析列：JAN 从 phone；PN 兜底从 data8
-    jan_series = src["phone"].astype(str).str.replace(r"[^\d]", "", regex=True)
-    pn_by_jan = jan_series.map(lambda j: jan_to_pn.get(j) if re.fullmatch(r"\d{13}", j or "") else None)
-    pn_fallback = src["data8"].map(_extract_pn_from_text)
-
-    price_new = src["data7"].map(extract_price_yen)
-    recorded_at = src["time-scraped"].map(parse_dt_aware)
-
-    # 组装：优先 JAN→PN；无则 data8 提取；再无则丢弃
-    rows: List[dict] = []
-    for i in range(len(src)):
-        pn = pn_by_jan.iat[i] or pn_fallback.iat[i]
-        p = price_new.iat[i]
-        ts = recorded_at.iat[i]
-        if not pn or p is None:
-            continue
-        rows.append({
-            "part_number": str(pn),
-            "shop_name": "買取ルデヤ",
-            "price_new": int(p),
-            "recorded_at": ts,
-        })
-
-    out = assemble_output_df(rows, coerce_price=False)
-    log_cleaner_complete(logger, cleaner_name=f"shop6-{variant}", shop_name="買取ルデヤ", input_rows=len(df), output_records=len(out), start_time=start_time)
-    return out
+    return clean_with_jan_matching(
+        df,
+        cleaner_name=f"shop6-{variant}",
+        shop_name="買取ルデヤ",
+        iter_records_fn=_iter_records_shop6,
+        fallback_match_fn=_fallback_match_shop6,
+        coerce_price=False,
+    )
 
 
 def _make_shop6_cleaner(variant: str):

@@ -5,21 +5,15 @@ shop1 清洗器 — 買取商店
   原始 DataFrame（JAN / price / time-scraped 或 JSON 列）
     │
     ├─ _iter_records()           ← Step 1: 规范化记录（直列 or JSON 拉平）
-    ├─ _extract_jan_digits()     ← Step 2: JAN 提取（cleaner_tools）
-    ├─ _build_jan_map()           ← Step 3: JAN → part_number 映射（cleaner_tools）
-    ├─ extract_price_yen()       ← Step 4: 价格解析（cleaner_tools 统一）
-    └─ clean_shop1()              ← Step 5: 主函数，输出 part_number / price_new / recorded_at
+    └─ clean_with_jan_matching() ← Step 2: JAN→PN 映射 + 价格/时间解析（公共模板）
 """
 import logging
-from typing import Dict, Optional, List, Iterable, Union
-from ..cleaner_tools import parse_dt_aware
-from ..cleaner_tools import _load_iphone17_info_df_from_db, _extract_jan_digits, _build_jan_map, extract_price_yen, assemble_output_df, log_cleaner_start, log_cleaner_complete
+from typing import List
 import re
 import json
-import time
 import pandas as pd
-from datetime import datetime
-import pytz
+
+from ..cleaner_tools import clean_with_jan_matching
 
 logger = logging.getLogger(__name__)
 
@@ -81,49 +75,16 @@ def _iter_records(df: pd.DataFrame):
             ts = it.get("time-scraped") or it.get("time_scraped") or it.get("timestamp") or default_ts
             yield {"JAN": jan, "price": price, "time-scraped": ts}
 
+
 def clean_shop1(df: pd.DataFrame) -> pd.DataFrame:
     """
     以 JAN 映射 part_number；price -> price_new；time-scraped -> recorded_at。
     shop_name 固定为「買取商店」。
     仅输出 _load_iphone17_info_df_from_db() 中存在的机型。
     """
-    start_time = time.time()
-    log_cleaner_start(logger, cleaner_name="shop1", shop_name="買取商店", input_rows=len(df))
-
-    if df.empty:
-        log_cleaner_complete(logger, cleaner_name="shop1", shop_name="買取商店", input_rows=len(df), output_records=0, start_time=start_time)
-        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
-
-    # 准备 JAN->PN 映射
-    info_df = _load_iphone17_info_df_from_db()
-    jan_map = _build_jan_map(info_df)
-
-    rows: List[dict] = []
-
-    for rec in _iter_records(df):
-        jan = _extract_jan_digits(rec.get("JAN"))
-
-        if not jan:
-            continue
-        pn = jan_map.get(jan)
-
-        if not pn:
-            continue
-
-        price_val = rec.get("price")
-        price_new = extract_price_yen(price_val)
-        if price_new is None:
-            continue
-
-        recorded_at = parse_dt_aware(rec.get("time-scraped"))
-
-        rows.append({
-            "part_number": str(pn),
-            "shop_name": "買取商店",
-            "price_new": int(price_new),
-            "recorded_at": recorded_at,
-        })
-
-    out = assemble_output_df(rows)
-    log_cleaner_complete(logger, cleaner_name="shop1", shop_name="買取商店", input_rows=len(df), output_records=len(out), start_time=start_time)
-    return out
+    return clean_with_jan_matching(
+        df,
+        cleaner_name="shop1",
+        shop_name="買取商店",
+        iter_records_fn=_iter_records,
+    )
