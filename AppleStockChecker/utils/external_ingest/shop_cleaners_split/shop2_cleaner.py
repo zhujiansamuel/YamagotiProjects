@@ -392,12 +392,6 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
         )
         out_rows.extend(new_rows)
 
-    if not out_rows:
-        log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(shop2_df), output_records=0, start_time=start_time, log_seq=_log_seq)
-        return pd.DataFrame(
-            columns=["part_number", "shop_name", "price_new", "recorded_at"]
-        )
-
     out = assemble_output_df(out_rows, coerce_price=False)
 
     log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(shop2_df), output_records=len(out), start_time=start_time, log_seq=_log_seq)

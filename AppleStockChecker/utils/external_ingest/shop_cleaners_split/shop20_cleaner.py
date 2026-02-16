@@ -12,11 +12,12 @@ shop20 清洗器
 from typing import Dict, Optional, List
 import json
 import logging
+import time
 
 import pandas as pd
 
 from ...external_ingest.cleaner_tools import to_int_yen, parse_dt_aware
-from ..cleaner_tools import assemble_output_df, validate_columns, _load_iphone17_info_df_from_db, _extract_jan_digits, _build_jan_map, log_cleaner_start
+from ..cleaner_tools import assemble_output_df, validate_columns, _load_iphone17_info_df_from_db, _extract_jan_digits, _build_jan_map, log_cleaner_start, log_cleaner_complete
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,6 @@ def _coerce_price(v) -> Optional[int]:
     return to_int_yen(v)
 
 def clean_shop20(df: pd.DataFrame) -> pd.DataFrame:
-    log_cleaner_start(logger, cleaner_name="shop20", shop_name="毎日買取", input_rows=len(df))
     """
     输入 (shop20.csv):
       - json: 形如 {""success"":true,""data"":[...]} 的 JSON 文本（需先把 "" → "）
@@ -41,9 +41,16 @@ def clean_shop20(df: pd.DataFrame) -> pd.DataFrame:
       - 无法解析/缺少 jancode 或 goodsPrice 的条目跳过
       - recorded_at 使用该行的 time-scraped
     """
+    start_time = time.time()
+    log_cleaner_start(logger, cleaner_name="shop20", shop_name="毎日買取", input_rows=len(df))
+
     # 必要列检查
     validate_columns(df, ["json", "time-scraped"],
                      cleaner_name="shop20", shop_name="毎日買取")
+
+    if df.empty:
+        log_cleaner_complete(logger, cleaner_name="shop20", shop_name="毎日買取", input_rows=len(df), output_records=0, start_time=start_time)
+        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
 
     info_df = _load_iphone17_info_df_from_db()
     jan_map = _build_jan_map(info_df)
@@ -105,4 +112,5 @@ def clean_shop20(df: pd.DataFrame) -> pd.DataFrame:
             })
 
     out = assemble_output_df(rows)
+    log_cleaner_complete(logger, cleaner_name="shop20", shop_name="毎日買取", input_rows=len(df), output_records=len(out), start_time=start_time)
     return out

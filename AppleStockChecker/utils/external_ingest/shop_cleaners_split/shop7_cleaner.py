@@ -161,18 +161,7 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
     rows_dropped_time = rows_before - len(df)
 
     if df.empty:
-        logger.info(
-            "shop7 cleaner completed (empty input)",
-            extra={
-                "event_type": "cleaner_complete",
-                "shop_name": SHOP_NAME,
-                "cleaner_name": CLEANER_NAME,
-                "log_seq": _log_seq,
-                "output_rows": 0,
-                "rows_dropped_no_time": rows_dropped_time,
-                "elapsed_seconds": round(time.time() - t_start, 2),
-            },
-        )
+        log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=rows_before, output_records=0, start_time=t_start, log_seq=_log_seq)
         return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
 
     # ── Step 2: 批量解析 model / capacity / price / recorded_at ──────
@@ -278,6 +267,6 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
     # ── 构建输出 DataFrame ───────────────────────────────────────────
     out = assemble_output_df(rows)
 
-    log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=len(out), start_time=t_start, log_seq=_log_seq)
+    log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=rows_before, output_records=len(out), start_time=t_start, log_seq=_log_seq)
 
     return out

@@ -9,14 +9,15 @@ shop8 清洗器 — 買取wiki
     ├─ parse_dt_aware()          ← Step 3: 时间解析
     └─ clean_shop8()             ← Step 4: 主函数，输出 part_number / price_new / recorded_at
 """
-from typing import Optional
+from typing import Optional, List
 import logging
 import re
+import time
 
 import pandas as pd
 
 from ...external_ingest.cleaner_tools import parse_dt_aware
-from ..cleaner_tools import normalize_text_basic, extract_price_yen, validate_columns, log_cleaner_start
+from ..cleaner_tools import normalize_text_basic, extract_price_yen, validate_columns, log_cleaner_start, log_cleaner_complete, assemble_output_df
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ def _extract_part_number(text: str) -> str | None:
     return m2.group(0) if m2 else None
 
 def clean_shop8(df: pd.DataFrame) -> pd.DataFrame:
+    start_time = time.time()
     log_cleaner_start(logger, cleaner_name="shop8", shop_name="買取wiki", input_rows=len(df))
     # 列名容错：有些抓取器可能用不同大小写或空白
     # 这里统一抓关键列
@@ -43,21 +45,27 @@ def clean_shop8(df: pd.DataFrame) -> pd.DataFrame:
     validate_columns(df, [col_model, col_price_new, col_time],
                      cleaner_name="shop8", shop_name="買取wiki")
 
+    if df.empty:
+        log_cleaner_complete(logger, cleaner_name="shop8", shop_name="買取wiki", input_rows=len(df), output_records=0, start_time=start_time)
+        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
+
     # 解析
     part_numbers = df[col_model].map(_extract_part_number)
     price_new = df[col_price_new].map(extract_price_yen)
     recorded_at = df[col_time].map(parse_dt_aware)
 
-    out = pd.DataFrame({
-        "part_number": part_numbers,
-        "shop_name": "買取wiki",
-        "price_new": price_new,
-        "recorded_at": recorded_at,
-    })
+    rows: List[dict] = []
+    for i in range(len(df)):
+        pn = part_numbers.iat[i]
+        p = price_new.iat[i]
+        ts = recorded_at.iat[i]
+        rows.append({
+            "part_number": pn,
+            "shop_name": "買取wiki",
+            "price_new": p,
+            "recorded_at": ts,
+        })
 
-    # 丢掉关键字段缺失的行（pn 或 price）
-    out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
-
-    # 确保类型（避免 pandas 的 NA 类型导致后续 int() 失败）
-    out["part_number"] = out["part_number"].astype(str)
+    out = assemble_output_df(rows, coerce_price=False)
+    log_cleaner_complete(logger, cleaner_name="shop8", shop_name="買取wiki", input_rows=len(df), output_records=len(out), start_time=start_time)
     return out

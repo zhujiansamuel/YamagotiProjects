@@ -12,16 +12,16 @@ shop13 清洗器 — 家電市場
 """
 from typing import List
 import logging
+import time
 
 import pandas as pd
 
 from ...external_ingest.cleaner_tools import parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db, extract_price_yen, assemble_output_df, validate_columns, log_cleaner_start
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db, extract_price_yen, assemble_output_df, validate_columns, log_cleaner_start, log_cleaner_complete
 
 logger = logging.getLogger(__name__)
 
 def clean_shop13(df: pd.DataFrame) -> pd.DataFrame:
-    log_cleaner_start(logger, cleaner_name="shop13", shop_name="家電市場", input_rows=len(df))
     """
     输入列（来自 shop13.csv）：
       - 「新品価格」: 价格（可能含 '円'、'¥'、'～'、'万' 等）
@@ -39,9 +39,16 @@ def clean_shop13(df: pd.DataFrame) -> pd.DataFrame:
       - 仅输出在信息表中能匹配到的机型与容量
       - recorded_at = parse_dt_aware(time-scraped)
     """
+    start_time = time.time()
+    log_cleaner_start(logger, cleaner_name="shop13", shop_name="家電市場", input_rows=len(df))
+
     # --- 必要列检查 ---
     validate_columns(df, ["新品価格", "買取商品2", "time-scraped"],
                      cleaner_name="shop13", shop_name="家電市場")
+
+    if df.empty:
+        log_cleaner_complete(logger, cleaner_name="shop13", shop_name="家電市場", input_rows=len(df), output_records=0, start_time=start_time)
+        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
 
     # --- 载入 iPhone17 信息（含颜色），并补充归一化机种名 ---
     info_df = _load_iphone17_info_df_from_db().copy()
@@ -89,4 +96,5 @@ def clean_shop13(df: pd.DataFrame) -> pd.DataFrame:
             })
 
     out = assemble_output_df(rows, coerce_price=False)
+    log_cleaner_complete(logger, cleaner_name="shop13", shop_name="家電市場", input_rows=len(df), output_records=len(out), start_time=start_time)
     return out

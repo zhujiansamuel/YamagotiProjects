@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import List, Optional
 
 import pandas as pd
 
 from ...external_ingest.cleaner_tools import parse_dt_aware
-from ..cleaner_tools import extract_price_yen, assemble_output_df, validate_columns, _load_iphone17_info_df_from_db, _build_jan_map, log_cleaner_start
+from ..cleaner_tools import extract_price_yen, assemble_output_df, validate_columns, _load_iphone17_info_df_from_db, _build_jan_map, log_cleaner_start, log_cleaner_complete
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ def _clean_shop6_kaidoruya(df: pd.DataFrame, variant: str) -> pd.DataFrame:
     validate_columns(df, ["data7", "phone", "data8", "time-scraped"],
                      cleaner_name=f"shop6-{variant}", shop_name="買取ルデヤ")
 
+    start_time = time.time()
     log_cleaner_start(logger, cleaner_name=f"shop6-{variant}", shop_name="買取ルデヤ", input_rows=len(df))
 
     # 跳过 time-scraped 为空的行
@@ -48,6 +50,7 @@ def _clean_shop6_kaidoruya(df: pd.DataFrame, variant: str) -> pd.DataFrame:
     mask_time = src["time-scraped"].astype(str).str.strip().ne("") & src["time-scraped"].notna()
     src = src[mask_time]
     if src.empty:
+        log_cleaner_complete(logger, cleaner_name=f"shop6-{variant}", shop_name="買取ルデヤ", input_rows=len(df), output_records=0, start_time=start_time)
         return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
 
     info_df = _load_iphone17_info_df_from_db()
@@ -77,6 +80,7 @@ def _clean_shop6_kaidoruya(df: pd.DataFrame, variant: str) -> pd.DataFrame:
         })
 
     out = assemble_output_df(rows, coerce_price=False)
+    log_cleaner_complete(logger, cleaner_name=f"shop6-{variant}", shop_name="買取ルデヤ", input_rows=len(df), output_records=len(out), start_time=start_time)
     return out
 
 

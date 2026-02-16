@@ -13,11 +13,12 @@ shop18 清洗器 — 買取オク
 from typing import Dict, Optional, List
 import logging
 import re
+import time
 
 import pandas as pd
 
 from ...external_ingest.cleaner_tools import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db, _extract_jan_digits, _build_jan_map, assemble_output_df, validate_columns, log_cleaner_start
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db, _extract_jan_digits, _build_jan_map, assemble_output_df, validate_columns, log_cleaner_start, log_cleaner_complete
 
 logger = logging.getLogger(__name__)
 
@@ -69,9 +70,14 @@ def clean_shop18(df: pd.DataFrame) -> pd.DataFrame:
       - part_number, shop_name, price_new, recorded_at
     仅输出出现在 _load_iphone17_info_df_from_db() 的机型。
     """
+    start_time = time.time()
     log_cleaner_start(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df))
     validate_columns(df, ["jan", "type", "price", "time-scraped"],
                      cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME)
+
+    if df.empty:
+        log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=0, start_time=start_time)
+        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
 
     info_df = _load_iphone17_info_df_from_db()
     jan_map = _build_jan_map(info_df)
@@ -112,4 +118,5 @@ def clean_shop18(df: pd.DataFrame) -> pd.DataFrame:
         })
 
     out = assemble_output_df(rows)
+    log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=len(out), start_time=start_time)
     return out

@@ -13,20 +13,27 @@ shop10 清洗器 — ドラゴンモバイル
 from typing import List, Optional
 import logging
 import re
+import time
 
 import pandas as pd
 
 from ...external_ingest.cleaner_tools import parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, extract_price_yen, assemble_output_df, validate_columns, _load_iphone17_info_df_from_db, log_cleaner_start
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, extract_price_yen, assemble_output_df, validate_columns, _load_iphone17_info_df_from_db, log_cleaner_start, log_cleaner_complete
 
 logger = logging.getLogger(__name__)
 
 def clean_shop10(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> pd.DataFrame:
+    start_time = time.time()
     log_cleaner_start(logger, cleaner_name="shop10", shop_name="ドラゴンモバイル", input_rows=len(df))
-    info_df = _load_iphone17_info_df_from_db(add_model_norm=True)
 
     validate_columns(df, ["data2", "price", "time-scraped"],
                      cleaner_name="shop10", shop_name="ドラゴンモバイル")
+
+    if df.empty:
+        log_cleaner_complete(logger, cleaner_name="shop10", shop_name="ドラゴンモバイル", input_rows=len(df), output_records=0, start_time=start_time)
+        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
+
+    info_df = _load_iphone17_info_df_from_db(add_model_norm=True)
 
     # 解析
     model_norm = df["data2"].map(_normalize_model_generic)
@@ -129,6 +136,7 @@ def clean_shop10(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) ->
                 print("  -> OUT_ROW:", {"part_number": str(pn), "price_new": int(p)})
 
     out = assemble_output_df(rows, coerce_price=False)
+    log_cleaner_complete(logger, cleaner_name="shop10", shop_name="ドラゴンモバイル", input_rows=len(df), output_records=len(out), start_time=start_time)
 
     if debug:
         print(f"\n[shop10 debug] out_rows={len(out)}  out_head=\n", out.head(10).to_string(index=False))

@@ -399,6 +399,10 @@ def clean_shop14(df: "pd.DataFrame", debug: bool = True) -> "pd.DataFrame":
                                 cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
                                 logger=logger, log_seq=_log_seq)
 
+    if df.empty:
+        log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=0, start_time=t_start, log_seq=_log_seq)
+        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
+
     remark_cols_map = _resolve_remark_cols(df)
 
     info_df = _load_iphone17_info_df_from_db()

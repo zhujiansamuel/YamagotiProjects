@@ -10,15 +10,19 @@ shop1 清洗器 — 買取商店
     ├─ extract_price_yen()       ← Step 4: 价格解析（cleaner_tools 统一）
     └─ clean_shop1()              ← Step 5: 主函数，输出 part_number / price_new / recorded_at
 """
+import logging
 from typing import Dict, Optional, List, Iterable, Union
 from ..cleaner_tools import parse_dt_aware
-from ..cleaner_tools import _load_iphone17_info_df_from_db, _extract_jan_digits, _build_jan_map, extract_price_yen, assemble_output_df
+from ..cleaner_tools import _load_iphone17_info_df_from_db, _extract_jan_digits, _build_jan_map, extract_price_yen, assemble_output_df, log_cleaner_start, log_cleaner_complete
 import re
 import json
+import time
 import pandas as pd
 from datetime import datetime
 import pytz
-import time
+
+logger = logging.getLogger(__name__)
+
 
 def _iter_records(df: pd.DataFrame):
     """
@@ -83,6 +87,13 @@ def clean_shop1(df: pd.DataFrame) -> pd.DataFrame:
     shop_name 固定为「買取商店」。
     仅输出 _load_iphone17_info_df_from_db() 中存在的机型。
     """
+    start_time = time.time()
+    log_cleaner_start(logger, cleaner_name="shop1", shop_name="買取商店", input_rows=len(df))
+
+    if df.empty:
+        log_cleaner_complete(logger, cleaner_name="shop1", shop_name="買取商店", input_rows=len(df), output_records=0, start_time=start_time)
+        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
+
     # 准备 JAN->PN 映射
     info_df = _load_iphone17_info_df_from_db()
     jan_map = _build_jan_map(info_df)
@@ -114,5 +125,5 @@ def clean_shop1(df: pd.DataFrame) -> pd.DataFrame:
         })
 
     out = assemble_output_df(rows)
-    # print("+++++++++++++++out",out)
+    log_cleaner_complete(logger, cleaner_name="shop1", shop_name="買取商店", input_rows=len(df), output_records=len(out), start_time=start_time)
     return out

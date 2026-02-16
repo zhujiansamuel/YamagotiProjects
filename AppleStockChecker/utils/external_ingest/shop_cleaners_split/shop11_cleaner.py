@@ -262,6 +262,10 @@ def clean_shop11(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) ->
                                 cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
                                 logger=logger, log_seq=_log_seq)
 
+    if df.empty:
+        log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=0, start_time=t_start, log_seq=_log_seq)
+        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
+
     df2 = df.copy().reset_index(drop=True)
 
     info_df = _load_iphone17_info_df_from_db()
