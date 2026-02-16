@@ -479,9 +479,6 @@ LABEL_SPLIT_RE_shop16 = re.compile(r"[／/、，,]|(?:\s*;\s*)")
 LABEL_SPLIT_RE_shop16_SIMPLE = re.compile(r"[／/、，,]")
 LABEL_SPLIT_RE_shop17 = re.compile(r"[／/、]|(?:\s*;\s*)|\n")
 
-# _label_matches_color_unified 等共用，与 shop4 相同
-_COLOR_SEP_SPLIT_RE = LABEL_SPLIT_RE_shop4
-
 # ----------------------------------------------------------------------
 # 统一标签→颜色匹配函数（2025-02 替换各 shop 独立实现）
 # ----------------------------------------------------------------------
@@ -503,12 +500,13 @@ def _label_matches_color_unified(label_raw: str, color_raw: str, color_norm: str
       1. 精确归一化相等
       2. label_raw 为 color_raw 原文子串
       3. label_norm 为 color_raw 子串（小写，shop14）
-      4. 分割后任一分片匹配（shop11：复合 label / 带后缀）
-      5. SYNONYM 同义词：color_norm / color_raw_norm / candidates 子串
-      6. 归一化双向包含（shop12）
-      7. 去空白/连字符后双向包含（shop9）
+      4. SYNONYM 同义词：color_norm / color_raw_norm / candidates 子串
+      5. 归一化双向包含（shop12）
+      6. 去空白/连字符后双向包含（shop9）
 
-    注意：全色/ALL 由 resolve_color_prices 的 is_all 处理，此处不特殊返回。
+    注意：
+      - 全色/ALL 由 resolve_color_prices 的 is_all 处理，此处不特殊返回
+      - 标签分割应在各清洗器内部完成，传入此函数的 label_raw 应为单个标签
     """
     if not label_raw:
         return False
@@ -532,24 +530,10 @@ def _label_matches_color_unified(label_raw: str, color_raw: str, color_norm: str
     if label_norm and label_norm in color_raw_l:
         return True
 
-    # 4. shop11: 分割后任一分片匹配
-    for tok in _COLOR_SEP_SPLIT_RE.split(label_cleaned):
-        tok = tok.strip()
-        if not tok:
-            continue
-        if tok in color_raw_s:
-            return True
-        if _norm_strip(tok) == color_norm:
-            return True
-
-    # 5. SYNONYM
+    # 4. SYNONYM
     candidates: set = set()
     if label_norm in SYNONYM_LOOKUP_NORM:
         candidates.update(SYNONYM_LOOKUP_NORM[label_norm])
-    for tok in _COLOR_SEP_SPLIT_RE.split(label_cleaned):
-        tn = _norm_strip(tok.strip())
-        if tn and tn in SYNONYM_LOOKUP_NORM:
-            candidates.update(SYNONYM_LOOKUP_NORM[tn])
     if candidates:
         if color_norm in candidates:
             return True
@@ -558,11 +542,11 @@ def _label_matches_color_unified(label_raw: str, color_raw: str, color_norm: str
         if any(tok in color_raw_l for tok in candidates):
             return True
 
-    # 6. shop12: 归一化双向包含
+    # 5. shop12: 归一化双向包含
     if label_norm and (label_norm in color_norm or color_norm in label_norm):
         return True
 
-    # 7. shop9: 去空白/连字符后双向包含
+    # 6. shop9: 去空白/连字符后双向包含
     lr_short = re.sub(r"[\s\u3000\-]+", "", label_norm)
     cn_short = re.sub(r"[\s\u3000\-]+", "", color_norm)
     cr_short = re.sub(r"[\s\u3000\-]+", "", color_raw_norm)
