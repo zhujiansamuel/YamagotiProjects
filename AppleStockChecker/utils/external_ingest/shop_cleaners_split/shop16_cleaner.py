@@ -54,6 +54,9 @@ from ..cleaner_tools import (
 # 初始化 logger
 logger = logging.getLogger(__name__)
 
+CLEANER_NAME = "shop16"
+SHOP_NAME = "携帯空間"
+
 # DEBUG 功能现在由 logging 级别控制（在 settings.py 的 LOGGING 配置中）
 # 控制台显示 INFO 级别（简洁），文件记录 DEBUG 级别（详细）
 
@@ -334,10 +337,6 @@ def _extract_specs_shop16_dispatch(
 def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
     start_time = time.time()
     _log_seq = 0  # 日志序号：同一次 clean_shop16 调用内单调递增，用于 ELK 排序
-
-    # 定义清洗器级别的上下文信息，将被所有下级日志继承
-    CLEANER_NAME = "shop16"
-    SHOP_NAME = "携帯空間"
 
     log_cleaner_start(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), log_seq=_log_seq)
 

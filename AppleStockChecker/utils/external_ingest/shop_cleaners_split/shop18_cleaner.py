@@ -15,14 +15,14 @@ import logging
 import re
 
 import pandas as pd
-from urllib.parse import urlparse
 
 from ...external_ingest.cleaner_tools import to_int_yen, parse_dt_aware
 from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db, _extract_jan_digits, _build_jan_map, assemble_output_df, validate_columns, log_cleaner_start
 
 logger = logging.getLogger(__name__)
 
-SHOP_NAME_OVERRIDE: Optional[str] = "買取オク"
+CLEANER_NAME = "shop18"
+SHOP_NAME = "買取オク"
 
 def _match_by_type(type_text: str, info_df: pd.DataFrame) -> Optional[str]:
     """
@@ -59,20 +59,19 @@ def _match_by_type(type_text: str, info_df: pd.DataFrame) -> Optional[str]:
     return None
 
 def clean_shop18(df: pd.DataFrame) -> pd.DataFrame:
-    log_cleaner_start(logger, cleaner_name="shop18", shop_name="買取オク", input_rows=len(df))
     """
     输入 (shop18.csv):
       - jan: 如 'JAN: 4549995648300'
       - type: 如 'iPhone 17 Pro  256GB ディープブルー'
       - price: '¥180,500' / '問い合わせ' 等
       - time-scraped
-      - web-scraper-start-url: 用于默认派生 shop_name（域名）
     输出：
       - part_number, shop_name, price_new, recorded_at
     仅输出出现在 _load_iphone17_info_df_from_db() 的机型。
     """
+    log_cleaner_start(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df))
     validate_columns(df, ["jan", "type", "price", "time-scraped"],
-                     cleaner_name="shop18", shop_name="買取オク")
+                     cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME)
 
     info_df = _load_iphone17_info_df_from_db()
     jan_map = _build_jan_map(info_df)
@@ -90,13 +89,7 @@ def clean_shop18(df: pd.DataFrame) -> pd.DataFrame:
         # 记录时间
         recorded_at = parse_dt_aware(row.get("time-scraped"))
 
-        # 店名（若未覆盖，则用域名）
-        if SHOP_NAME_OVERRIDE:
-            shop_name = SHOP_NAME_OVERRIDE
-        else:
-            start_url = str(row.get("web-scraper-start-url") or "")
-            netloc = urlparse(start_url).netloc or "shop18"
-            shop_name = netloc
+        shop_name = SHOP_NAME
 
         # 先用 JAN 直接匹配
         jan_digits = _extract_jan_digits(row.get("jan"))

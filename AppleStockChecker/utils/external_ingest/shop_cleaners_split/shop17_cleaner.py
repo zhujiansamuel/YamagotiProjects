@@ -30,7 +30,6 @@ from functools import lru_cache
 from pathlib import Path
 import re
 import pandas as pd
-from urllib.parse import urlparse
 from datetime import datetime
 import pytz
 import time
@@ -68,10 +67,11 @@ shop17 清洗器 — ゲストモバイル
 # 初始化 logger
 logger = logging.getLogger(__name__)
 
+CLEANER_NAME = "shop17"
+SHOP_NAME = "ゲストモバイル"
+
 # DEBUG 功能现在由 logging 级别控制（在 settings.py 的 LOGGING 配置中）
 # 控制台显示 INFO 级别（简洁），文件记录 DEBUG 级别（详细）
-
-SHOP_NAME_OVERRIDE: Optional[str] = "ゲストモバイル"
 
 # ----------------------------------------------------------------------
 # 正则表达式与辅助函数（按处理流程排列）
@@ -263,10 +263,6 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
     start_time = time.time()
     _log_seq = 0  # 日志序号：同一次 clean_shop17 调用内单调递增，用于 ELK 排序
 
-    # 定义清洗器级别的上下文信息，将被所有下级日志继承
-    CLEANER_NAME = "shop17"
-    SHOP_NAME = "ゲストモバイル"
-
     log_cleaner_start(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), log_seq=_log_seq)
 
     _log_seq = validate_columns(df, ["type", "新未開封品", "色減額", "time-scraped"],
@@ -320,7 +316,7 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
             row_context=row_context,
         )
 
-        shop_name = SHOP_NAME_OVERRIDE or (urlparse(str(row.get("web-scraper-start-url") or "")).netloc or "shop17")
+        shop_name = SHOP_NAME
         rec_at = parse_dt_aware(row.get("time-scraped"))
 
         new_rows, _log_seq = resolve_color_prices(
