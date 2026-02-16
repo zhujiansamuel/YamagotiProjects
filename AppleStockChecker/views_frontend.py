@@ -24,9 +24,6 @@ class ImportResaleCSVView(TemplateView):
     template_name = "apple_stock/import_price_csv.html"
 
 
-class ImportTradeinCSVView(TemplateView):
-    template_name = "apple_stock/import_tradein_csv.html"
-
 class ImportIphoneCSVView(TemplateView):
     template_name = "apple_stock/import_iphone_csv.html"
 

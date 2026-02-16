@@ -35,7 +35,6 @@ from .views_frontend import (
     ResaleTrendColorsMergedView,
     TemplateChartjsView,
     AnalysisDashboardView,
-    ImportTradeinCSVView,
     ImportIphoneCSVView,
     ExternalIngestView,
     ImportResaleCSVView,
@@ -227,8 +226,6 @@ urlpatterns = [
                   # 最近2天所有机种PSTA原始数据图表（时间对齐）
                   path("delivery-trend/", DeliveryTrendView.as_view(), name="delivery-trend"),  # 送达天数趋势（按 PN → 门店）
 
-                  path("import-tradein-csv/", ImportTradeinCSVView.as_view(), name="import-tradein-csv"),
-                  # Excel 上传 & 预览：四家二手店清洗导入
                   path("import-iphone-csv/", ImportIphoneCSVView.as_view(), name="import-iphone-csv"),  # iPhone 导入（CSV）
                   path("external-ingest/", ExternalIngestView.as_view(), name="external-ingest"),  # 外部平台拉取 & 预览 & 入库
                   path("price-matrix/", PriceMatrixView.as_view(), name="price-matrix"),

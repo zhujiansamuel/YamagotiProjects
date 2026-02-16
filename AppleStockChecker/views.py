@@ -18,8 +18,6 @@ from django.db import transaction, IntegrityError
 from datetime import datetime
 from django.db import transaction
 from django.utils.dateparse import parse_datetime, parse_date
-from .utils.tradein_pipeline import clean_and_aggregate_tradein
-from .utils.color_norm import synonyms_for_query
 from django.db.models import Q
 from celery.result import AsyncResult
 from AppleStockChecker.utils.external_ingest.webscraper import fetch_webscraper_export_sync, to_dataframe_from_request
