@@ -4,18 +4,18 @@ shop5 统一清洗器（森森買取 · shop5_1～shop5_4）
 
 shop5_1～shop5_4 为同一店铺不同数据源变体，逻辑相同，统一在此实现。
 通过多注册方式供 registry 映射 shop5_1, shop5_2, shop5_3, shop5_4。
+
+使用公共模板 clean_with_jan_matching。
 """
 from __future__ import annotations
 
 import logging
 import re
-import time
-from typing import List, Optional
+from typing import Optional
 
 import pandas as pd
 
-from ...external_ingest.cleaner_tools import parse_dt_aware
-from ..cleaner_tools import extract_price_yen, assemble_output_df, validate_columns, _load_iphone17_info_df_from_db, _build_jan_map, log_cleaner_start, log_cleaner_complete
+from ..cleaner_tools import clean_with_jan_matching, validate_columns
 
 logger = logging.getLogger(__name__)
 
@@ -34,62 +34,39 @@ def _extract_jan_from_data(x: object) -> Optional[str]:
     return m2.group(1) if m2 else None
 
 
-def _clean_shop5_soramimi(df: pd.DataFrame, variant: str) -> pd.DataFrame:
+def _iter_records_shop5(df: pd.DataFrame):
     """
-    森森買取统一清洗逻辑。
-
+    产出规范化记录。
     输入列：price, data, name, time-scraped
-    输出列：part_number, shop_name, price_new, recorded_at
-    shop_name 固定 '森森買取'
+    过滤：排除 name 含"中古"的行、time-scraped 为空的行
+    JAN 从 data 列提取
     """
-    # 必要列检查
+    for _, row in df.iterrows():
+        name_val = str(row.get("name", ""))
+        if "中古" in name_val:
+            continue
+        ts = row.get("time-scraped")
+        if ts is None or str(ts).strip() == "":
+            continue
+        jan = _extract_jan_from_data(row.get("data"))
+        yield {
+            "JAN": jan,
+            "price": row.get("price"),
+            "time-scraped": ts,
+        }
+
+
+def _clean_shop5_soramimi(df: pd.DataFrame, variant: str) -> pd.DataFrame:
+    """森森買取统一清洗逻辑。"""
     validate_columns(df, ["price", "data", "name", "time-scraped"],
                      cleaner_name=f"shop5-{variant}", shop_name="森森買取")
-
-    start_time = time.time()
-    log_cleaner_start(logger, cleaner_name=f"shop5-{variant}", shop_name="森森買取", input_rows=len(df))
-
-    # 1) 过滤掉 name 含"中古"的行
-    src = df.copy()
-    mask_keep = ~src["name"].astype(str).str.contains("中古", na=False)
-    src = src[mask_keep]
-
-    # 2) 跳过 time-scraped 为空的行
-    mask_time_ok = src["time-scraped"].astype(str).str.strip().ne("") & src["time-scraped"].notna()
-    src = src[mask_time_ok]
-    if src.empty:
-        log_cleaner_complete(logger, cleaner_name=f"shop5-{variant}", shop_name="森森買取", input_rows=len(df), output_records=0, start_time=start_time)
-        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
-
-    # 3) 载入 JAN -> PN 映射（从数据库）
-    info_df = _load_iphone17_info_df_from_db()
-    jan_to_pn = _build_jan_map(info_df)
-
-    # 4) 逐列解析
-    jan_series = src["data"].map(_extract_jan_from_data)
-    pn_series = jan_series.map(lambda j: jan_to_pn.get(j) if j and re.fullmatch(r"\d{13}", j) else None)
-
-    price_new = src["price"].map(extract_price_yen)
-    recorded_at = src["time-scraped"].map(parse_dt_aware)
-
-    # 5) 组装结果：必须有 PN & 价格
-    rows: List[dict] = []
-    for i in range(len(src)):
-        pn = pn_series.iat[i]
-        p = price_new.iat[i]
-        ts = recorded_at.iat[i]
-        if not pn or p is None:
-            continue
-        rows.append({
-            "part_number": str(pn),
-            "shop_name": "森森買取",
-            "price_new": int(p),
-            "recorded_at": ts,
-        })
-
-    out = assemble_output_df(rows, coerce_price=False)
-    log_cleaner_complete(logger, cleaner_name=f"shop5-{variant}", shop_name="森森買取", input_rows=len(df), output_records=len(out), start_time=start_time)
-    return out
+    return clean_with_jan_matching(
+        df,
+        cleaner_name=f"shop5-{variant}",
+        shop_name="森森買取",
+        iter_records_fn=_iter_records_shop5,
+        coerce_price=False,
+    )
 
 
 def _make_shop5_cleaner(variant: str):

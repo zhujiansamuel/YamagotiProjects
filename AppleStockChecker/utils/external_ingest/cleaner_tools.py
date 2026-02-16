@@ -1974,3 +1974,207 @@ def validate_columns(
             else:
                 raise ValueError(f"{cleaner_name} 清洗器缺少必要列：{c}")
     return seq
+
+
+# ======================================================================
+# 5. 清洗器主函数模板 — A类（JAN码直查）/ B类（型号容量匹配）
+# ======================================================================
+
+def clean_with_jan_matching(
+    df: pd.DataFrame,
+    *,
+    cleaner_name: str,
+    shop_name: str,
+    iter_records_fn: Callable,
+    jan_extractor_fn: Optional[Callable] = None,
+    price_extractor_fn: Optional[Callable] = None,
+    ts_extractor_fn: Optional[Callable] = None,
+    row_filter_fn: Optional[Callable] = None,
+    fallback_match_fn: Optional[Callable] = None,
+    coerce_price: bool = True,
+) -> pd.DataFrame:
+    """
+    A类清洗器通用模板：JAN码 → part_number 映射。
+
+    Parameters
+    ----------
+    df : 原始 DataFrame
+    cleaner_name : 清洗器标识（如 "shop1"）
+    shop_name : 店铺显示名（如 "買取商店"）
+    iter_records_fn : 接收 df，产出规范化记录字典的可迭代函数
+        每条记录至少包含 "JAN" / "price" / "time-scraped" 键
+    jan_extractor_fn : 从 JAN 字段提取数字的函数（默认 _extract_jan_digits）
+    price_extractor_fn : 价格解析函数（默认 extract_price_yen）
+    ts_extractor_fn : 时间解析函数（默认 parse_dt_aware）
+    row_filter_fn : 可选的行级过滤（接收记录字典，返回 True 保留）
+    fallback_match_fn : JAN 无法匹配时的回退函数
+        签名: (record, info_df) -> Optional[str]  返回 part_number 或 None
+    coerce_price : 是否对价格做 Int64 强制转换
+    """
+    _logger = logging.getLogger(f"cleaner_tools.{cleaner_name}")
+
+    start_time = time.time()
+    log_cleaner_start(_logger, cleaner_name=cleaner_name, shop_name=shop_name, input_rows=len(df))
+
+    if df.empty:
+        log_cleaner_complete(_logger, cleaner_name=cleaner_name, shop_name=shop_name,
+                             input_rows=len(df), output_records=0, start_time=start_time)
+        return pd.DataFrame(columns=_OUTPUT_COLUMNS)
+
+    jan_ext = jan_extractor_fn or _extract_jan_digits
+    price_ext = price_extractor_fn or extract_price_yen
+    ts_ext = ts_extractor_fn or parse_dt_aware
+
+    info_df = _load_iphone17_info_df_from_db()
+    jan_map = _build_jan_map(info_df)
+
+    rows: List[dict] = []
+
+    for rec in iter_records_fn(df):
+        if row_filter_fn and not row_filter_fn(rec):
+            continue
+
+        jan_digits = jan_ext(rec.get("JAN"))
+        part_number: Optional[str] = None
+
+        if jan_digits:
+            part_number = jan_map.get(jan_digits)
+
+        if not part_number and fallback_match_fn:
+            part_number = fallback_match_fn(rec, info_df)
+
+        if not part_number:
+            continue
+
+        price_new = price_ext(rec.get("price"))
+        if price_new is None:
+            continue
+
+        recorded_at = ts_ext(rec.get("time-scraped"))
+
+        rows.append({
+            "part_number": str(part_number),
+            "shop_name": shop_name,
+            "price_new": int(price_new),
+            "recorded_at": recorded_at,
+        })
+
+    out = assemble_output_df(rows, coerce_price=coerce_price)
+    log_cleaner_complete(_logger, cleaner_name=cleaner_name, shop_name=shop_name,
+                         input_rows=len(df), output_records=len(out), start_time=start_time)
+    return out
+
+
+def clean_with_model_capacity_matching(
+    df: pd.DataFrame,
+    *,
+    cleaner_name: str,
+    shop_name: str,
+    model_col: str,
+    price_col: str,
+    ts_col: str = "time-scraped",
+    required_cols: Optional[List[str]] = None,
+    model_normalizer_fn: Optional[Callable] = None,
+    price_extractor_fn: Optional[Callable] = None,
+    pn_extractor_fn: Optional[Callable] = None,
+    row_filter_fn: Optional[Callable] = None,
+    add_model_norm: bool = False,
+    coerce_price: bool = False,
+) -> pd.DataFrame:
+    """
+    B类清洗器通用模板：(model, capacity) → 全色 part_number 展开。
+
+    Parameters
+    ----------
+    df : 原始 DataFrame
+    cleaner_name : 清洗器标识
+    shop_name : 店铺显示名
+    model_col : 型号文本所在列名
+    price_col : 价格所在列名
+    ts_col : 时间列名（默认 "time-scraped"）
+    required_cols : 需要校验的列名列表（默认 [model_col, price_col, ts_col]）
+    model_normalizer_fn : 机型归一化函数（默认 _normalize_model_generic）
+    price_extractor_fn : 价格解析函数（默认 extract_price_yen）
+    pn_extractor_fn : 可选的 part_number 直接提取函数
+        签名: (row_text) -> Optional[str]
+        若提供且返回非 None，跳过 model/capacity 匹配
+    row_filter_fn : 可选的行级过滤（接收 row Series/dict，返回 True 保留）
+    add_model_norm : 传递给 _load_iphone17_info_df_from_db
+    coerce_price : assemble_output_df 的参数
+    """
+    _logger = logging.getLogger(f"cleaner_tools.{cleaner_name}")
+
+    start_time = time.time()
+    log_cleaner_start(_logger, cleaner_name=cleaner_name, shop_name=shop_name, input_rows=len(df))
+
+    cols_to_validate = required_cols or [model_col, price_col, ts_col]
+    validate_columns(df, cols_to_validate, cleaner_name=cleaner_name, shop_name=shop_name)
+
+    if df.empty:
+        log_cleaner_complete(_logger, cleaner_name=cleaner_name, shop_name=shop_name,
+                             input_rows=len(df), output_records=0, start_time=start_time)
+        return pd.DataFrame(columns=_OUTPUT_COLUMNS)
+
+    model_norm_fn = model_normalizer_fn or _normalize_model_generic
+    price_ext = price_extractor_fn or extract_price_yen
+
+    info_df = _load_iphone17_info_df_from_db(add_model_norm=add_model_norm)
+    if not add_model_norm:
+        info_df = info_df.copy()
+        info_df["model_name_norm"] = info_df["model_name"].map(_normalize_model_generic)
+        info_df["capacity_gb"] = pd.to_numeric(info_df["capacity_gb"], errors="coerce").astype("Int64")
+
+    groups = (
+        info_df.groupby(["model_name_norm", "capacity_gb"])["part_number"]
+        .apply(list).to_dict()
+    )
+
+    model_norm_series = df[model_col].map(model_norm_fn)
+    cap_gb_series = df[model_col].map(_parse_capacity_gb)
+    price_series = df[price_col].map(price_ext)
+    recorded_at_series = df[ts_col].map(parse_dt_aware)
+
+    rows: List[dict] = []
+    for i in range(len(df)):
+        if row_filter_fn and not row_filter_fn(df.iloc[i]):
+            continue
+
+        # 若提供了 pn_extractor_fn，优先使用直接提取
+        if pn_extractor_fn:
+            pn_direct = pn_extractor_fn(str(df[model_col].iat[i]))
+            if pn_direct:
+                p = price_series.iat[i]
+                t = recorded_at_series.iat[i]
+                if p is not None:
+                    rows.append({
+                        "part_number": str(pn_direct),
+                        "shop_name": shop_name,
+                        "price_new": int(p) if p is not None else None,
+                        "recorded_at": t,
+                    })
+                continue
+
+        m = model_norm_series.iat[i]
+        c = cap_gb_series.iat[i]
+        p = price_series.iat[i]
+        t = recorded_at_series.iat[i]
+
+        if not m or pd.isna(c) or p is None:
+            continue
+
+        pn_list = groups.get((m, int(c)), [])
+        if not pn_list:
+            continue
+
+        for pn in pn_list:
+            rows.append({
+                "part_number": str(pn),
+                "shop_name": shop_name,
+                "price_new": int(p),
+                "recorded_at": t,
+            })
+
+    out = assemble_output_df(rows, coerce_price=coerce_price)
+    log_cleaner_complete(_logger, cleaner_name=cleaner_name, shop_name=shop_name,
+                         input_rows=len(df), output_records=len(out), start_time=start_time)
+    return out

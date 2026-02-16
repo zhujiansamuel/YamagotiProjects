@@ -2,28 +2,28 @@ from __future__ import annotations
 """
 shop18 清洗器 — 買取オク
 
-  原始 DataFrame（jan / type / price / time-scraped）
-    │
-    ├─ _extract_jan_digits()       ← Step 1: JAN 提取（cleaner_tools）
-    ├─ _build_jan_map()             ← Step 2: JAN → part_number 映射（cleaner_tools）
-    ├─ _match_by_type()             ← Step 3: JAN 无法匹配时 type 回退（model/cap/color）
-    ├─ to_int_yen()                 ← Step 4: 价格解析
-    └─ clean_shop18()               ← Step 5: 主函数，输出 part_number / price_new / recorded_at
+  使用公共模板 clean_with_jan_matching。
+  JAN 优先匹配，fallback 通过 type 列的 (model, capacity, color) 回退匹配。
 """
-from typing import Dict, Optional, List
+from typing import Optional
 import logging
 import re
-import time
 
 import pandas as pd
 
-from ...external_ingest.cleaner_tools import to_int_yen, parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, _load_iphone17_info_df_from_db, _extract_jan_digits, _build_jan_map, assemble_output_df, validate_columns, log_cleaner_start, log_cleaner_complete
+from ..cleaner_tools import (
+    clean_with_jan_matching,
+    validate_columns,
+    _parse_capacity_gb,
+    _normalize_model_generic,
+    to_int_yen,
+)
 
 logger = logging.getLogger(__name__)
 
 CLEANER_NAME = "shop18"
 SHOP_NAME = "買取オク"
+
 
 def _match_by_type(type_text: str, info_df: pd.DataFrame) -> Optional[str]:
     """
@@ -59,64 +59,38 @@ def _match_by_type(type_text: str, info_df: pd.DataFrame) -> Optional[str]:
 
     return None
 
+
+def _iter_records_shop18(df: pd.DataFrame):
+    """
+    产出规范化记录。
+    输入列：jan, type, price, time-scraped
+    """
+    for _, row in df.iterrows():
+        yield {
+            "JAN": row.get("jan"),
+            "price": row.get("price"),
+            "time-scraped": row.get("time-scraped"),
+            "_type": row.get("type"),  # 传递给 fallback
+        }
+
+
+def _fallback_match_shop18(rec: dict, info_df: pd.DataFrame) -> Optional[str]:
+    """JAN 无法匹配时，用 type 列做 (model, cap, color) 回退匹配。"""
+    return _match_by_type(rec.get("_type"), info_df)
+
+
 def clean_shop18(df: pd.DataFrame) -> pd.DataFrame:
     """
-    输入 (shop18.csv):
-      - jan: 如 'JAN: 4549995648300'
-      - type: 如 'iPhone 17 Pro  256GB ディープブルー'
-      - price: '¥180,500' / '問い合わせ' 等
-      - time-scraped
-    输出：
-      - part_number, shop_name, price_new, recorded_at
-    仅输出出现在 _load_iphone17_info_df_from_db() 的机型。
+    输入列: jan, type, price, time-scraped
+    输出: part_number, shop_name, price_new, recorded_at
     """
-    start_time = time.time()
-    log_cleaner_start(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df))
     validate_columns(df, ["jan", "type", "price", "time-scraped"],
                      cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME)
-
-    if df.empty:
-        log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=0, start_time=start_time)
-        return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
-
-    info_df = _load_iphone17_info_df_from_db()
-    jan_map = _build_jan_map(info_df)
-
-    # 为回退匹配准备（按 (model, cap) 切片）
-    rows: List[dict] = []
-
-    for _, row in df.iterrows():
-        # 价格（无价/“問い合わせ”跳过）
-        price_new = to_int_yen(row.get("price"))
-        if price_new is None:
-            continue
-        price_new = int(price_new)
-
-        # 记录时间
-        recorded_at = parse_dt_aware(row.get("time-scraped"))
-
-        shop_name = SHOP_NAME
-
-        # 先用 JAN 直接匹配
-        jan_digits = _extract_jan_digits(row.get("jan"))
-        part_number: Optional[str] = None
-        if jan_digits and jan_digits in jan_map:
-            part_number = jan_map[jan_digits]
-        else:
-            # 回退：用 type 匹配 (model, cap, color)
-            part_number = _match_by_type(row.get("type"), info_df)
-
-        if not part_number:
-            # 无法匹配到信息表 → 跳过
-            continue
-
-        rows.append({
-            "part_number": str(part_number),
-            "shop_name": shop_name,
-            "price_new": price_new,
-            "recorded_at": recorded_at,
-        })
-
-    out = assemble_output_df(rows)
-    log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=len(out), start_time=start_time)
-    return out
+    return clean_with_jan_matching(
+        df,
+        cleaner_name=CLEANER_NAME,
+        shop_name=SHOP_NAME,
+        iter_records_fn=_iter_records_shop18,
+        price_extractor_fn=to_int_yen,
+        fallback_match_fn=_fallback_match_shop18,
+    )
