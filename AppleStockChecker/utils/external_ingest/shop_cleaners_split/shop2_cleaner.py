@@ -60,6 +60,7 @@ from ..cleaner_tools import (
     apply_llm_guardrails,
     SIGN_MINUS_CHARS,
     SIGN_PLUS_CHARS,
+    LABEL_SPLIT_RE_shop2,
     lx,
     HAS_LANGEXTRACT,
     OLLAMA_URL,
@@ -116,35 +117,37 @@ _coerce_int = coerce_int
 _SIGN_MINUS = SIGN_MINUS_CHARS
 _SIGN_PLUS = SIGN_PLUS_CHARS
 
-def _parse_rule_token_simple(token: str) -> Optional[Tuple[str, int]]:
+def _parse_rule_token_simple(token: str) -> List[Tuple[str, int]]:
     """
-    解析单条规则 token，例如：
-      '黒-2000' / '青-2000円' / '銀 +3000' -> ('黒', -2000) / ('青', -2000) / ('銀', 3000)
+    解析单条规则 token，支持复合标签，例如：
+      '黒-2000' -> [('黒', -2000)]
+      '青/オレンジ-2000円' -> [('青', -2000), ('オレンジ', -2000)]
+      '銀 +3000' -> [('銀', 3000)]
     """
     s = safe_to_text(token)
     if not s:
-        return None
+        return []
 
     # 从末尾找数字串
     i = len(s) - 1
     while i >= 0 and not s[i].isdigit():
         i -= 1
     if i < 0:
-        return None
+        return []
 
     j = i
     while j >= 0 and s[j].isdigit():
         j -= 1
     num_str = s[j + 1 : i + 1]
     if not num_str:
-        return None
+        return []
 
     # 数字前找 +/- 符号（允许中间有空格）
     k = j
     while k >= 0 and s[k].isspace():
         k -= 1
     if k < 0:
-        return None
+        return []
 
     sign_ch = s[k]
     if sign_ch in _SIGN_PLUS:
@@ -152,13 +155,16 @@ def _parse_rule_token_simple(token: str) -> Optional[Tuple[str, int]]:
     elif sign_ch in _SIGN_MINUS:
         sign = -1
     else:
-        return None
+        return []
 
     group = s[:k].strip().strip(" :：\t")
     if not group:
-        return None
+        return []
 
-    return group, sign * int(num_str)
+    # 使用 LABEL_SPLIT_RE_shop2 分割复合标签
+    amt = sign * int(num_str)
+    labels = [lbl.strip() for lbl in LABEL_SPLIT_RE_shop2.split(group) if lbl.strip()]
+    return [(lbl, amt) for lbl in labels]
 
 # ----------------------------------------------------------------------
 # Step 5: 纯正则版规则提取
@@ -168,6 +174,7 @@ def _extract_specs_shop2_regex(val) -> dict:
     """
     对原始 data5 做正则解析：
     - 按分隔符拆开（换行/+++ / + / 逗号等），逐段用 _parse_rule_token_simple 解析
+    - 支持复合标签（如 "青/オレンジ-2000" → {"青": -2000, "オレンジ": -2000}）
     - 也尝试旧版 regex 模式作为补充
     """
     s = safe_to_text(val)
@@ -183,9 +190,9 @@ def _extract_specs_shop2_regex(val) -> dict:
 
     rules: dict[str, int] = {}
     for line in t.splitlines():
-        parsed = _parse_rule_token_simple(line)
-        if parsed:
-            g, d = parsed
+        parsed_list = _parse_rule_token_simple(line)
+        # parsed_list 现在是 List[Tuple[str, int]]，支持复合标签
+        for g, d in parsed_list:
             rules[g] = d
 
     # 方法 B: 旧版正则（fallback 补充）
@@ -198,9 +205,12 @@ def _extract_specs_shop2_regex(val) -> dict:
             m = re.match(r"(.+?)-(\d+)", p)
             if not m:
                 continue
-            group = m.group(1).strip()
+            group_raw = m.group(1).strip()
             amt = -int(m.group(2))
-            rules[group] = amt
+            # 支持复合标签
+            labels = [lbl.strip() for lbl in LABEL_SPLIT_RE_shop2.split(group_raw) if lbl.strip()]
+            for lbl in labels:
+                rules[lbl] = amt
 
     return rules
 

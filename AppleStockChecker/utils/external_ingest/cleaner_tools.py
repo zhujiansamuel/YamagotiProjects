@@ -467,6 +467,7 @@ SYNONYM_LOOKUP_NORM: Dict[str, List[str]] = build_synonym_lookup_norm(FAMILY_SYN
 # ----------------------------------------------------------------------
 # 说明：各店铺用不同分隔符拆分复合颜色标签（如 "シルバー/ディープブルー" → ['シルバー','ディープブルー']）
 # 分隔符差异：shop3/14 含 ;；；shop9/12 含 ;；；shop15 含 &＆；shop16/17 不含 ・
+LABEL_SPLIT_RE_shop2 = re.compile(r"[／/、，,・\s]+")
 LABEL_SPLIT_RE_shop3 = re.compile(r"[／/、，,・\s；;]+")
 LABEL_SPLIT_RE_shop4 = re.compile(r"[／/、，,・\s]+")
 LABEL_SPLIT_RE_shop7 = re.compile(r"[／/、，,・\s]+")
