@@ -10,8 +10,8 @@ shop11 清洗器 — モバステ
     │
     ├─ to_int_yen_shop11()                   ← Step 2: 日元价格解析
     │
-    ├─ _lx_parse_storage_shop11()            ← Step 3: LLM 机型/容量解析
-    │   └─ fallback: _normalize_model_generic + _parse_capacity_gb
+    ├─ Step 3: 机型/容量解析（规则）
+    │   └─ _normalize_model_generic + _parse_capacity_gb
     │
     ├─ _extract_color_deltas_shop11_dispatch()  ← Step 7: 模式调度（EXTRACTION_MODE）
     │   │
@@ -697,11 +697,6 @@ def clean_shop11(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) ->
     info_df = _load_iphone17_info_df_from_db()
     cmap_all = _build_color_map(info_df)
 
-    # 用 info_df 推导"允许的规范化机型"，用来约束 LLM 输出，减少 key 对不上
-    valid_models = tuple(
-        sorted({m for m in info_df["model_name"].map(_normalize_model_generic).tolist() if m})
-    )
-
     rows: List[dict] = []
 
     for i, row in df2.iterrows():
@@ -716,20 +711,12 @@ def clean_shop11(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) ->
 
         model_text = storage  # shop11 的 model_text 来源于 storage_name
 
-        # 1) 先走 LLM 解析（失败则 fallback 到 regex）
-        model_norm, cap_gb, storage_trace = _lx_parse_storage_shop11(storage, valid_models)
-
-        if not model_norm or cap_gb is None:
-            # fallback：regex
-            model_norm_fb = _normalize_model_generic(storage)
-            cap_fb = _parse_capacity_gb(storage)
-            if model_norm_fb and cap_fb is not None:
-                model_norm, cap_gb = model_norm_fb, int(cap_fb)
-
-        if not model_norm or cap_gb is None:
+        # 1) 只用规则解析（_normalize_model_generic + _parse_capacity_gb），不做 LLM 匹配
+        model_norm = _normalize_model_generic(storage)
+        cap_fb = _parse_capacity_gb(storage)
+        if not model_norm or cap_fb is None:
             continue
-
-        cap_gb = int(cap_gb)
+        cap_gb = int(cap_fb)
         key = (model_norm, cap_gb)
         color_map = cmap_all.get(key)
 
