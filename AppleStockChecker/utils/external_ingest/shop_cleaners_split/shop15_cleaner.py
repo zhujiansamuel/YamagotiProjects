@@ -250,20 +250,6 @@ from ..shop_cleaners_split_llm.llm_shop15 import (
     extract_specs_shop15_llm as _extract_specs_shop15_llm_impl,
 )
 
-
-def _extract_specs_shop15_llm(
-    price_text: str, idx: object = None,
-) -> Tuple[Optional[int], List[Tuple[str, str, int]]]:
-    return _extract_specs_shop15_llm_impl(
-        price_text, idx=idx,
-        regex_fn=_extract_specs_shop15_regex,
-        extract_base_price_fn=_extract_base_price_at_start,
-        parse_signed_int_yen_fn=_parse_signed_int_yen,
-        clean_label_fn=_clean_label_shop15,
-        multi_label_delta_block_re=MULTI_LABEL_DELTA_BLOCK_RE_shop15,
-        split_color_labels_fn=_split_color_labels_shop15,
-    )
-
 # ----------------------------------------------------------------------
 # Step 11: 清洗主函数
 # ----------------------------------------------------------------------
@@ -311,7 +297,15 @@ def clean_shop15(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
         decomp = dispatch_extraction_to_price_decomposition(
             EXTRACTION_MODE,
             regex_fn=lambda: _extract_specs_shop15_regex(price_text_s),
-            llm_fn=lambda: _extract_specs_shop15_llm(price_text_s, idx=i),
+            llm_fn=lambda: _extract_specs_shop15_llm_impl(
+                price_text_s, idx=i,
+                regex_fn=_extract_specs_shop15_regex,
+                extract_base_price_fn=_extract_base_price_at_start,
+                parse_signed_int_yen_fn=_parse_signed_int_yen,
+                clean_label_fn=_clean_label_shop15,
+                multi_label_delta_block_re=MULTI_LABEL_DELTA_BLOCK_RE_shop15,
+                split_color_labels_fn=_split_color_labels_shop15,
+            ),
             base_price=None,
             source_text_raw=price_text_s,
             result_adapter=lambda r: (

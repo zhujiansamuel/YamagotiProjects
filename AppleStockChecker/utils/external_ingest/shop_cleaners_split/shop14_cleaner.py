@@ -11,7 +11,7 @@ shop14_cleaner  —  買取楽園
     ├─ Step 4  remark文本归一化（3列合并）
     ├─ Step 5  价格规则抽取 dispatch（EXTRACTION_MODE: regex / llm / auto）
     │           ├─ regex路径: _extract_specs_shop14_regex()
-    │           └─ llm路径:   _extract_specs_shop14_llm()
+    │           └─ llm路径:   _extract_specs_shop14_llm_impl()
     ├─ Step 6  全色处理（all_delta 快捷路径）
     ├─ Step 7  label → color 匹配（家族同义词）
     ├─ Step 8  价格计算（abs优先 > base+delta > base）
@@ -301,11 +301,6 @@ from ..shop_cleaners_split_llm.llm_shop14 import (
     extract_specs_shop14_llm as _extract_specs_shop14_llm_impl,
 )
 
-
-def _extract_specs_shop14_llm(text: str) -> Dict[str, Union[Optional[int], List[Tuple[str, int]]]]:
-    return _extract_specs_shop14_llm_impl(text, split_color_amount_pairs_multi_fn=_split_color_amount_pairs_multi)
-
-
 # ---------------------------------------------------------------------------
 # Step 7-C: Dispatch（三模式路由）
 # ---------------------------------------------------------------------------
@@ -322,7 +317,9 @@ def _extract_specs_shop14_parse(
     return _dispatch_extraction(
         mode,
         regex_fn=lambda: _extract_specs_shop14_regex(text),
-        llm_fn=lambda: _extract_specs_shop14_llm(text),
+        llm_fn=lambda: _extract_specs_shop14_llm_impl(
+            text, split_color_amount_pairs_multi_fn=_split_color_amount_pairs_multi,
+        ),
         has_result_fn=lambda r: (
             r.get("all_delta") is not None or r.get("abs") or r.get("delta")
         ),

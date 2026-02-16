@@ -17,7 +17,7 @@ shop12 清洗器 — トゥインクル
     │   │       └─ _fallback_parse_rules()            ← 核心正则: _FALLBACK_ABS_RE / _FALLBACK_DELTA_RE
     │   │
     │   └─ llm 路径:
-    │       └─ _extract_specs_shop12_llm()  ← Step 4: LLM 提取 + 防幻觉 (shop_cleaners_split_llm/llm_shop12.py)
+    │       └─ _extract_specs_shop12_llm_impl()  ← Step 4: LLM 提取 + 防幻觉 (shop_cleaners_split_llm/llm_shop12.py)
     │           └─ _extract_specs_shop12_llm_core()    ← LLM 核心: effective_class 修正 + 去重
     │
     ├─ _label_matches_color_unified()           ← Step 6: 标签→颜色匹配（cleaner_tools 统一）
@@ -176,16 +176,6 @@ from ..shop_cleaners_split_llm.llm_shop12 import (
     extract_specs_shop12_llm as _extract_specs_shop12_llm_impl,
 )
 
-
-def _extract_specs_shop12_llm(
-    remark_for_llm: str,
-    idx: object = None,
-) -> Tuple[List[Tuple[str, int]], List[Tuple[str, int]]]:
-    return _extract_specs_shop12_llm_impl(
-        remark_for_llm, idx=idx,
-        fallback_parse_rules_fn=_fallback_parse_rules,
-    )
-
 # ----------------------------------------------------------------------
 # Step 6: 标签→颜色匹配（2025-02 替换为 cleaner_tools 统一实现）
 # ----------------------------------------------------------------------
@@ -252,7 +242,10 @@ def clean_shop12(df: pd.DataFrame, debug: bool = False) -> pd.DataFrame:
         decomp = dispatch_extraction_to_price_decomposition(
             EXTRACTION_MODE,
             regex_fn=lambda: _extract_specs_shop12_regex(remark_for_llm),
-            llm_fn=lambda: _extract_specs_shop12_llm(remark_for_llm, idx=idx),
+            llm_fn=lambda: _extract_specs_shop12_llm_impl(
+                remark_for_llm, idx=idx,
+                fallback_parse_rules_fn=_fallback_parse_rules,
+            ),
             base_price=base_price,
             source_text_raw=source_text_raw_full,
             result_adapter=lambda r: (r[1], r[0]),

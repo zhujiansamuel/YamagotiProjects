@@ -1121,7 +1121,7 @@ def dispatch_extraction_to_price_decomposition(
         decomp = dispatch_extraction_to_price_decomposition(
             EXTRACTION_MODE,
             regex_fn=lambda: _extract_specs_shop12_regex(remark_for_llm),
-            llm_fn=lambda: _extract_specs_shop12_llm(remark_for_llm, idx=idx),
+            llm_fn=lambda: _extract_specs_shop12_llm_impl(remark_for_llm, idx=idx, fallback_parse_rules_fn=_fallback_parse_rules),
             base_price=base_price,
             source_text_raw=source_text_raw,
             result_adapter=_adapter,

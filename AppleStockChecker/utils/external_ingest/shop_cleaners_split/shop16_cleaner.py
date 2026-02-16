@@ -273,21 +273,6 @@ from ..shop_cleaners_split_llm.llm_shop16 import (
     extract_specs_shop16_llm as _extract_specs_shop16_llm_impl,
 )
 
-
-def _extract_specs_shop16_llm(
-    price_text: str, idx: object = None,
-) -> Tuple[Optional[int], List[Tuple[str, int]], List[Tuple[str, int]]]:
-    return _extract_specs_shop16_llm_impl(
-        price_text, idx=idx,
-        extract_base_price_fn=_extract_base_price_shop16,
-        is_base_only_fn=_is_base_only_price_text,
-        extract_shared_delta_map_fn=_extract_shared_delta_map_shop16,
-        normalize_label_fn=_normalize_label_shop16,
-        split_labels_fn=_split_labels_shop16,
-        regex_deltas_fn=_extract_specs_shop16_regex_deltas,
-        regex_abs_fn=_extract_specs_shop16_regex_abs,
-    )
-
 # ----------------------------------------------------------------------
 # Step 10: 清洗主函数
 # ----------------------------------------------------------------------
@@ -340,7 +325,16 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
         decomp = dispatch_extraction_to_price_decomposition(
             EXTRACTION_MODE,
             regex_fn=lambda: _extract_specs_shop16_regex(price_text),
-            llm_fn=lambda: _extract_specs_shop16_llm(price_text, idx=idx),
+            llm_fn=lambda: _extract_specs_shop16_llm_impl(
+                price_text, idx=idx,
+                extract_base_price_fn=_extract_base_price_shop16,
+                is_base_only_fn=_is_base_only_price_text,
+                extract_shared_delta_map_fn=_extract_shared_delta_map_shop16,
+                normalize_label_fn=_normalize_label_shop16,
+                split_labels_fn=_split_labels_shop16,
+                regex_deltas_fn=_extract_specs_shop16_regex_deltas,
+                regex_abs_fn=_extract_specs_shop16_regex_abs,
+            ),
             base_price=None,
             source_text_raw=price_text,
             result_adapter=lambda r: (r[0], r[1], r[2]),

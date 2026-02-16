@@ -191,16 +191,6 @@ def _extract_specs_shop11_regex(text: str) -> List[Tuple[str, int]]:
 # Step 6: LLM + Guardrails 颜色差价提取 — 已提取到 shop_cleaners_split_llm/llm_shop11.py
 # ----------------------------------------------------------------------
 
-def _extract_specs_shop11_llm(
-    caution_txt: str,
-    available_colors: Tuple[str, ...],
-    color_map: Dict[str, Tuple[str, str]],
-) -> Dict[str, int]:
-    return _extract_specs_shop11_llm_impl(
-        caution_txt, available_colors, color_map,
-        regex_fn=_extract_specs_shop11_regex,
-    )
-
 # ----------------------------------------------------------------------
 # Step 8: 清洗主函数
 # ----------------------------------------------------------------------
@@ -283,7 +273,10 @@ def clean_shop11(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) ->
             regex_fn=lambda: _extract_specs_shop11_regex(caution_txt),
             llm_fn=lambda: [
                 (cn, dv) for cn, dv in
-                _extract_specs_shop11_llm(caution_txt, avail_colors, color_map).items()
+                _extract_specs_shop11_llm_impl(
+                    caution_txt, avail_colors, color_map,
+                    regex_fn=_extract_specs_shop11_regex,
+                ).items()
             ],
             base_price=base_price,
             source_text_raw=source_text_raw_full,

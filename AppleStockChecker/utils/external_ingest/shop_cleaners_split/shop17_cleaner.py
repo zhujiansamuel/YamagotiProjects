@@ -57,7 +57,7 @@ shop17 清洗器 — ゲストモバイル
     │   │   └─ COLOR_NONE_RE / COLOR_DELTA_RE  ← なし模式・金额模式
     │   │
     │   └─ llm 路径:
-    │       └─ _extract_specs_shop17_llm()  ← LangExtract 核心提取
+    │       └─ _extract_specs_shop17_llm_impl()  ← LangExtract 核心提取
     │
     ├─ _label_matches_color_unified()  ← Step 4: 标签→颜色匹配（cleaner_tools 统一）
     │
@@ -208,21 +208,6 @@ from ..shop_cleaners_split_llm.llm_shop17 import (
     extract_specs_shop17_llm as _extract_specs_shop17_llm_impl,
 )
 
-
-def _extract_specs_shop17_llm(
-    text: str,
-    shop_name: Optional[str] = None,
-    cleaner_name: Optional[str] = None,
-    row_context: Optional[Dict] = None
-) -> List[Tuple[str, int]]:
-    return _extract_specs_shop17_llm_impl(
-        text, shop_name=shop_name, cleaner_name=cleaner_name,
-        row_context=row_context,
-        normalize_color_text_fn=_normalize_color_text_shop17,
-        pick_unopened_section_fn=_pick_unopened_section,
-        is_plausible_color_label_fn=_is_plausible_color_label_shop17,
-    )
-
 # ----------------------------------------------------------------------
 # 清洗主函数
 # ----------------------------------------------------------------------
@@ -281,7 +266,13 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
         decomp = dispatch_extraction_to_price_decomposition(
             EXTRACTION_MODE,
             regex_fn=lambda: _extract_specs_shop17_regex(raw_color_s),
-            llm_fn=lambda: _extract_specs_shop17_llm(raw_color_s, SHOP_NAME, CLEANER_NAME, row_context),
+            llm_fn=lambda: _extract_specs_shop17_llm_impl(
+                raw_color_s, shop_name=SHOP_NAME, cleaner_name=CLEANER_NAME,
+                row_context=row_context,
+                normalize_color_text_fn=_normalize_color_text_shop17,
+                pick_unopened_section_fn=_pick_unopened_section,
+                is_plausible_color_label_fn=_is_plausible_color_label_shop17,
+            ),
             base_price=base_price,
             source_text_raw=raw_color_s,
             result_adapter=lambda r: (r, []),
