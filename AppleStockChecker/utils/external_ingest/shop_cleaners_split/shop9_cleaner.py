@@ -55,7 +55,7 @@ from ..cleaner_tools import (
     log_row_skip,
     validate_columns,
     coerce_signed_int,
-    dispatch_extraction,
+    dispatch_extraction_to_price_decomposition,
 )
 
 # 初始化 logger
@@ -408,56 +408,19 @@ def _extract_specs_shop9_dispatch(
     source_text_raw: str,
     row_index: object = None,
 ) -> PriceDecomposition:
-    """
-    根据 EXTRACTION_MODE 决定提取方式：
-      - "regex": 只用正则
-      - "llm":   只用 LLM + Guardrail
-      - "auto":  regex 优先，regex 无颜色结果时 LLM + Guardrail 兜底
-
-    返回 PriceDecomposition
-    """
-    (abs_map, delta_map, abs_specs, delta_specs, cal, cdl), method = dispatch_extraction(
+    return dispatch_extraction_to_price_decomposition(
         EXTRACTION_MODE,
         regex_fn=lambda: _extract_specs_shop9_regex(s_price, s_color, color_to_pn),
         llm_fn=lambda: _extract_specs_shop9_llm(s_price, s_color, color_to_pn, row_index=row_index),
-        has_result_fn=lambda r: bool(r[0] or r[1]),  # r = (abs_map, delta_map, ...)
-    )
-
-    # regex 路径追加 abs overrides（仅 regex/auto-regex 需要）
-    if method == "regex":
-        overrides = _direct_abs_overrides_for_row(
-            raw_color_text=s_color, color_to_pn=color_to_pn,
-        )
-        if overrides:
-            for col_norm, v in overrides.items():
-                abs_map[col_norm] = int(v)
-                abs_specs.append((col_norm, int(v)))
-
-    # ---- "ALL" 归一化 ----
-    final_delta_specs: List[Tuple[str, int]] = list(delta_specs)
-    final_abs_specs: List[Tuple[str, int]] = list(abs_specs)
-
-    if "ALL" in delta_map:
-        final_delta_specs = [("全色", delta_map["ALL"])]
-        final_abs_specs = []
-    elif "ALL" in abs_map:
-        final_abs_specs = [("全色", abs_map["ALL"])]
-        final_delta_specs = []
-
-    # ---- base_price=None 时仅 abs 路径有效 ----
-    if base_price is None:
-        decomp_delta: List[Tuple[str, int]] = []
-        decomp_base = 0
-    else:
-        decomp_delta = final_delta_specs
-        decomp_base = base_price
-
-    return PriceDecomposition(
-        base_price=decomp_base,
-        delta_specs=decomp_delta,
-        abs_specs=final_abs_specs,
-        extraction_method=method,
+        base_price=base_price,
         source_text_raw=source_text_raw,
+        result_adapter=lambda r: (r[3], r[2]),
+        has_result_fn=lambda r: bool(r[0] or r[1]),
+        result_is_maps=True,
+        regex_post_hook=lambda: _direct_abs_overrides_for_row(
+            raw_color_text=s_color, color_to_pn=color_to_pn,
+        ),
+        base_price_when_none=0,
     )
 
 # ----------------------------------------------------------------------

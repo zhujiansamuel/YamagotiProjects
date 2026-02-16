@@ -51,7 +51,7 @@ from ..cleaner_tools import (
     log_cleaner_start,
     log_cleaner_complete,
     validate_columns,
-    dispatch_extraction,
+    dispatch_extraction_to_price_decomposition,
     lx,
     HAS_LANGEXTRACT,
     log_llm_extraction_error,
@@ -271,37 +271,19 @@ def _extract_specs_shop15_llm(
 def _extract_specs_shop15_dispatch(
     price_text: str, idx: object = None, *, source_text_raw: str,
 ) -> PriceDecomposition:
-    """
-    根据 EXTRACTION_MODE 决定提取方式：
-      - "regex": 只用正则
-      - "llm":   只用 LLM + 纠错
-      - "auto":  正则优先，正则无 specs 时 LLM 兜底
-
-    返回 PriceDecomposition。
-    """
-    (bp, specs), method = dispatch_extraction(
+    return dispatch_extraction_to_price_decomposition(
         EXTRACTION_MODE,
         regex_fn=lambda: _extract_specs_shop15_regex(price_text),
         llm_fn=lambda: _extract_specs_shop15_llm(price_text, idx=idx),
-        has_result_fn=lambda r: bool(r[1]),  # r = (bp, specs); specs 非空即有结果
-    )
-    # auto 模式下 LLM 的 base_price 为 None 时，回退到正则的 base_price
-    if method == "llm" and bp is None:
-        bp_re = _extract_specs_shop15_regex(price_text)[0]
-        if bp_re is not None:
-            bp = bp_re
-
-    delta_specs = [(label, value) for label, kind, value in specs if kind == "delta"]
-    abs_specs = [(label, value) for label, kind, value in specs if kind == "abs"]
-    if bp is None:
-        delta_specs = []
-
-    return PriceDecomposition(
-        base_price=bp,
-        delta_specs=delta_specs,
-        abs_specs=abs_specs,
-        extraction_method=method,
+        base_price=None,
         source_text_raw=source_text_raw,
+        result_adapter=lambda r: (
+            r[0],
+            [(l, v) for l, k, v in r[1] if k == "delta"],
+            [(l, v) for l, k, v in r[1] if k == "abs"],
+        ),
+        has_result_fn=lambda r: bool(r[1]),
+        extract_base_from_result=lambda r: r[0],
     )
 
 

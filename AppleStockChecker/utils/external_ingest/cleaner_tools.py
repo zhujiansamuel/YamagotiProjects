@@ -837,7 +837,7 @@ def coerce_amount_yen(v) -> Optional[int]:
 # 公共提取模式调度（从 shop2/3/4/9/11/12/14 提取合并）
 # ======================================================================
 
-def dispatch_extraction(
+def _dispatch_extraction(
     mode: str,
     regex_fn: Callable,
     llm_fn: Callable,
@@ -861,7 +861,7 @@ def dispatch_extraction(
         method_str: "regex" | "llm"
 
     示例:
-        result, method = dispatch_extraction(
+        result, method = _dispatch_extraction(
             EXTRACTION_MODE,
             regex_fn=lambda: _extract_specs_regex(text),
             llm_fn=lambda: _extract_specs_llm(text, row_index=i),
@@ -1143,7 +1143,7 @@ def dispatch_extraction_to_price_decomposition(
             raise ValueError(
                 "单次提取需 mode/regex_fn/llm_fn/result_adapter；Fragment 模式需 frags/combined/parse_fn"
             )
-        raw_result, method = dispatch_extraction(
+        raw_result, method = _dispatch_extraction(
             mode,
             regex_fn=regex_fn,
             llm_fn=llm_fn,

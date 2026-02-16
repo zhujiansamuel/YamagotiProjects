@@ -57,7 +57,7 @@ from ..cleaner_tools import (
     log_llm_extraction_error,
     validate_columns,
     clean_label_token,
-    dispatch_extraction,
+    dispatch_extraction_to_price_decomposition,
     DELTA_PATTERN_STRICT as _DELTA_PATTERN_STRICT_IMPORTED,
     DELTA_PATTERN_LOOSE as _DELTA_PATTERN_LOOSE_IMPORTED,
     SIGNED_AMOUNT_PATTERN,
@@ -165,26 +165,13 @@ def _extract_specs_shop3_dispatch(
     source_text_raw: str,
     row_index: object = None,
 ) -> PriceDecomposition:
-    """
-    根据 EXTRACTION_MODE 决定提取方式：
-      - "regex": 只用正则
-      - "llm":   只用 LLM + Guardrails
-      - "auto":  正则优先，正则无颜色结果时 LLM + Guardrails 兜底
-
-    返回 PriceDecomposition
-    """
-    deltas, method = dispatch_extraction(
+    return dispatch_extraction_to_price_decomposition(
         EXTRACTION_MODE,
         regex_fn=lambda: _extract_specs_shop3_regex(text),
         llm_fn=lambda: _extract_specs_shop3_llm(text, row_index=row_index),
-    )
-
-    return PriceDecomposition(
         base_price=base_price,
-        delta_specs=deltas,
-        abs_specs=[],
-        extraction_method=method,
         source_text_raw=source_text_raw,
+        result_adapter=lambda r: (r, []),
     )
 
 # ----------------------------------------------------------------------

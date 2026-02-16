@@ -49,7 +49,7 @@ from ..cleaner_tools import (
     log_cleaner_complete,
     validate_columns,
     log_row_skip,
-    dispatch_extraction,
+    dispatch_extraction_to_price_decomposition,
     DELTA_PATTERN_STRICT,
     ABS_PRICE_PATTERN,
     LABEL_SPLIT_RE_shop12,
@@ -197,40 +197,14 @@ def _extract_specs_shop12_dispatch(
     source_text_raw: str,
     idx: object = None,
 ) -> PriceDecomposition:
-    """
-    根据 EXTRACTION_MODE 决定提取方式：
-      - "regex": 只用正则
-      - "llm":   只用 LLM + Guardrails
-      - "auto":  正则优先，正则无颜色结果时 LLM + Guardrails 兜底
-
-    返回 PriceDecomposition
-    """
-    (abs_list, delta_list), method = dispatch_extraction(
+    return dispatch_extraction_to_price_decomposition(
         EXTRACTION_MODE,
         regex_fn=lambda: _extract_specs_shop12_regex(remark_for_llm),
         llm_fn=lambda: _extract_specs_shop12_llm(remark_for_llm, idx=idx),
-        has_result_fn=lambda r: bool(r[0] or r[1]),  # r = (abs_list, delta_list)
-    )
-
-    # ---- "全色" delta → 覆盖全部，清空 abs ----
-    delta_specs: List[Tuple[str, int]] = []
-    abs_specs: List[Tuple[str, int]] = list(abs_list)
-
-    for label_raw, delta_val in delta_list:
-        if str(label_raw).strip() in {"全色", "ALL"}:
-            delta_specs = [("全色", int(delta_val))]
-            abs_specs = []
-            break
-        delta_specs.append((label_raw, int(delta_val)))
-    else:
-        delta_specs = [(lb, int(d)) for lb, d in delta_list]
-
-    return PriceDecomposition(
         base_price=base_price,
-        delta_specs=delta_specs,
-        abs_specs=abs_specs,
-        extraction_method=method,
         source_text_raw=source_text_raw,
+        result_adapter=lambda r: (r[1], r[0]),
+        has_result_fn=lambda r: bool(r[0] or r[1]),
     )
 
 # ----------------------------------------------------------------------

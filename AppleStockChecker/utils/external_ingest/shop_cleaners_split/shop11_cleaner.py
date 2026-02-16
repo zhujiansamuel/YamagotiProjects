@@ -56,7 +56,7 @@ from ..cleaner_tools import (
     log_cleaner_complete,
     validate_columns,
     coerce_int,
-    dispatch_extraction,
+    dispatch_extraction_to_price_decomposition,
     lx,
     HAS_LANGEXTRACT,
     log_llm_extraction_error,
@@ -213,39 +213,17 @@ def _extract_specs_shop11_dispatch(
     base_price: int,
     source_text_raw: str,
 ) -> PriceDecomposition:
-    """
-    根据 EXTRACTION_MODE 决定颜色差价提取方式：
-      - "regex": 只用正则
-      - "llm":   只用 LLM + Guardrails
-      - "auto":  正则优先，正则无颜色結果时 LLM + Guardrails 兜底
-
-    返回 PriceDecomposition（base_price, delta_specs, extraction_method 等）。
-    """
-    mode = EXTRACTION_MODE
-
-    def _build_decomp(
-        delta_specs: List[Tuple[str, int]],
-        extraction_method: str,
-    ) -> PriceDecomposition:
-        return PriceDecomposition(
-            base_price=base_price,
-            delta_specs=delta_specs,
-            abs_specs=[],
-            extraction_method=extraction_method,
-            source_text_raw=source_text_raw,
-        )
-
-    def _regex_fn():
-        return _extract_specs_shop11_regex(caution_txt)
-
-    def _llm_fn():
-        color_deltas = _extract_specs_shop11_llm(
-            caution_txt, available_colors, color_map,
-        )
-        return [(cn, dv) for cn, dv in color_deltas.items()]
-
-    delta_specs, method = dispatch_extraction(mode, _regex_fn, _llm_fn)
-    return _build_decomp(delta_specs, method)
+    return dispatch_extraction_to_price_decomposition(
+        EXTRACTION_MODE,
+        regex_fn=lambda: _extract_specs_shop11_regex(caution_txt),
+        llm_fn=lambda: [
+            (cn, dv) for cn, dv in
+            _extract_specs_shop11_llm(caution_txt, available_colors, color_map).items()
+        ],
+        base_price=base_price,
+        source_text_raw=source_text_raw,
+        result_adapter=lambda r: (r, []),
+    )
 
 # ----------------------------------------------------------------------
 # Step 8: 清洗主函数

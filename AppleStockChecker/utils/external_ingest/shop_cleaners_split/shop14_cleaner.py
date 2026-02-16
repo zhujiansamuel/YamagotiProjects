@@ -44,7 +44,8 @@ from ..cleaner_tools import (
     log_cleaner_start,
     log_cleaner_complete,
     coerce_amount_yen,
-    dispatch_extraction,
+    dispatch_extraction_to_price_decomposition,
+    _dispatch_extraction,
     lx,
     HAS_LANGEXTRACT,
     log_llm_extraction_error,
@@ -318,7 +319,7 @@ def _extract_specs_shop14_parse(
     返回: (parsed_dict, extraction_method)
     parsed_dict = {"all_delta": ..., "abs": [...], "delta": [...]}
     """
-    return dispatch_extraction(
+    return _dispatch_extraction(
         mode,
         regex_fn=lambda: _extract_specs_shop14_regex(text),
         llm_fn=lambda: _extract_specs_shop14_llm(text),
@@ -335,50 +336,15 @@ def _extract_specs_shop14_dispatch(
     base_price: int,
     source_text_raw: str,
 ) -> PriceDecomposition:
-    """
-    多 fragment 聚合 + PriceDecomposition 構築。
-
-    frags の各値を _extract_specs_shop14_parse() で解析し結果を集約。
-    全 fragment が空の場合は combined テキストで再試行。
-    """
-    agg_all_delta: Optional[int] = None
-    agg_abs: List[Tuple[str, int]] = []
-    agg_delta: List[Tuple[str, int]] = []
-    extraction_method = "none"
-
-    for _col, frag in frags.items():
-        if not frag:
-            continue
-        parsed, method = _extract_specs_shop14_parse(frag)
-        if parsed.get("all_delta") is not None:
-            agg_all_delta = int(parsed["all_delta"])
-        agg_abs.extend(parsed.get("abs") or [])
-        agg_delta.extend(parsed.get("delta") or [])
-        extraction_method = method
-
-    # 兜底：逐列都没抽到，合并串再跑一次
-    if combined and (agg_all_delta is None) and (not agg_abs) and (not agg_delta):
-        parsed2, method2 = _extract_specs_shop14_parse(combined)
-        if parsed2.get("all_delta") is not None:
-            agg_all_delta = int(parsed2["all_delta"])
-        agg_abs.extend(parsed2.get("abs") or [])
-        agg_delta.extend(parsed2.get("delta") or [])
-        extraction_method = method2
-
-    # ---- 全色预处理 ----
-    delta_specs: List[Tuple[str, int]] = list(agg_delta)
-    abs_specs: List[Tuple[str, int]] = list(agg_abs)
-
-    if agg_all_delta is not None:
-        delta_specs = [("全色", agg_all_delta)]
-        abs_specs = []
-
-    return PriceDecomposition(
+    return dispatch_extraction_to_price_decomposition(
         base_price=base_price,
-        delta_specs=delta_specs,
-        abs_specs=abs_specs,
-        extraction_method=extraction_method,
         source_text_raw=source_text_raw,
+        frags=frags,
+        combined=combined,
+        parse_fn=lambda t: _extract_specs_shop14_parse(t),
+        all_delta_key="all_delta",
+        abs_key="abs",
+        delta_key="delta",
     )
 
 

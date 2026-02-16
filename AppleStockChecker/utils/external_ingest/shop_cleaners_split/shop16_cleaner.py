@@ -48,7 +48,7 @@ from ..cleaner_tools import (
     log_cleaner_start,
     log_cleaner_complete,
     validate_columns,
-    dispatch_extraction,
+    dispatch_extraction_to_price_decomposition,
 )
 
 # 初始化 logger
@@ -295,36 +295,15 @@ def _extract_specs_shop16_llm(
 def _extract_specs_shop16_dispatch(
     price_text: str, idx: object = None, *, source_text_raw: str,
 ) -> PriceDecomposition:
-    """
-    根据 EXTRACTION_MODE 决定提取方式：
-      - "regex": 只用正则
-      - "llm":   只用 LLM + Guardrail A/B/C
-      - "auto":  正则优先，正则无颜色结果时 LLM + Guardrail 兜底
-
-    返回 PriceDecomposition
-    """
-    (bp, deltas, absps), method = dispatch_extraction(
+    return dispatch_extraction_to_price_decomposition(
         EXTRACTION_MODE,
         regex_fn=lambda: _extract_specs_shop16_regex(price_text),
         llm_fn=lambda: _extract_specs_shop16_llm(price_text, idx=idx),
-        has_result_fn=lambda r: bool(r[1] or r[2]),  # r = (bp, deltas, absps)
-    )
-    # auto 模式下 LLM 的 base_price 为 None 时，回退到正则的 base_price
-    if method == "llm" and bp is None:
-        bp_re = _extract_specs_shop16_regex(price_text)[0]
-        if bp_re is not None:
-            bp = bp_re
-
-    # base_price=None 时不能使用 delta（base+delta 无法计算）
-    if bp is None:
-        deltas = []
-
-    return PriceDecomposition(
-        base_price=bp,
-        delta_specs=deltas,
-        abs_specs=absps,
-        extraction_method=method,
+        base_price=None,
         source_text_raw=source_text_raw,
+        result_adapter=lambda r: (r[0], r[1], r[2]),
+        has_result_fn=lambda r: bool(r[1] or r[2]),
+        extract_base_from_result=lambda r: r[0],
     )
 
 # ----------------------------------------------------------------------

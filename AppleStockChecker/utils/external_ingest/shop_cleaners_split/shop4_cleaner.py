@@ -48,7 +48,7 @@ from ..cleaner_tools import (
     log_cleaner_start,
     log_cleaner_complete,
     validate_columns,
-    dispatch_extraction,
+    dispatch_extraction_to_price_decomposition,
     LABEL_SPLIT_RE_shop4 as LABEL_SPLIT_RE,
     EXTRACTION_MODE,
 )
@@ -295,27 +295,14 @@ def _extract_specs_shop4_dispatch(
     source_text_raw: str,
     row_index: object = None,
 ) -> PriceDecomposition:
-    """
-    根据 EXTRACTION_MODE 决定提取方式：
-      - "regex": 只用正则
-      - "llm":   只用 LLM + Guardrails
-      - "auto":  正则优先，正则无颜色结果时 LLM + Guardrails 兜底
-
-    返回 PriceDecomposition
-    """
-    (_, ds, _), method = dispatch_extraction(
+    return dispatch_extraction_to_price_decomposition(
         EXTRACTION_MODE,
         regex_fn=lambda: _extract_specs_shop4_regex_block(df, start_idx),
         llm_fn=lambda: _extract_specs_shop4_llm(df, start_idx, row_index=row_index),
-        has_result_fn=lambda r: bool(r[0]),  # r = (adjustments, delta_specs, label_map)
-    )
-
-    return PriceDecomposition(
-        delta_specs=list(ds),
-        abs_specs=[],
-        extraction_method=method,
         base_price=base_price,
         source_text_raw=source_text_raw,
+        result_adapter=lambda r: (r[1], []),
+        has_result_fn=lambda r: bool(r[0]),
     )
 
 # ----------------------------------------------------------------------

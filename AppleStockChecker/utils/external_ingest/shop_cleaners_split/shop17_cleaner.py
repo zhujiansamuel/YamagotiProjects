@@ -20,7 +20,7 @@ from ..cleaner_tools import (
     log_cleaner_start,
     log_cleaner_complete,
     validate_columns,
-    dispatch_extraction,
+    dispatch_extraction_to_price_decomposition,
     lx,
     HAS_LANGEXTRACT,
     log_llm_extraction_error,
@@ -232,30 +232,23 @@ def _extract_specs_shop17_dispatch(
     cleaner_name: Optional[str] = None,
     row_context: Optional[Dict] = None,
 ) -> PriceDecomposition:
-    """
-    根据 EXTRACTION_MODE 决定提取方式：
-    - "regex": 只用正则
-    - "llm":   只用 LLM
-    - "auto":  正则优先，正则无結果時 LLM 兜底
-
-    返回 PriceDecomposition
-    """
-    deltas, method = dispatch_extraction(
+    decomp = dispatch_extraction_to_price_decomposition(
         EXTRACTION_MODE,
         regex_fn=lambda: _extract_specs_shop17_regex(text),
         llm_fn=lambda: _extract_specs_shop17_llm(text, shop_name, cleaner_name, row_context),
-    )
-
-    if not deltas:
-        method = "none"
-
-    return PriceDecomposition(
         base_price=base_price,
-        delta_specs=deltas,
-        abs_specs=[],
-        extraction_method=method,
         source_text_raw=source_text_raw,
+        result_adapter=lambda r: (r, []),
     )
+    if not decomp.delta_specs:
+        decomp = PriceDecomposition(
+            base_price=decomp.base_price,
+            delta_specs=[],
+            abs_specs=[],
+            extraction_method="none",
+            source_text_raw=decomp.source_text_raw,
+        )
+    return decomp
 # ----------------------------------------------------------------------
 # 清洗主函数
 # ----------------------------------------------------------------------

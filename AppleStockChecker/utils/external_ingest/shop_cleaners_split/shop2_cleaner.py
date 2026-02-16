@@ -60,7 +60,7 @@ from ..cleaner_tools import (
     log_llm_extraction_error,
     validate_columns,
     coerce_int,
-    dispatch_extraction,
+    dispatch_extraction_to_price_decomposition,
     apply_llm_guardrails,
     SIGN_MINUS_CHARS,
     SIGN_PLUS_CHARS,
@@ -236,26 +236,13 @@ def _extract_specs_shop2_dispatch(
     source_text_raw: str,
     row_index: object = None,
 ) -> PriceDecomposition:
-    """
-    根据 EXTRACTION_MODE 决定提取方式：
-      - "regex": 只用正则
-      - "llm":   只用 LLM + Guardrails
-      - "auto":  正则优先，正则无结果时 LLM + Guardrails 兜底
-
-    返回 PriceDecomposition
-    """
-    rules, method = dispatch_extraction(
+    return dispatch_extraction_to_price_decomposition(
         EXTRACTION_MODE,
         regex_fn=lambda: _extract_specs_shop2_regex(val),
         llm_fn=lambda: _extract_specs_shop2_llm(val, row_index=row_index),
-    )
-
-    return PriceDecomposition(
         base_price=base_price,
-        delta_specs=list(rules.items()),
-        abs_specs=[],
-        extraction_method=method,
         source_text_raw=source_text_raw,
+        result_adapter=lambda r: (list(r.items()), []),
     )
 
 # ----------------------------------------------------------------------
