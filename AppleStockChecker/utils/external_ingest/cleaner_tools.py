@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import logging
 import os
 import time
@@ -881,6 +881,370 @@ def dispatch_extraction(
         return result, "regex"
 
     return llm_fn(), "llm"
+
+
+# ======================================================================
+# 公共提取模式调度 → PriceDecomposition（_extract_specs_shop*_dispatch 公共部分）
+# ======================================================================
+# 说明：各 shop 的 _extract_specs_shop*_dispatch 组函数存在可提取的公共模式：
+#   - dispatch_extraction 三模式（regex/llm/auto）调用
+#   - 原始结果 → (delta_specs, abs_specs) 的适配
+#   - "全色"/"ALL" 归一化（delta 全色覆盖时清空 abs，shop9/12/14 共用）
+#   - shop4: 仅 delta_specs（取 r[1]），abs 恒空
+#   - shop9: map 格式 + regex 后 abs overrides + base_price=None→0
+#   - shop14: 多 fragment 聚合 + all_delta 全色
+#   - shop15/16: base_price 从结果提取 + LLM 返回 None 时 regex 回退
+# 本模块提供公共函数以备逐步迁移，当前不修改各 shop 清洗器实现。
+
+
+# ----------------------------------------------------------------------
+# shop9: map 格式 → list 格式 + "ALL" 归一化
+# ----------------------------------------------------------------------
+
+def convert_all_color_maps_to_specs(
+    delta_map: Dict[str, int],
+    abs_map: Dict[str, int],
+) -> Tuple[List[Tuple[str, int]], List[Tuple[str, int]]]:
+    """
+    将 map 格式（含 "ALL" 键）转为 (delta_specs, abs_specs) list 格式。
+
+    合并自 shop9 的 abs_map / delta_map 处理逻辑。
+    "ALL" 优先于 per-color 条目，优先级：delta_map["ALL"] > abs_map["ALL"]。
+
+    参数:
+        delta_map: { color_norm | "ALL" : delta_yen }
+        abs_map: { color_norm | "ALL" : abs_yen }
+
+    返回:
+        (delta_specs, abs_specs)
+    """
+    if "ALL" in delta_map:
+        return [("全色", int(delta_map["ALL"]))], []
+    if "ALL" in abs_map:
+        return [], [("全色", int(abs_map["ALL"]))]
+
+    delta_specs = [(k, int(v)) for k, v in delta_map.items()]
+    abs_specs = [(k, int(v)) for k, v in abs_map.items()]
+    return delta_specs, abs_specs
+
+
+def merge_abs_overrides(
+    abs_specs: List[Tuple[str, int]],
+    overrides: Dict[str, int],
+) -> List[Tuple[str, int]]:
+    """
+    将 overrides 合并进 abs_specs，同 label 时 override 覆盖原值。
+
+    合并自 shop9 的 regex 路径后 _direct_abs_overrides_for_row 注入逻辑。
+
+    参数:
+        abs_specs: 原始 [(label, abs_yen), ...]
+        overrides: { color_norm : abs_yen } 覆盖表
+
+    返回:
+        合并后的 abs_specs（override 的 label 在后，resolve_color_prices 中 per-color 会覆盖全色）
+    """
+    if not overrides:
+        return list(abs_specs)
+    seen = {str(lb).strip() for lb, _ in abs_specs}
+    out = list(abs_specs)
+    for col_norm, val in overrides.items():
+        if col_norm and col_norm not in seen:
+            out.append((col_norm, int(val)))
+            seen.add(col_norm)
+    return out
+
+
+# ----------------------------------------------------------------------
+# shop14: 多 fragment 聚合
+# ----------------------------------------------------------------------
+
+def aggregate_fragment_extraction(
+    frags: Dict[str, str],
+    combined: str,
+    parse_fn: Callable[[str], Tuple[Dict[str, Any], str]],
+    *,
+    all_delta_key: str = "all_delta",
+    abs_key: str = "abs",
+    delta_key: str = "delta",
+) -> Tuple[Optional[int], List[Tuple[str, int]], List[Tuple[str, int]], str]:
+    """
+    多 fragment 聚合提取。合并自 shop14 的 _extract_specs_shop14_dispatch 聚合逻辑。
+
+    对 frags 各值依次调用 parse_fn(frag) -> (parsed_dict, method)，
+    将 all_delta / abs / delta 聚合。若全部为空则对 combined 再跑一次 parse_fn。
+
+    参数:
+        frags: { logical_col : frag_text }
+        combined: 合并后的兜底文本
+        parse_fn: frag_text -> (parsed_dict, extraction_method)
+        all_delta_key / abs_key / delta_key: parsed_dict 中的键名
+
+    返回:
+        (agg_all_delta, agg_abs, agg_delta, extraction_method)
+    """
+    agg_all_delta: Optional[int] = None
+    agg_abs: List[Tuple[str, int]] = []
+    agg_delta: List[Tuple[str, int]] = []
+    method = "none"
+
+    for _col, frag in frags.items():
+        if not frag:
+            continue
+        parsed, m = parse_fn(frag)
+        if parsed.get(all_delta_key) is not None:
+            agg_all_delta = int(parsed[all_delta_key])
+        agg_abs.extend(parsed.get(abs_key) or [])
+        agg_delta.extend(parsed.get(delta_key) or [])
+        method = m
+
+    if combined and agg_all_delta is None and not agg_abs and not agg_delta:
+        parsed2, method2 = parse_fn(combined)
+        if parsed2.get(all_delta_key) is not None:
+            agg_all_delta = int(parsed2[all_delta_key])
+        agg_abs.extend(parsed2.get(abs_key) or [])
+        agg_delta.extend(parsed2.get(delta_key) or [])
+        method = method2
+
+    return agg_all_delta, agg_abs, agg_delta, method
+
+
+def build_decomp_from_aggregated(
+    agg_all_delta: Optional[int],
+    agg_abs: List[Tuple[str, int]],
+    agg_delta: List[Tuple[str, int]],
+    *,
+    base_price: int,
+    source_text_raw: str,
+    extraction_method: str = "none",
+) -> PriceDecomposition:
+    """
+    从聚合结果构建 PriceDecomposition。合并自 shop14 的全色预处理逻辑。
+
+    参数:
+        agg_all_delta: 全色 delta（若有则覆盖 per-color）
+        agg_abs / agg_delta: 聚合后的 list
+        base_price / source_text_raw: 传入的基准价和原始文本
+        extraction_method: 来自 aggregate_fragment_extraction 的 method
+
+    返回:
+        PriceDecomposition
+    """
+    delta_specs = list(agg_delta)
+    abs_specs = list(agg_abs)
+    if agg_all_delta is not None:
+        delta_specs = [("全色", agg_all_delta)]
+        abs_specs = []
+
+    return PriceDecomposition(
+        base_price=base_price,
+        delta_specs=[(lb, int(d)) for lb, d in delta_specs],
+        abs_specs=[(lb, int(a)) for lb, a in abs_specs],
+        extraction_method=extraction_method,
+        source_text_raw=source_text_raw,
+    )
+
+
+# ----------------------------------------------------------------------
+# shop15/16: base_price 从结果提取 + LLM 返回 None 时 regex 回退
+# ----------------------------------------------------------------------
+
+def apply_base_price_fallback_when_llm_none(
+    raw_result: Any,
+    method: str,
+    regex_fn: Callable[[], Any],
+    extract_base_fn: Callable[[Any], Optional[int]],
+) -> Optional[int]:
+    """
+    当 method 为 "llm" 且 extract_base_fn(raw_result) 为 None 时，
+    调用 regex_fn() 并用 extract_base_fn 提取 regex 的 base_price 作为回退。
+
+    合并自 shop15、shop16 的 if method == "llm" and bp is None: bp = regex()[0]。
+
+    参数:
+        raw_result: dispatch_extraction 的原始结果
+        method: "regex" | "llm"
+        regex_fn: 无参可调用，返回 regex 原始结果
+        extract_base_fn: raw -> Optional[int]，从原始结果提取 base_price
+
+    返回:
+        最终 base_price（含回退后的值）
+    """
+    base = extract_base_fn(raw_result)
+    if method != "llm" or base is not None:
+        return base
+    regex_result = regex_fn()
+    return extract_base_fn(regex_result)
+
+
+# ----------------------------------------------------------------------
+# 基础：list 格式全色归一化
+# ----------------------------------------------------------------------
+
+def normalize_all_color_in_specs(
+    delta_specs: List[Tuple[str, int]],
+    abs_specs: List[Tuple[str, int]],
+) -> Tuple[List[Tuple[str, int]], List[Tuple[str, int]]]:
+    """
+    「全色」/「ALL」归一化：当 delta 或 abs 中出现全色标签时，覆盖为单一全色条目并清空另一方。
+
+    合并自 shop9、shop12、shop14 的重复逻辑。
+    优先级：delta 全色 > abs 全色（与 shop9 的 if "ALL" in delta_map 优先一致）。
+
+    参数:
+        delta_specs: [(label, delta_yen), ...]
+        abs_specs: [(label, abs_yen), ...]
+
+    返回:
+        (final_delta_specs, final_abs_specs)
+    """
+    _all_labels = frozenset({"全色", "ALL"})
+
+    for label_raw, delta_val in delta_specs:
+        if str(label_raw).strip() in _all_labels:
+            return [("全色", int(delta_val))], []
+
+    for label_raw, abs_val in abs_specs:
+        if str(label_raw).strip() in _all_labels:
+            return [], [("全色", int(abs_val))]
+
+    return list(delta_specs), list(abs_specs)
+
+
+def dispatch_extraction_to_price_decomposition(
+    mode: str,
+    regex_fn: Callable[[], Any],
+    llm_fn: Callable[[], Any],
+    *,
+    base_price: Optional[int],
+    source_text_raw: str,
+    result_adapter: Callable[[Any], Union[
+        Tuple[List[Tuple[str, int]], List[Tuple[str, int]]],
+        Tuple[Optional[int], List[Tuple[str, int]], List[Tuple[str, int]]],
+    ]],
+    has_result_fn: Optional[Callable[[Any], bool]] = None,
+    apply_all_color_override: bool = True,
+    regex_post_hook: Optional[Callable[[], Dict[str, int]]] = None,
+    result_is_maps: bool = False,
+    base_price_when_none: Optional[int] = None,
+    extract_base_from_result: Optional[Callable[[Any], Optional[int]]] = None,
+) -> PriceDecomposition:
+    """
+    从 regex/llm 提取结果构建 PriceDecomposition 的公共调度函数。
+
+    合并各 shop 的 _extract_specs_shop*_dispatch 中重复模式，含 shop4/9/14/15/16 额外逻辑。
+    当前不修改既有清洗器，仅提供公共实现以备检讨。
+
+    流程:
+      1. 调用 dispatch_extraction(mode, regex_fn, llm_fn, has_result_fn)
+      2. 使用 result_adapter 将原始结果转为 (delta_specs, abs_specs)
+      3. 可选执行 normalize_all_color_in_specs（全色覆盖）
+      4. 组装并返回 PriceDecomposition
+
+    参数:
+        mode: "regex" | "llm" | "auto"（通常取 EXTRACTION_MODE）
+        regex_fn: 无参可调用，返回正则提取的原始结果
+        llm_fn: 无参可调用，返回 LLM 提取的原始结果
+        base_price: 基准价（日元），可为 None（仅 abs 路径时）
+        source_text_raw: 提取来源的原始文本
+        result_adapter: raw_result -> (delta_specs, abs_specs)
+        has_result_fn: 判断 regex 结果是否“有内容”，用于 auto 模式
+        apply_all_color_override: 是否执行全色归一化（默认 True）
+
+    返回:
+        PriceDecomposition
+
+    示例（shop12 风格）:
+        def _adapter(r):
+            abs_list, delta_list = r
+            return delta_list, abs_list
+
+        decomp = dispatch_extraction_to_price_decomposition(
+            EXTRACTION_MODE,
+            regex_fn=lambda: _extract_specs_shop12_regex(remark_for_llm),
+            llm_fn=lambda: _extract_specs_shop12_llm(remark_for_llm, idx=idx),
+            base_price=base_price,
+            source_text_raw=source_text_raw,
+            result_adapter=_adapter,
+            has_result_fn=lambda r: bool(r[0] or r[1]),
+        )
+    """
+    raw_result, method = dispatch_extraction(
+        mode,
+        regex_fn=regex_fn,
+        llm_fn=llm_fn,
+        has_result_fn=has_result_fn,
+    )
+
+    adapted = result_adapter(raw_result)
+    if len(adapted) == 3:
+        base_from_result, delta_specs, abs_specs = adapted
+        if base_from_result is not None:
+            base_price = base_from_result
+    else:
+        delta_specs, abs_specs = adapted
+
+    if result_is_maps and isinstance(raw_result, (tuple, list)) and len(raw_result) >= 2:
+        abs_map, delta_map = raw_result[0], raw_result[1]
+        delta_specs, abs_specs = convert_all_color_maps_to_specs(delta_map, abs_map)
+
+    if extract_base_from_result is not None:
+        base_price = apply_base_price_fallback_when_llm_none(
+            raw_result, method, regex_fn, extract_base_from_result,
+        )
+
+    if method == "regex" and regex_post_hook is not None:
+        overrides = regex_post_hook()
+        if overrides:
+            abs_specs = merge_abs_overrides(abs_specs, overrides)
+
+    if apply_all_color_override:
+        delta_specs, abs_specs = normalize_all_color_in_specs(delta_specs, abs_specs)
+
+    final_base = base_price
+    if final_base is None and base_price_when_none is not None:
+        final_base = base_price_when_none
+    if final_base is None and delta_specs:
+        delta_specs = []
+
+    return PriceDecomposition(
+        base_price=final_base,
+        delta_specs=[(lb, int(d)) for lb, d in delta_specs],
+        abs_specs=[(lb, int(a)) for lb, a in abs_specs],
+        extraction_method=method,
+        source_text_raw=source_text_raw,
+    )
+
+
+def dispatch_extraction_to_price_decomposition_from_fragments(
+    frags: Dict[str, str],
+    combined: str,
+    parse_fn: Callable[[str], Tuple[Dict[str, Any], str]],
+    *,
+    base_price: int,
+    source_text_raw: str,
+    all_delta_key: str = "all_delta",
+    abs_key: str = "abs",
+    delta_key: str = "delta",
+) -> PriceDecomposition:
+    """
+    shop14 风格：多 fragment 聚合 + PriceDecomposition 一站式构建。
+
+    合并 aggregate_fragment_extraction + build_decomp_from_aggregated。
+    parse_fn(frag_text) -> (parsed_dict, method)，parsed_dict 含 all_delta/abs/delta 键。
+    """
+    agg_all_delta, agg_abs, agg_delta, method = aggregate_fragment_extraction(
+        frags, combined, parse_fn,
+        all_delta_key=all_delta_key,
+        abs_key=abs_key,
+        delta_key=delta_key,
+    )
+    return build_decomp_from_aggregated(
+        agg_all_delta, agg_abs, agg_delta,
+        base_price=base_price,
+        source_text_raw=source_text_raw,
+        extraction_method=method,
+    )
 
 
 # ======================================================================
