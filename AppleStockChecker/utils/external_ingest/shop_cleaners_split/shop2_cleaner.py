@@ -20,7 +20,7 @@ shop2 清洗器 — 海峡通信
     │   │   └─ _extract_specs_shop2_regex()   ← Step 5: 正则提取规则
     │   │
     │   └─ llm 路径:
-    │       ├─ _extract_specs_shop2_llm_core()     ← Step 6a: LLM 核心提取
+    │       ├─ _extract_specs_shop2_llm_impl()     ← Step 6a: LLM 核心提取 (shop_cleaners_split_llm/llm_shop2.py)
     │       ├─ Guardrail A: label 原文校验         ← Step 6b: 防幻觉过滤
     │       ├─ Guardrail B: amount 原文校验        ← Step 6b: 防幻觉过滤
     │       └─ _extract_specs_shop2_regex()   ← Step 6c: 正则补全
@@ -222,9 +222,6 @@ from ..shop_cleaners_split_llm.llm_shop2 import (
 setup_shop2_llm_deps(_parse_rule_token_simple, _extract_specs_shop2_regex)
 
 
-def _extract_specs_shop2_llm(val, row_index: object = None) -> dict:
-    return _extract_specs_shop2_llm_impl(val, row_index=row_index)
-
 # ----------------------------------------------------------------------
 # Step 10: 清洗主函数
 # ----------------------------------------------------------------------
@@ -333,7 +330,7 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
         decomp = dispatch_extraction_to_price_decomposition(
             EXTRACTION_MODE,
             regex_fn=lambda: _extract_specs_shop2_regex(raw_rule),
-            llm_fn=lambda: _extract_specs_shop2_llm(raw_rule, row_index=pos),
+            llm_fn=lambda: _extract_specs_shop2_llm_impl(raw_rule, row_index=pos),
             base_price=base_price,
             source_text_raw=raw_rule_s,
             result_adapter=lambda r: (list(r.items()), []),

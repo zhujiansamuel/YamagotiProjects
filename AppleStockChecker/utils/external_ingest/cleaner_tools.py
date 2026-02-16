@@ -1067,8 +1067,8 @@ def _normalize_all_color_in_specs(
 def dispatch_extraction_to_price_decomposition(
     mode: Optional[str] = None,
     *,
-    base_price: Optional[int],
-    source_text_raw: str,
+    base_price: Optional[int] = None,
+    source_text_raw: str = "",
     regex_fn: Optional[Callable[[], Any]] = None,
     llm_fn: Optional[Callable[[], Any]] = None,
     result_adapter: Optional[Callable[[Any], Union[
@@ -1087,12 +1087,15 @@ def dispatch_extraction_to_price_decomposition(
     result_is_maps: bool = False,
     base_price_when_none: Optional[int] = None,
     extract_base_from_result: Optional[Callable[[Any], Optional[int]]] = None,
-) -> PriceDecomposition:
+    as_parse_fn: bool = False,
+) -> Union[PriceDecomposition, Tuple[Dict[str, Any], str]]:
     """
     提取调度 → PriceDecomposition 的统一入口，封装所有模式与后处理逻辑。
 
-    两种互斥模式：1) 单次提取 mode+regex_fn+llm_fn+result_adapter
-    2) Fragment 聚合 frags+combined+parse_fn
+    三种互斥模式：
+    1) 单次提取 mode+regex_fn+llm_fn+result_adapter → PriceDecomposition
+    2) Fragment 聚合 frags+combined+parse_fn → PriceDecomposition
+    3) 单 fragment parse（as_parse_fn=True）mode+regex_fn+llm_fn → (parsed_dict, method)
 
     流程:
       1. 调用 dispatch_extraction(mode, regex_fn, llm_fn, has_result_fn)
@@ -1127,7 +1130,27 @@ def dispatch_extraction_to_price_decomposition(
             result_adapter=_adapter,
             has_result_fn=lambda r: bool(r[0] or r[1]),
         )
+
+    示例（shop14 单 fragment parse）:
+        parse_fn = lambda t: dispatch_extraction_to_price_decomposition(
+            EXTRACTION_MODE,
+            regex_fn=lambda: _extract_specs_shop14_regex(t),
+            llm_fn=lambda: _extract_specs_shop14_llm_impl(t, ...),
+            has_result_fn=lambda r: r.get("all_delta") is not None or r.get("abs") or r.get("delta"),
+            as_parse_fn=True,
+        )
     """
+    if as_parse_fn:
+        if mode is None or regex_fn is None or llm_fn is None:
+            raise ValueError("as_parse_fn 模式需 mode/regex_fn/llm_fn")
+        raw_result, method = _dispatch_extraction(
+            mode,
+            regex_fn=regex_fn,
+            llm_fn=llm_fn,
+            has_result_fn=has_result_fn,
+        )
+        return (raw_result, method)
+
     if frags is not None and combined is not None and parse_fn is not None:
         agg_all_delta, agg_abs, agg_delta, method = _aggregate_fragment_extraction(
             frags, combined, parse_fn,
@@ -1293,7 +1316,7 @@ def apply_llm_guardrails(
     """
     对 {label: amount} 字典批量应用 LLM guardrails，返回过滤后的字典。
 
-    合并自 shop2._extract_specs_shop2_llm 中的过滤循环。
+    合并自 shop2（llm_shop2）中的 LLM 过滤循环。
 
     参数:
         rules: {group_label: delta_yen} 字典

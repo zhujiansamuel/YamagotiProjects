@@ -45,7 +45,6 @@ from ..cleaner_tools import (
     log_cleaner_complete,
     coerce_amount_yen,
     dispatch_extraction_to_price_decomposition,
-    _dispatch_extraction,
     lx,
     HAS_LANGEXTRACT,
     log_llm_extraction_error,
@@ -302,7 +301,7 @@ from ..shop_cleaners_split_llm.llm_shop14 import (
 )
 
 # ---------------------------------------------------------------------------
-# Step 7-C: Dispatch（三模式路由）
+# Step 7-C: Dispatch（三模式路由，经 dispatch_extraction_to_price_decomposition 单 fragment 语义）
 # ---------------------------------------------------------------------------
 
 def _extract_specs_shop14_parse(
@@ -314,7 +313,7 @@ def _extract_specs_shop14_parse(
     返回: (parsed_dict, extraction_method)
     parsed_dict = {"all_delta": ..., "abs": [...], "delta": [...]}
     """
-    return _dispatch_extraction(
+    return dispatch_extraction_to_price_decomposition(
         mode,
         regex_fn=lambda: _extract_specs_shop14_regex(text),
         llm_fn=lambda: _extract_specs_shop14_llm_impl(
@@ -323,6 +322,7 @@ def _extract_specs_shop14_parse(
         has_result_fn=lambda r: (
             r.get("all_delta") is not None or r.get("abs") or r.get("delta")
         ),
+        as_parse_fn=True,
     )
 
 
