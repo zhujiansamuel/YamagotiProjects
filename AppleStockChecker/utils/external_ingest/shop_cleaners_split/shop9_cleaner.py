@@ -10,7 +10,7 @@ shop9 清洗器 — アキモバ
     │
     ├─ _bucket_amount()                      ← Step 2: abs/delta 分類（量級・符号ヒント）
     │
-    ├─ _extract_price_parts_shop9_dispatch()  ← Step 7: モード調度（EXTRACTION_MODE）
+    ├─ _extract_specs_shop9_dispatch()  ← Step 7: モード調度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
     │   │   ├─ _extract_abs_prices_regex()        ← Step 5a: 正則提取絶対価
@@ -18,7 +18,7 @@ shop9 清洗器 — アキモバ
     │   │   └─ _direct_abs_overrides_for_row()    ← Step 5c: テキスト直接覆写
     │   │
     │   └─ llm 路径:
-    │       ├─ _llm_extract_rules_cached()        ← Step 6a: LLM 核心提取
+    │       ├─ _extract_specs_shop9_llm_core()        ← Step 6a: LLM 核心提取
     │       └─ _bucket_amount() guardrail         ← Step 6b: abs/delta 防幻觉過濾
     │
     ├─ _map_to_available_color()             ← Step 3: ラベル→カラーマッチング（cleaner_tools 统一）
@@ -29,29 +29,33 @@ shop9 清洗器 — アキモバ
 import logging
 import os
 import re
-import json
 import time
-import textwrap
-from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
-from ...external_ingest.helpers import to_int_yen, parse_dt_aware
+from ...external_ingest.helpers import parse_dt_aware
 from ..cleaner_tools import (
+    extract_price_yen,
     _parse_capacity_gb,
     _normalize_model_generic,
     _load_iphone17_info_df_from_db,
     _build_color_map,
     _truncate_for_log,
     _norm_strip,
+    _normalize_amount_text,
     normalize_text_basic,
     PriceDecomposition,
     resolve_color_prices,
     _label_matches_color_unified,
     LABEL_SPLIT_RE_shop9,
-    OLLAMA_URL,
-    OLLAMA_MODEL_ID,
     EXTRACTION_MODE,
+    assemble_output_df,
+    log_cleaner_start,
+    log_cleaner_complete,
+    log_row_skip,
+    validate_columns,
+    coerce_signed_int,
+    dispatch_extraction,
 )
 
 # 初始化 logger
@@ -66,8 +70,6 @@ SHOP_NAME = "アキモバ"
 # ----------------------------------------------------------------------
 # 配置
 # ----------------------------------------------------------------------
-
-LLM_TEMPERATURE = float(os.getenv("SHOP9_LLM_TEMPERATURE", "0.0") or "0.0")
 
 ABS_LIKE_MIN = int(os.getenv("SHOP9_ABS_LIKE_MIN", "50000"))  # iPhone17 绝对价量级阈值
 
@@ -93,51 +95,11 @@ def _norm_cls(x: str) -> str:
 # Step 1: 金額解析
 # ----------------------------------------------------------------------
 
-def _coerce_signed_int(x) -> Optional[int]:
-    if x is None:
-        return None
-    if isinstance(x, (int,)) and not isinstance(x, bool):
-        return int(x)
+# _coerce_signed_int → cleaner_tools.coerce_signed_int 统一导入
+_coerce_signed_int = coerce_signed_int
 
-    s = str(x)
-    # 全角数字/符号 -> 半角
-    s = s.translate(str.maketrans("０１２３４５６７８９＋－−，", "0123456789+--,"))
-
-    sign = 1
-    digits = []
-    sign_seen = False
-    started = False
-    for ch in s:
-        if not started and not sign_seen and ch in "+-":
-            sign_seen = True
-            sign = -1 if ch == "-" else 1
-            continue
-        if ch.isdigit():
-            started = True
-            digits.append(ch)
-            continue
-        if started and ch in {",", " "}:
-            # 千分位分隔符忽略
-            continue
-        if started:
-            break
-
-    if not digits:
-        return None
-    try:
-        return sign * int("".join(digits))
-    except Exception:
-        return None
-
-def _norm_amount_to_int(x: str) -> Optional[int]:
-    if not x:
-        return None
-    s = str(x).strip()
-    s = s.translate(str.maketrans("０１２３４５６７８９，", "0123456789,"))
-    s = s.replace(",", "")
-    if not s.isdigit():
-        return None
-    return int(s)
+# _norm_amount_to_int は cleaner_tools._normalize_amount_text に統一
+_norm_amount_to_int = _normalize_amount_text
 
 # ----------------------------------------------------------------------
 # Step 2: abs/delta 分類
@@ -341,7 +303,7 @@ def _direct_abs_overrides_for_row(
 
     return overrides
 
-def _extract_price_parts_shop9_regex(
+def _extract_specs_shop9_regex(
     s_price: str,
     s_color: str,
     color_to_pn: Dict[str, str],
@@ -417,344 +379,85 @@ def _extract_price_parts_shop9_regex(
 # Step 6: LLM 配置 & 核心提取函数
 # ----------------------------------------------------------------------
 
-SHOP9_PRICE_PROMPT_TEMPLATE = textwrap.dedent("""\
-You are parsing Japanese iPhone buyback pricing notes.
+# LLM 相関代码已提取到 shop_cleaners_split_llm/llm_shop9.py
+from ..shop_cleaners_split_llm.llm_shop9 import (
+    setup_shop9_llm_deps,
+    extract_specs_shop9_llm as _extract_specs_shop9_llm,
+)
 
-Goal:
-- Extract explicit color-scoped absolute prices and signed adjustments from the input.
-- Extract ONLY what is explicitly present. Do NOT infer missing prices or colors.
-
-How to interpret the format (VERY IMPORTANT):
-- The detail field (色・詳細等) may contain multiple independent groups separated by '/', '／', newline.
-- In each group, one amount (e.g. 230,500) applies to the color(s) listed immediately before it in that group.
-- Multiple colors in the same group can be separated by ',', '，', '、', or spaces. All those colors share the same amount in that group.
-- Example: "橙,銀230,500/青229,000" must produce TWO extractions:
-  1) colors=["橙","銀"], amount_yen=230500
-  2) colors=["青"], amount_yen=229000
-- Condition words are NOT colors: ignore terms like "未開", "未使用", "中古", "美品", etc.
-- When several colors and numbers appear in one sequence without separators
-  (e.g. "橙193,500青193,500銀195,000"), each color MUST be paired with the closest number immediately following it.
-
-What to output:
-- extraction_class MUST be one of: "abs_price", "delta"
-- attributes.amount_yen MUST be an integer yen value (no commas). For delta, keep the sign (e.g. -2000).
-- attributes.colors MUST be a list of color labels AS THEY APPEAR IN THE INPUT (e.g. "青", "銀", "橙").
-  You may also output "ALL" only when the text explicitly indicates all colors (e.g. "全色").
-- Do NOT drop a price mention just because it equals the base price shown in 買取価格.
-
-Normalization hints (for your reference):
-AVAILABLE_COLORS (system will map your labels to these):
-{available_colors}
-
-COLOR_ALIASES (system will map using these aliases):
-{aliases}
-""")
-
-@lru_cache(maxsize=1)
-def _shop9_lx_examples():
-    """
-    Few-shot 示例：教模型识别
-    - "多个颜色共享一个价格"
-    - "全色 +/-"
-    - "每色 +/-"
-    """
-    import langextract as lx
-
-    return [
-        lx.data.ExampleData(
-            text="買取価格: 195,500円\n色・詳細等: 未開 橙194,500/青,銀195,500",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="abs_price",
-                    extraction_text="橙194,500",
-                    attributes={"colors": ["コズミックオレンジ"], "amount_yen": 194500},
-                ),
-                lx.data.Extraction(
-                    extraction_class="abs_price",
-                    extraction_text="青,銀195,500",
-                    attributes={"colors": ["ディープブルー", "シルバー"], "amount_yen": 195500},
-                ),
-            ],
-        ),
-        lx.data.ExampleData(
-            text="買取価格: 200,000円\n色・詳細等: ブラック -2,000円 / シルバー:+1000",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="delta",
-                    extraction_text="ブラック -2,000円",
-                    attributes={"colors": ["ブラック"], "amount_yen": -2000},
-                ),
-                lx.data.Extraction(
-                    extraction_class="delta",
-                    extraction_text="シルバー:+1000",
-                    attributes={"colors": ["シルバー"], "amount_yen": 1000},
-                ),
-            ],
-        ),
-        lx.data.ExampleData(
-            text="買取価格: 180,000円\n色・詳細等: 全色-500円",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="delta",
-                    extraction_text="全色-500円",
-                    attributes={"colors": ["ALL"], "amount_yen": -500},
-                ),
-            ],
-        ),
-        lx.data.ExampleData(
-            text="買取価格: -\n色・詳細等: ブルー：229,000円 シルバー：230000",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="abs_price",
-                    extraction_text="ブルー：229,000円",
-                    attributes={"colors": ["ブルー"], "amount_yen": 229000},
-                ),
-                lx.data.Extraction(
-                    extraction_class="abs_price",
-                    extraction_text="シルバー：230000",
-                    attributes={"colors": ["シルバー"], "amount_yen": 230000},
-                ),
-            ],
-        ),
-        lx.data.ExampleData(
-            text="買取価格: 230,500円\n色・詳細等: 未開 橙,銀230,500/青229,000",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="abs_price",
-                    extraction_text="橙,銀230,500",
-                    attributes={"colors": ["橙", "銀"], "amount_yen": 230500},
-                ),
-                lx.data.Extraction(
-                    extraction_class="abs_price",
-                    extraction_text="青229,000",
-                    attributes={"colors": ["青"], "amount_yen": 229000},
-                ),
-            ],
-        ),
-    ]
-
-@lru_cache(maxsize=4096)
-def _llm_extract_rules_cached(
-    price_text: str,
-    detail_text: str,
-    avail_colors_key: Tuple[str, ...],
-) -> Tuple[Dict[str, int], Dict[str, int],
-           List[Tuple[str, int]], List[Tuple[str, int]],
-           Dict[str, str], Dict[str, str]]:
-    """
-    返回:
-      abs_map, delta_map, abs_specs, delta_specs,
-      color_abs_label_map, color_delta_label_map
-    """
-    _empty = ({}, {}, [], [], {}, {})
-    try:
-        import langextract as lx
-    except Exception:
-        return _empty
-
-    available_colors = list(avail_colors_key)
-    aliases = _build_color_aliases(available_colors)
-
-    # 输入拼接：让模型同时看到"基准价"和"详情"
-    input_text = f"買取価格: {price_text}\n色・詳細等: {detail_text}"
-
-    prompt = SHOP9_PRICE_PROMPT_TEMPLATE.format(
-        available_colors=json.dumps(available_colors, ensure_ascii=False),
-        aliases=json.dumps(aliases, ensure_ascii=False),
-    )
-
-    kw = dict(
-        text_or_documents=input_text,
-        prompt_description=prompt,
-        examples=_shop9_lx_examples(),
-        model_id=OLLAMA_MODEL_ID,
-        model_url=OLLAMA_URL,
-        fence_output=False,
-        use_schema_constraints=False,
-    )
-
-    # 兼容不同版本参数签名：temperature 可能不被支持
-    try:
-        result = lx.extract(**kw, temperature=LLM_TEMPERATURE)
-    except TypeError:
-        result = lx.extract(**kw)
-    except Exception:
-        return _empty
-
-    abs_map: Dict[str, int] = {}
-    delta_map: Dict[str, int] = {}
-    abs_specs: List[Tuple[str, int]] = []
-    delta_specs: List[Tuple[str, int]] = []
-    color_abs_label_map: Dict[str, str] = {}
-    color_delta_label_map: Dict[str, str] = {}
-
-    extractions = getattr(result, "extractions", None) or []
-    avail_set = set(available_colors)
-
-    for ex in extractions:
-        cls_raw = str(getattr(ex, "extraction_class", "") or "")
-        cls_norm = _norm_cls(cls_raw)
-        attrs = getattr(ex, "attributes", None) or {}
-        ex_text = str(getattr(ex, "extraction_text", "") or "")
-
-        # 取 amount
-        amt = attrs.get("amount_yen")
-        amt_i = _coerce_signed_int(amt)
-        if amt_i is None:
-            amt_i = _coerce_signed_int(ex_text)
-        if amt_i is None:
-            continue
-
-        # colors
-        colors = attrs.get("colors") or attrs.get("color") or []
-        if isinstance(colors, str):
-            colors = [colors]
-        if not isinstance(colors, list):
-            colors = list(colors) if colors else []
-
-        # Guardrail: _bucket_amount only applies to LLM path
-        bucket = _bucket_amount(cls_norm, ex_text, int(amt_i))
-
-        for c_raw in colors:
-            mapped = _map_to_available_color(str(c_raw), avail_set)
-            if not mapped:
-                continue
-            if bucket == "abs":
-                abs_map[mapped] = int(amt_i)
-                abs_specs.append((str(c_raw), int(amt_i)))
-                if mapped != "ALL":
-                    color_abs_label_map[mapped] = str(c_raw)
-            else:
-                delta_map[mapped] = int(amt_i)
-                delta_specs.append((str(c_raw), int(amt_i)))
-                if mapped != "ALL":
-                    color_delta_label_map[mapped] = str(c_raw)
-
-    return abs_map, delta_map, abs_specs, delta_specs, color_abs_label_map, color_delta_label_map
-
-def _extract_price_parts_shop9_llm_with_guardrails(
-    s_price: str,
-    s_color: str,
-    color_to_pn: Dict[str, str],
-    row_index: object = None,
-) -> Tuple[Dict[str, int], Dict[str, int],
-           List[Tuple[str, int]], List[Tuple[str, int]],
-           Dict[str, str], Dict[str, str]]:
-    """
-    LLM 提取 + Guardrail (_bucket_amount)（仅 LLM 路径使用）。
-    返回: abs_map, delta_map, abs_specs, delta_specs,
-          color_abs_label_map, color_delta_label_map
-    """
-    avail_colors_key = tuple(color_to_pn.keys())
-    abs_map: Dict[str, int] = {}
-    delta_map: Dict[str, int] = {}
-    abs_specs: List[Tuple[str, int]] = []
-    delta_specs: List[Tuple[str, int]] = []
-    color_abs_label_map: Dict[str, str] = {}
-    color_delta_label_map: Dict[str, str] = {}
-
-    try:
-        (abs_map, delta_map,
-         abs_specs, delta_specs,
-         color_abs_label_map, color_delta_label_map) = _llm_extract_rules_cached(
-            s_price, s_color, avail_colors_key)
-    except Exception as e:
-        logger.warning(
-            "LangExtract extraction failed",
-            extra={
-                "event_type": "llm_extraction_error",
-                "shop_name": SHOP_NAME,
-                "cleaner_name": CLEANER_NAME,
-                "error": str(e),
-                "error_type": type(e).__name__,
-                "model_id": OLLAMA_MODEL_ID,
-                "model_url": OLLAMA_URL,
-                "row_index": row_index,
-                "text_length": len(s_color),
-                "text_preview": _truncate_for_log(s_color, 100),
-            }
-        )
-
-    # 关键新增：用原始 raw_color 文本对 abs_map 做"颜色级别"的覆盖修正
-    overrides = _direct_abs_overrides_for_row(
-        raw_color_text=s_color,
-        color_to_pn=color_to_pn,
-    )
-    if overrides:
-        for col_norm, v in overrides.items():
-            abs_map[col_norm] = int(v)
-            color_abs_label_map[col_norm] = col_norm
-            abs_specs.append((col_norm, int(v)))
-
-    return abs_map, delta_map, abs_specs, delta_specs, color_abs_label_map, color_delta_label_map
+# 注入非 LLM 依赖到 LLM 模块
+setup_shop9_llm_deps(
+    build_color_aliases_fn=_build_color_aliases,
+    map_to_available_color_fn=_map_to_available_color,
+    bucket_amount_fn=_bucket_amount,
+    norm_cls_fn=_norm_cls,
+    direct_abs_overrides_fn=_direct_abs_overrides_for_row,
+)
 
 # ----------------------------------------------------------------------
 # Step 7: 提取モード調度
 # ----------------------------------------------------------------------
 
-def _extract_price_parts_shop9_dispatch(
+def _extract_specs_shop9_dispatch(
     s_price: str,
     s_color: str,
     color_to_pn: Dict[str, str],
+    *,
+    base_price: Optional[int],
+    source_text_raw: str,
     row_index: object = None,
-) -> Tuple[Dict[str, int], Dict[str, int], str,
-           List[Tuple[str, int]], List[Tuple[str, int]],
-           Dict[str, str], Dict[str, str]]:
+) -> PriceDecomposition:
     """
     根据 EXTRACTION_MODE 决定提取方式：
       - "regex": 只用正则
       - "llm":   只用 LLM + Guardrail
       - "auto":  regex 优先，regex 无颜色结果时 LLM + Guardrail 兜底
 
-    返回 (abs_map, delta_map, extraction_method,
-          abs_specs, delta_specs,
-          color_abs_label_map, color_delta_label_map)
+    返回 PriceDecomposition
     """
-    mode = EXTRACTION_MODE
+    (abs_map, delta_map, abs_specs, delta_specs, cal, cdl), method = dispatch_extraction(
+        EXTRACTION_MODE,
+        regex_fn=lambda: _extract_specs_shop9_regex(s_price, s_color, color_to_pn),
+        llm_fn=lambda: _extract_specs_shop9_llm(s_price, s_color, color_to_pn, row_index=row_index),
+        has_result_fn=lambda r: bool(r[0] or r[1]),  # r = (abs_map, delta_map, ...)
+    )
 
-    if mode == "regex":
-        abs_map, delta_map, abs_specs, delta_specs, cal, cdl = \
-            _extract_price_parts_shop9_regex(s_price, s_color, color_to_pn)
-        # Apply text-based abs overrides (same as original logic)
+    # regex 路径追加 abs overrides（仅 regex/auto-regex 需要）
+    if method == "regex":
         overrides = _direct_abs_overrides_for_row(
-            raw_color_text=s_color,
-            color_to_pn=color_to_pn,
+            raw_color_text=s_color, color_to_pn=color_to_pn,
         )
         if overrides:
             for col_norm, v in overrides.items():
                 abs_map[col_norm] = int(v)
-                cal[col_norm] = col_norm
                 abs_specs.append((col_norm, int(v)))
-        return abs_map, delta_map, "regex", abs_specs, delta_specs, cal, cdl
 
-    if mode == "llm":
-        abs_map, delta_map, abs_specs, delta_specs, cal, cdl = \
-            _extract_price_parts_shop9_llm_with_guardrails(
-                s_price, s_color, color_to_pn, row_index=row_index,
-            )
-        return abs_map, delta_map, "llm", abs_specs, delta_specs, cal, cdl
+    # ---- "ALL" 归一化 ----
+    final_delta_specs: List[Tuple[str, int]] = list(delta_specs)
+    final_abs_specs: List[Tuple[str, int]] = list(abs_specs)
 
-    # ---- auto: regex 优先，regex 无颜色结果时 LLM 兜底 ----
-    abs_map_re, delta_map_re, abs_specs, delta_specs, cal, cdl = \
-        _extract_price_parts_shop9_regex(s_price, s_color, color_to_pn)
-    if abs_map_re or delta_map_re:
-        # Apply text-based abs overrides
-        overrides = _direct_abs_overrides_for_row(
-            raw_color_text=s_color,
-            color_to_pn=color_to_pn,
-        )
-        if overrides:
-            for col_norm, v in overrides.items():
-                abs_map_re[col_norm] = int(v)
-                cal[col_norm] = col_norm
-                abs_specs.append((col_norm, int(v)))
-        return abs_map_re, delta_map_re, "regex", abs_specs, delta_specs, cal, cdl
+    if "ALL" in delta_map:
+        final_delta_specs = [("全色", delta_map["ALL"])]
+        final_abs_specs = []
+    elif "ALL" in abs_map:
+        final_abs_specs = [("全色", abs_map["ALL"])]
+        final_delta_specs = []
 
-    abs_map_llm, delta_map_llm, abs_specs, delta_specs, cal, cdl = \
-        _extract_price_parts_shop9_llm_with_guardrails(
-            s_price, s_color, color_to_pn, row_index=row_index,
-        )
-    return abs_map_llm, delta_map_llm, "llm", abs_specs, delta_specs, cal, cdl
+    # ---- base_price=None 时仅 abs 路径有效 ----
+    if base_price is None:
+        decomp_delta: List[Tuple[str, int]] = []
+        decomp_base = 0
+    else:
+        decomp_delta = final_delta_specs
+        decomp_base = base_price
+
+    return PriceDecomposition(
+        base_price=decomp_base,
+        delta_specs=decomp_delta,
+        abs_specs=final_abs_specs,
+        extraction_method=method,
+        source_text_raw=source_text_raw,
+    )
 
 # ----------------------------------------------------------------------
 # Step 8: 清洗主函数
@@ -768,34 +471,12 @@ def clean_shop9(
     start_time = time.time()
     _log_seq = 0
 
-    logger.info(
-        "shop9 cleaner started",
-        extra={
-            "event_type": "cleaner_start",
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "log_seq": _log_seq,
-            "input_rows": len(df),
-            "extraction_mode": EXTRACTION_MODE,
-        },
-    )
+    log_cleaner_start(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), log_seq=_log_seq, extraction_mode=EXTRACTION_MODE)
     _log_seq += 1
 
-    for need in (COL_MODEL, COL_PRICE, COL_COLOR, COL_TIME):
-        if need not in df.columns:
-            logger.error(
-                f"Missing required column: {need}",
-                extra={
-                    "event_type": "validation_error",
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "log_seq": _log_seq,
-                    "missing_column": need,
-                    "available_columns": list(df.columns),
-                },
-            )
-            _log_seq += 1
-            raise ValueError(f"shop9 清洗器缺少必要列：{need}")
+    _log_seq = validate_columns(df, [COL_MODEL, COL_PRICE, COL_COLOR, COL_TIME],
+                                cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                                logger=logger, log_seq=_log_seq)
 
     info_df = _load_iphone17_info_df_from_db()
     pn_map = _build_color_map(info_df)
@@ -815,19 +496,9 @@ def clean_shop9(
         raw_color_cell = df[COL_COLOR].iat[i]
 
         if not m or pd.isna(c):
-            logger.debug(
-                f"Row {i}: skip (model/cap missing)",
-                extra={
-                    "event_type": "row_processing_summary",
-                    "log_seq": _log_seq,
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "row_index": i,
-                    "raw_model": str(raw_model),
-                    "model_norm": str(m),
-                    "skip_reason": "model_or_cap_missing",
-                },
-            )
+            log_row_skip(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                         row_index=i, skip_reason="model_or_cap_missing", log_seq=_log_seq,
+                         raw_model=str(raw_model), model_norm=str(m))
             _log_seq += 1
             continue
         c = int(c)
@@ -835,19 +506,9 @@ def clean_shop9(
         key = (m, c)
         color_to_pn = pn_map.get(key)
         if not color_to_pn:
-            logger.debug(
-                f"Row {i}: skip (no pn_map for key)",
-                extra={
-                    "event_type": "row_processing_summary",
-                    "log_seq": _log_seq,
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "row_index": i,
-                    "model_norm": str(m),
-                    "capacity_gb": c,
-                    "skip_reason": "no_pn_map",
-                },
-            )
+            log_row_skip(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                         row_index=i, skip_reason="no_pn_map", log_seq=_log_seq,
+                         model_norm=str(m), capacity_gb=c)
             _log_seq += 1
             continue
 
@@ -855,50 +516,20 @@ def clean_shop9(
         s_price = str(raw_price_cell) if raw_price_cell is not None else ""
 
         # base price：优先 price 列，其次 color 列（保留原逻辑）
-        base_price = to_int_yen(s_price) or to_int_yen(s_color)
+        base_price = extract_price_yen(s_price) or extract_price_yen(s_color)
 
         # source_text_raw_full：两列合并
         source_text_raw_full = f"{s_price} | {s_color}" if s_price and s_color else (s_price or s_color)
 
         # ---- 提取 ----
-        (abs_map, delta_map, extraction_method,
-         abs_specs, delta_specs,
-         _cal, _cdl) = _extract_price_parts_shop9_dispatch(
-            s_price, s_color, color_to_pn, row_index=i,
-        )
-
-        # ---- "ALL" 归一化 ----
-        has_all_delta = "ALL" in delta_map
-        has_all_abs = "ALL" in abs_map
-
-        final_delta_specs: List[Tuple[str, int]] = list(delta_specs)
-        final_abs_specs: List[Tuple[str, int]] = list(abs_specs)
-
-        if has_all_delta:
-            final_delta_specs = [("全色", delta_map["ALL"])]
-            final_abs_specs = []
-        elif has_all_abs:
-            final_abs_specs = [("全色", abs_map["ALL"])]
-            final_delta_specs = []
-
-        # ---- PriceDecomposition + resolve_color_prices ----
-        # base_price=None 时仅 abs 路径有效（delta/default 无意义）
-        if base_price is None:
-            decomp_delta: List[Tuple[str, int]] = []
-            decomp_emit_default = False
-            decomp_base = 0
-        else:
-            decomp_delta = final_delta_specs
-            decomp_emit_default = True
-            decomp_base = base_price
-
-        decomp = PriceDecomposition(
-            base_price=decomp_base,
-            delta_specs=decomp_delta,
-            abs_specs=final_abs_specs,
-            extraction_method=extraction_method,
+        decomp = _extract_specs_shop9_dispatch(
+            s_price, s_color, color_to_pn,
+            base_price=base_price,
             source_text_raw=source_text_raw_full,
+            row_index=i,
         )
+        decomp_emit_default = base_price is not None
+
         new_rows, _log_seq = resolve_color_prices(
             decomp,
             color_to_pn,
@@ -916,24 +547,8 @@ def clean_shop9(
         )
         rows.extend(new_rows)
 
-    out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
-    if not out.empty:
-        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
-        out["part_number"] = out["part_number"].astype(str)
-        out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
+    out = assemble_output_df(rows)
 
-    elapsed = round(time.time() - start_time, 2)
-    logger.info(
-        "shop9 cleaner completed",
-        extra={
-            "event_type": "cleaner_complete",
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "log_seq": _log_seq,
-            "input_rows": len(df),
-            "output_records": len(out),
-            "elapsed_seconds": elapsed,
-        },
-    )
+    log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=len(out), start_time=start_time, log_seq=_log_seq)
 
     return out

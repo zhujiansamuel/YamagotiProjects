@@ -12,13 +12,13 @@ shop3 清洗器 — 買取一丁目
     │
     ├─ extract_price_yen()                 ← Step 3: 基础价提取（cleaner_tools）
     │
-    ├─ _extract_color_deltas_shop3_dispatch()  ← Step 6: 模式调度（EXTRACTION_MODE）
+    ├─ _extract_specs_shop3_dispatch()  ← Step 6: 模式调度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
-    │   │   └─ _extract_color_deltas_shop3_regex()   ← Step 4: 正则提取差价
+    │   │   └─ _extract_specs_shop3_regex()   ← Step 4: 正则提取差价
     │   │
     │   └─ llm 路径:
-    │       ├─ _extract_color_deltas_shop3_llm_cached()  ← Step 5a: LLM 核心提取
+    │       ├─ _extract_specs_shop3_llm_cached()  ← Step 5a: LLM 核心提取
     │       └─ Guardrails (_parse_delta_int_llm,          ← Step 5b: 防幻觉过滤
     │           _infer_default_sign_from_text)
     │
@@ -51,6 +51,18 @@ from ..cleaner_tools import (
     PriceDecomposition,
     resolve_color_prices,
     _label_matches_color_unified,
+    assemble_output_df,
+    log_cleaner_start,
+    log_cleaner_complete,
+    log_llm_extraction_error,
+    validate_columns,
+    clean_label_token,
+    dispatch_extraction,
+    DELTA_PATTERN_STRICT as _DELTA_PATTERN_STRICT_IMPORTED,
+    DELTA_PATTERN_LOOSE as _DELTA_PATTERN_LOOSE_IMPORTED,
+    SIGNED_AMOUNT_PATTERN,
+    lx,
+    HAS_LANGEXTRACT,
     LABEL_SPLIT_RE_shop3 as _LABEL_SPLIT_RE,
     OLLAMA_URL,
     OLLAMA_MODEL_ID,
@@ -69,13 +81,8 @@ SHOP_NAME = "買取一丁目"
 # DEBUG 功能现在由 logging 级别控制（在 settings.py 的 LOGGING 配置中）
 # 控制台显示 INFO 级别（简洁），文件记录 DEBUG 级别（详细）
 
-# --- LangExtract (LLM 抽取) ---
-try:
-    import langextract as lx
-    _HAS_LANGEXTRACT = True
-except Exception:
-    lx = None
-    _HAS_LANGEXTRACT = False
+# LangExtract (LLM 抽取)
+# lx / HAS_LANGEXTRACT 从 cleaner_tools 统一导入
 
 # ----------------------------------------------------------------------
 # 辅助工具函数
@@ -87,38 +94,20 @@ _norm = _norm_strip
 # Step 1-2: 文本归一化 & 金额解析
 # ----------------------------------------------------------------------
 
-def _clean_label_token(tok: str) -> str:
-    if tok is None:
-        return ""
-    t = str(tok).strip()
-    t = re.sub(r"\(.*?\)", "", t)
-    t = re.sub(r"（.*?）", "", t)
-    return t.strip()
+# _clean_label_token → cleaner_tools.clean_label_token 统一导入
+_clean_label_token = clean_label_token
 
 # ----------------------------------------------------------------------
 # Step 4: 正则提取差价
 # ----------------------------------------------------------------------
 # _LABEL_SPLIT_RE: 从 cleaner_tools.LABEL_SPLIT_RE_shop3 导入
 
-_SIGNED_AMOUNT_PAT = re.compile(r"([+\-−－])\s*([0-9０-９][0-9０-９,，]*)")
+# 正则模式 → cleaner_tools 统一导入
+_SIGNED_AMOUNT_PAT = SIGNED_AMOUNT_PATTERN
+_DELTA_PATTERN_STRICT = _DELTA_PATTERN_STRICT_IMPORTED
+_DELTA_PATTERN_LOOSE = _DELTA_PATTERN_LOOSE_IMPORTED
 
-_DELTA_PATTERN_STRICT = re.compile(
-    r"""(?P<labels>[^+\-−－\d¥￥円]+?)
-        (?P<sign>[+\-−－])\s*
-        (?P<amount>[０-９0-9][０-９0-9,，]*)\s*(?:円)?
-    """,
-    re.UNICODE | re.VERBOSE,
-)
-
-_DELTA_PATTERN_LOOSE = re.compile(
-    r"""(?P<labels>[\u3000\u30A0-\u30FF\u4E00-\u9FFF\w\-\s\/、，,・]+?)
-        (?P<sign>[+\-−－])\s*
-        (?P<amount>[０-９0-9][０-９0-9,，]*)\s*(?:円)?
-    """,
-    re.UNICODE | re.VERBOSE,
-)
-
-def _extract_color_deltas_shop3_regex(text: str) -> List[Tuple[str, int]]:
+def _extract_specs_shop3_regex(text: str) -> List[Tuple[str, int]]:
     """
     从 text 中提取 (label_raw, delta_int) 多条记录，支持多标签共用金额的写法。
     """
@@ -160,307 +149,43 @@ def _extract_color_deltas_shop3_regex(text: str) -> List[Tuple[str, int]]:
 
     return out
 
-# ----------------------------------------------------------------------
-# Step 5a: LLM 核心提取（带缓存）
-# ----------------------------------------------------------------------
-
-def _extract_signed_amounts_from_text(text: str) -> List[int]:
-    """
-    从原文中提取所有 "+/- 金额"（单位：JPY），例如 '-1500'、'−3,000'、'＋２,０００'
-    """
-    s = normalize_text_basic(text or "")
-    out: List[int] = []
-    for m in _SIGNED_AMOUNT_PAT.finditer(s):
-        sign = m.group(1)
-        amt = _normalize_amount_text(m.group(2))
-        if amt is None:
-            continue
-        out.append(int(amt) if sign in ("+", "＋") else -int(amt))
-    return out
-
-def _single_signed_delta_from_text(text: str) -> Optional[int]:
-    """
-    若原文只出现一种带符号金额（可能重复出现），返回它；否则返回 None
-    """
-    vals = _extract_signed_amounts_from_text(text)
-    if not vals:
-        return None
-    return vals[0] if len(set(vals)) == 1 else None
-
-def _infer_default_sign_from_text(text: str) -> Optional[int]:
-    """
-    若原文只出现"全为负"或"全为正"的带符号金额，返回其符号方向（-1 / +1）；混合则 None
-    """
-    vals = _extract_signed_amounts_from_text(text)
-    if not vals:
-        return None
-    has_pos = any(v > 0 for v in vals)
-    has_neg = any(v < 0 for v in vals)
-    if has_neg and not has_pos:
-        return -1
-    if has_pos and not has_neg:
-        return 1
-    return None
-
-def _parse_delta_int_llm(x: object, default_sign: Optional[int]) -> Optional[int]:
-    """
-    解析 LLM 输出的 delta。
-    - 若无符号且 default_sign 可推断，则按 default_sign 赋符号
-    - 若有符号但与 default_sign 冲突（原文只有一种符号方向），以原文为准修正
-    """
-    if x is None:
-        return None
-    if isinstance(x, bool):
-        return None
-
-    # 数值类型：可能没有"显式符号"，按 default_sign 修正方向
-    if isinstance(x, int):
-        if default_sign is not None and x != 0 and (x > 0) != (default_sign > 0):
-            return int(default_sign * abs(x))
-        return int(x)
-    if isinstance(x, float):
-        v = int(round(x))
-        if default_sign is not None and v != 0 and (v > 0) != (default_sign > 0):
-            return int(default_sign * abs(v))
-        return v
-
-    s = normalize_text_basic(str(x))
-    if not s:
-        return None
-
-    explicit_sign: Optional[int] = None
-    if s[0] in {"+", "-"}:
-        explicit_sign = 1 if s[0] == "+" else -1
-        s_num = s[1:].strip()
-    else:
-        s_num = s
-
-    amt = _normalize_amount_text(s_num)
-    if amt is None:
-        return None
-
-    # 无显式符号：必须借助原文 default_sign，否则不解析（避免误判为正）
-    if explicit_sign is None:
-        if default_sign is None:
-            return None
-        return int(default_sign * amt)
-
-    # 有显式符号但原文只有一种符号方向：以原文为准
-    if default_sign is not None and explicit_sign != default_sign:
-        explicit_sign = default_sign
-
-    return int(explicit_sign * amt)
-
-# LLM prompt & examples (only available when langextract is installed)
-if _HAS_LANGEXTRACT:
-    _SHOP3_COLOR_DELTA_PROMPT = textwrap.dedent("""\
-        你将看到一个很短的"备注/减价1"字符串，来源于日本二手回收价格表。
-        目标：抽取"颜色标签 -> 价格差额(人民币/日元中的日元JPY)"的映射。
-        输出要求（非常重要）：
-        - 只抽取与"颜色差额/加价/减价"相关的信息；忽略与差额无关的描述（如 新品/未開封/SIMフリー 等）。
-        - 每个颜色标签单独输出一条 Extraction。
-        - extraction_class 固定为 "color_delta"。
-        - extraction_text 必须是输入文本中的"原样子串"，只包含颜色标签本身（不要带分隔符、不要翻译、不要归一化）。
-        - attributes 必须包含键 "delta_yen"，值为整数（可为字符串形式的整数也可），单位 JPY：
-            * "-3000""−3,000""－３,０００"代表 -3000
-            * "+2000""＋２,０００"代表 +2000
-        - 如果文本里没有任何明确的 +/- 金额，则返回空的 extractions。
-    """)
-
-    _SHOP3_COLOR_DELTA_EXAMPLES = [
-        lx.data.ExampleData(
-            text="ブルー、シルバー　-1000",
-            extractions=[
-                lx.data.Extraction(extraction_class="color_delta", extraction_text="ブルー", attributes={"delta_yen": "-1000"}),
-                lx.data.Extraction(extraction_class="color_delta", extraction_text="シルバー", attributes={"delta_yen": "-1000"}),
-            ],
-        ),
-        lx.data.ExampleData(
-            text="シルバー-3,000/ディープブルー-3,000",
-            extractions=[
-                lx.data.Extraction(extraction_class="color_delta", extraction_text="シルバー", attributes={"delta_yen": "-3000"}),
-                lx.data.Extraction(extraction_class="color_delta", extraction_text="ディープブルー", attributes={"delta_yen": "-3000"}),
-            ],
-        ),
-        lx.data.ExampleData(
-            text="シルバー　-3,000 ブルー -3,000",
-            extractions=[
-                lx.data.Extraction(extraction_class="color_delta", extraction_text="シルバー", attributes={"delta_yen": "-3000"}),
-                lx.data.Extraction(extraction_class="color_delta", extraction_text="ブルー", attributes={"delta_yen": "-3000"}),
-            ],
-        ),
-        lx.data.ExampleData(
-            text="ブラック、ブルー　-4000",
-            extractions=[
-                lx.data.Extraction(extraction_class="color_delta", extraction_text="ブラック", attributes={"delta_yen": "-4000"}),
-                lx.data.Extraction(extraction_class="color_delta", extraction_text="ブルー", attributes={"delta_yen": "-4000"}),
-            ],
-        ),
-        lx.data.ExampleData(
-            text="ブルー +2000",
-            extractions=[
-                lx.data.Extraction(extraction_class="color_delta", extraction_text="ブルー", attributes={"delta_yen": "+2000"}),
-            ],
-        ),
-        lx.data.ExampleData(
-            text="オレンジ、ディープブルー-1500",
-            extractions=[
-                lx.data.Extraction(extraction_class="color_delta", extraction_text="オレンジ",
-                                   attributes={"delta_yen": "-1500"}),
-                lx.data.Extraction(extraction_class="color_delta", extraction_text="ディープブルー",
-                                   attributes={"delta_yen": "-1500"}),
-            ],
-        ),
-    ]
-else:
-    _SHOP3_COLOR_DELTA_PROMPT = ""
-    _SHOP3_COLOR_DELTA_EXAMPLES = []
-
-def _iter_extractions_from_langextract_result(result) -> List[object]:
-    """
-    lx.extract(text) 可能返回 AnnotatedDocument，也可能在未来版本/调用方式里返回 list；
-    这里统一成 list[Extraction]。
-    """
-    if result is None:
-        return []
-    if isinstance(result, list):
-        out = []
-        for doc in result:
-            out.extend(getattr(doc, "extractions", []) or [])
-        return out
-    return list(getattr(result, "extractions", []) or [])
-
-@lru_cache(maxsize=4096)
-def _extract_color_deltas_shop3_llm_cached(text: str) -> Tuple[Tuple[str, int], ...]:
-    s = (text or "").strip()
-    if not s:
-        return tuple()
-
-    if not re.search(r"[0-9０-９+\-−－]", s):
-        return tuple()
-
-    if lx is None:
-        return tuple()
-
-    # 原文全局 delta / 默认符号
-    delta_global = _single_signed_delta_from_text(s)     # 例如：仅出现 -1500 => -1500
-    default_sign = _infer_default_sign_from_text(s)      # 例如：仅出现负号 => -1
-
-    result = lx.extract(
-        text_or_documents=s,
-        prompt_description=_SHOP3_COLOR_DELTA_PROMPT,
-        examples=_SHOP3_COLOR_DELTA_EXAMPLES,
-        model_id=OLLAMA_MODEL_ID,
-        model_url=OLLAMA_URL,
-        fence_output=False,
-        use_schema_constraints=False,
-    )
-
-    mp: Dict[str, int] = {}
-    for ext in _iter_extractions_from_langextract_result(result):
-        if getattr(ext, "extraction_class", None) != "color_delta":
-            continue
-
-        label = _clean_label_token(getattr(ext, "extraction_text", "") or "")
-        if not label:
-            continue
-
-        # 若原文只有一种带符号金额，直接覆盖所有 label 的 delta
-        if delta_global is not None:
-            mp[label] = int(delta_global)
-            continue
-
-        attrs = getattr(ext, "attributes", None) or {}
-        delta_raw = attrs.get("delta_yen")
-        delta = _parse_delta_int_llm(delta_raw, default_sign)
-
-        if delta is None:
-            delta = _parse_delta_int_llm(attrs.get("delta") or attrs.get("amount"), default_sign)
-
-        if delta is None:
-            continue
-
-        mp[label] = int(delta)
-
-    return tuple(mp.items())
-
-# ----------------------------------------------------------------------
-# Step 5b: LLM + Guardrails（仅 LLM 路径使用）
-# ----------------------------------------------------------------------
-
-def _extract_color_deltas_shop3_llm_with_guardrails(
-    text: str,
-    row_index: object = None,
-) -> List[Tuple[str, int]]:
-    """
-    LLM 提取 + guardrails（_parse_delta_int_llm, _infer_default_sign_from_text）。
-    仅 LLM 路径使用。
-    """
-    s = (text or "").strip()
-    if not s:
-        return []
-
-    if not _HAS_LANGEXTRACT or lx is None:
-        return []
-
-    try:
-        result = list(_extract_color_deltas_shop3_llm_cached(s))
-    except Exception as e:
-        logger.warning(
-            "LangExtract extraction failed",
-            extra={
-                "event_type": "llm_extraction_error",
-                "shop_name": SHOP_NAME,
-                "cleaner_name": CLEANER_NAME,
-                "error": str(e),
-                "error_type": type(e).__name__,
-                "model_id": OLLAMA_MODEL_ID,
-                "model_url": OLLAMA_URL,
-                "row_index": row_index,
-                "text_length": len(s),
-                "text_preview": _truncate_for_log(s, 100),
-            },
-        )
-        return []
-
-    return result
+# LLM 相関代码已提取到 shop_cleaners_split_llm/llm_shop3.py
+from ..shop_cleaners_split_llm.llm_shop3 import (
+    extract_specs_shop3_llm as _extract_specs_shop3_llm,
+)
 
 # ----------------------------------------------------------------------
 # Step 6: 提取模式调度
 # ----------------------------------------------------------------------
 
-def _extract_color_deltas_shop3_dispatch(
+def _extract_specs_shop3_dispatch(
     text: str,
+    *,
+    base_price: int,
+    source_text_raw: str,
     row_index: object = None,
-) -> Tuple[List[Tuple[str, int]], str]:
+) -> PriceDecomposition:
     """
     根据 EXTRACTION_MODE 决定提取方式：
       - "regex": 只用正则
       - "llm":   只用 LLM + Guardrails
       - "auto":  正则优先，正则无颜色结果时 LLM + Guardrails 兜底
 
-    返回 (labels_and_deltas, extraction_method)
+    返回 PriceDecomposition
     """
-    mode = EXTRACTION_MODE
-
-    if mode == "regex":
-        return _extract_color_deltas_shop3_regex(text), "regex"
-
-    if mode == "llm":
-        result = _extract_color_deltas_shop3_llm_with_guardrails(
-            text, row_index=row_index,
-        )
-        return result, "llm"
-
-    # ---- auto: 正则优先，正则无颜色结果时 LLM 兜底 ----
-    regex_res = _extract_color_deltas_shop3_regex(text)
-    if regex_res:
-        return regex_res, "regex"
-
-    llm_res = _extract_color_deltas_shop3_llm_with_guardrails(
-        text, row_index=row_index,
+    deltas, method = dispatch_extraction(
+        EXTRACTION_MODE,
+        regex_fn=lambda: _extract_specs_shop3_regex(text),
+        llm_fn=lambda: _extract_specs_shop3_llm(text, row_index=row_index),
     )
-    return llm_res, "llm"
+
+    return PriceDecomposition(
+        base_price=base_price,
+        delta_specs=deltas,
+        abs_specs=[],
+        extraction_method=method,
+        source_text_raw=source_text_raw,
+    )
 
 # ----------------------------------------------------------------------
 # Step 7: 标签→颜色匹配（2025-02 替换为 cleaner_tools 统一实现）
@@ -476,53 +201,18 @@ def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
     start_time = time.time()
     _log_seq = 0
 
-    logger.info(
-        "shop3 cleaner started",
-        extra={
-            "event_type": "cleaner_start",
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "log_seq": _log_seq,
-            "input_rows": len(df),
-            "extraction_mode": EXTRACTION_MODE,
-        },
-    )
+    log_cleaner_start(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), log_seq=_log_seq, extraction_mode=EXTRACTION_MODE)
     _log_seq += 1
 
-    need_cols = ["title", "data5", "time-scraped"]
-    for c in need_cols:
-        if c not in df.columns:
-            logger.error(
-                f"Missing required column: {c}",
-                extra={
-                    "event_type": "validation_error",
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "log_seq": _log_seq,
-                    "missing_column": c,
-                    "available_columns": list(df.columns),
-                },
-            )
-            _log_seq += 1
-            raise ValueError(f"shop3 清洗器缺少必要列：{c}")
+    _log_seq = validate_columns(df, ["title", "data5", "time-scraped"],
+                                cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                                logger=logger, log_seq=_log_seq)
 
     src = df.copy()
     mask_time_ok = src["time-scraped"].astype(str).str.strip().ne("") & src["time-scraped"].notna()
     src = src[mask_time_ok].reset_index(drop=True)
     if src.empty:
-        elapsed = round(time.time() - start_time, 2)
-        logger.info(
-            "shop3 cleaner completed (empty input after time filter)",
-            extra={
-                "event_type": "cleaner_complete",
-                "shop_name": SHOP_NAME,
-                "cleaner_name": CLEANER_NAME,
-                "log_seq": _log_seq,
-                "input_rows": len(df),
-                "output_records": 0,
-                "elapsed_seconds": elapsed,
-            },
-        )
+        log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=0, start_time=start_time, log_seq=_log_seq)
         return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
 
     info_df = _load_iphone17_info_df_from_db()
@@ -568,20 +258,11 @@ def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
             continue
 
         # ---- 提取 ----
-        deltas, extraction_method = _extract_color_deltas_shop3_dispatch(
-            rem_text, row_index=i,
-        )
-
-        # ---- source_text_raw_full ----
-        source_text_raw_full = rem_text
-
-        # ---- 构建 PriceDecomposition & 调用公共下游函数 ----
-        decomp = PriceDecomposition(
+        decomp = _extract_specs_shop3_dispatch(
+            rem_text,
             base_price=p0,
-            delta_specs=deltas,
-            abs_specs=[],
-            extraction_method=extraction_method,
-            source_text_raw=source_text_raw_full,
+            source_text_raw=rem_text,
+            row_index=i,
         )
         new_rows, _log_seq = resolve_color_prices(
             decomp, cmap, _label_matches_color_unified,
@@ -597,23 +278,8 @@ def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         )
         rows.extend(new_rows)
 
-    out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
-    if not out.empty:
-        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
-        out["part_number"] = out["part_number"].astype(str)
+    out = assemble_output_df(rows, coerce_price=False)
 
-    elapsed = round(time.time() - start_time, 2)
-    logger.info(
-        "shop3 cleaner completed",
-        extra={
-            "event_type": "cleaner_complete",
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "log_seq": _log_seq,
-            "input_rows": len(df),
-            "output_records": len(out),
-            "elapsed_seconds": elapsed,
-        },
-    )
+    log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=len(out), start_time=start_time, log_seq=_log_seq)
 
     return out

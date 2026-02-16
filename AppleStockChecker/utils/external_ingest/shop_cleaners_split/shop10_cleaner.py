@@ -10,66 +10,27 @@ shop10 清洗器 — ドラゴンモバイル
     ├─ extract_price_yen()        ← Step 4: 价格提取（cleaner_tools）
     └─ clean_shop10()             ← Step 5: 主函数，输出 part_number / price_new / recorded_at
 """
-from typing import Protocol, Dict, Callable, Optional,List
-from ...external_ingest.helpers import parse_dt_aware
-from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, extract_price_yen
-import os
-from functools import lru_cache
-from pathlib import Path
+from typing import List, Optional
+import logging
 import re
+
 import pandas as pd
-from typing import Optional, Tuple
-from urllib.parse import urlparse
-from typing import Dict, Optional, List, Iterable, Union
-import os, re, json, pathlib
-from datetime import datetime
-import pytz
-import time
 
-def _load_iphone17_info_df() -> pd.DataFrame:
-    """
-    读取 AppleStockChecker/data/iphone17_info.csv 或 settings / env 指定的路径。
-    输出列：part_number, model_name_norm, capacity_gb
-    """
-    # 解析路径（settings > env > 默认）
-    try:
-        from django.conf import settings
-        p = getattr(settings, "EXTERNAL_IPHONE17_INFO_PATH", None)
-        if p:
-            path = str(p)
-        else:
-            raise AttributeError
-    except Exception:
-        path = os.getenv("IPHONE17_INFO_CSV") or str(Path(__file__).resolve().parents[2] / "data" / "iphone17_info.csv")
+from ...external_ingest.helpers import parse_dt_aware
+from ..cleaner_tools import _parse_capacity_gb, _normalize_model_generic, extract_price_yen, assemble_output_df, validate_columns, _load_info_df_from_csv, log_cleaner_start
 
-    pth = Path(path)
-    if not pth.exists():
-        raise FileNotFoundError(f"未找到 iphone17_info：{pth}")
-
-    if re.search(r"\.(xlsx|xlsm|xls|ods)$", str(pth), re.I):
-        df = pd.read_excel(pth)
-    else:
-        df = pd.read_csv(pth, encoding="utf-8-sig")
-
-    need = {"part_number", "model_name", "capacity_gb"}
-    missing = need - set(df.columns)
-    if missing:
-        raise ValueError(f"iphone17_info 缺少必要列：{missing}")
-
-    df = df.copy()
-    df["model_name_norm"] = df["model_name"].map(_normalize_model_generic)
-    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
-    df = df.dropna(subset=["model_name_norm", "capacity_gb", "part_number"])
-    return df[["part_number", "model_name_norm", "capacity_gb"]]
+logger = logging.getLogger(__name__)
 
 def clean_shop10(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> pd.DataFrame:
-    print("##shop10:ドラゴンモバイル---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
-    info_df = _load_iphone17_info_df()
+    log_cleaner_start(logger, cleaner_name="shop10", shop_name="ドラゴンモバイル", input_rows=len(df))
+    info_df = _load_info_df_from_csv(
+        required_cols={"part_number", "model_name", "capacity_gb"},
+        output_cols=["part_number", "model_name_norm", "capacity_gb"],
+        add_model_norm=True,
+    )
 
-    need_cols = ["data2", "price", "time-scraped"]
-    for c in need_cols:
-        if c not in df.columns:
-            raise ValueError(f"shop10 清洗器缺少必要列：{c}")
+    validate_columns(df, ["data2", "price", "time-scraped"],
+                     cleaner_name="shop10", shop_name="ドラゴンモバイル")
 
     # 解析
     model_norm = df["data2"].map(_normalize_model_generic)
@@ -171,10 +132,7 @@ def clean_shop10(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) ->
             if debug and i in debug_pos_set:
                 print("  -> OUT_ROW:", {"part_number": str(pn), "price_new": int(p)})
 
-    out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
-    if not out.empty:
-        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
-        out["part_number"] = out["part_number"].astype(str)
+    out = assemble_output_df(rows, coerce_price=False)
 
     if debug:
         print(f"\n[shop10 debug] out_rows={len(out)}  out_head=\n", out.head(10).to_string(index=False))

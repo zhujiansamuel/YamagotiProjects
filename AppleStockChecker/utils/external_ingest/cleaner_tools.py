@@ -5,9 +5,11 @@
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 import logging
 import os
+import time
 import pandas as pd
 import re
 
@@ -20,6 +22,151 @@ from .helpers import to_int_yen
 OLLAMA_URL = os.getenv("OLLAMA_URL") or os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL_ID = os.getenv("OLLAMA_MODEL_ID") or os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
 EXTRACTION_MODE = os.getenv("EXTRACTION_MODE", "regex")  # "regex" | "llm" | "auto"
+
+
+# ----------------------------------------------------------------------
+# langextract 统一导入（各 shop 共用）
+# ----------------------------------------------------------------------
+try:
+    import langextract as lx
+    HAS_LANGEXTRACT = True
+except Exception:
+    lx = None  # type: ignore[assignment]
+    HAS_LANGEXTRACT = False
+
+
+# ----------------------------------------------------------------------
+# CSV 信息文件路径解析（shop5/6/10/20 等仍从 CSV 读取的 shop 共用）
+# ----------------------------------------------------------------------
+
+def _resolve_info_csv_path() -> Path:
+    """
+    解析 iphone17_info CSV/Excel 文件路径。
+
+    优先级：Django settings > 环境变量 > 默认路径。
+    供 shop5/6/10/20 等仍然从文件而非数据库读取的清洗器使用。
+    """
+    try:
+        from django.conf import settings
+        p = getattr(settings, "EXTERNAL_IPHONE17_INFO_PATH", None)
+        if p:
+            return Path(p)
+    except Exception:
+        pass
+    envp = os.getenv("IPHONE17_INFO_CSV")
+    if envp and Path(envp).exists():
+        return Path(envp)
+    return Path(__file__).resolve().parents[1] / "data" / "iphone17_info.csv"
+
+
+def _read_info_csv(path: Path) -> pd.DataFrame:
+    """
+    读取 iphone17_info CSV 或 Excel 文件，返回原始 DataFrame。
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"未找到 iphone17_info：{path}")
+    if re.search(r"\.(xlsx|xlsm|xls|ods)$", str(path), re.I):
+        return pd.read_excel(path)
+    return pd.read_csv(path, encoding="utf-8-sig")
+
+
+def _load_info_df_from_csv(
+    *,
+    required_cols: Optional[set] = None,
+    output_cols: Optional[List[str]] = None,
+    add_model_norm: bool = False,
+) -> pd.DataFrame:
+    """
+    从 CSV/Excel 读取 iphone17_info 并做标准预处理。
+
+    供 shop5/6/10/20 等仍然从文件读取的清洗器使用。
+    数据库路径的清洗器应使用 _load_iphone17_info_df_from_db()。
+
+    参数:
+        required_cols: 必须存在的列集合（默认 {"part_number","model_name","capacity_gb"}）
+        output_cols: 最终返回的列列表（默认按 required_cols 推断）
+        add_model_norm: 是否添加 model_name_norm 列
+    """
+    path = _resolve_info_csv_path()
+    df = _read_info_csv(path)
+
+    if required_cols is None:
+        required_cols = {"part_number", "model_name", "capacity_gb"}
+    missing = required_cols - set(df.columns)
+    if missing:
+        raise ValueError(f"iphone17_info 缺少必要列：{missing}")
+
+    df = df.copy()
+    df["capacity_gb"] = pd.to_numeric(df["capacity_gb"], errors="coerce").astype("Int64")
+
+    if add_model_norm:
+        df["model_name_norm"] = df["model_name"].map(_normalize_model_generic)
+
+    dropna_cols = [c for c in ["part_number", "model_name", "capacity_gb", "model_name_norm"]
+                   if c in df.columns]
+    df = df.dropna(subset=dropna_cols)
+
+    if output_cols:
+        df = df[[c for c in output_cols if c in df.columns]]
+
+    return df
+
+
+def _load_jan_to_pn_from_csv() -> Dict[str, str]:
+    """
+    从 CSV/Excel 信息文件构建 { jan_13位 : part_number } 映射。
+
+    供 shop5/6 等仍从文件读取 JAN 的清洗器使用。
+    若信息文件无 jan 列，返回空字典。
+    """
+    path = _resolve_info_csv_path()
+    if not path.exists():
+        return {}
+    df = _read_info_csv(path)
+    if "part_number" not in df.columns or "jan" not in df.columns:
+        return {}
+    df = df.copy()
+    df["jan"] = df["jan"].astype(str).str.replace(r"[^\d]", "", regex=True)
+    df = df[df["jan"].str.fullmatch(r"\d{13}", na=False)]
+    return dict(zip(df["jan"].astype(str), df["part_number"].astype(str)))
+
+
+# ----------------------------------------------------------------------
+# LLM 提取失败日志（各 shop 共用）
+# ----------------------------------------------------------------------
+
+def log_llm_extraction_error(
+    logger: logging.Logger,
+    *,
+    cleaner_name: str,
+    shop_name: str,
+    error: Exception,
+    text: str = "",
+    row_index: object = None,
+    text_preview_len: int = 100,
+    **extra_fields: object,
+) -> None:
+    """
+    LLM（LangExtract）提取失败时的统一 warning 日志。
+
+    替代各 shop 清洗器中重复出现的:
+        logger.warning("LangExtract extraction failed", extra={...})
+    """
+    extra: dict = {
+        "event_type": "llm_extraction_error",
+        "shop_name": shop_name,
+        "cleaner_name": cleaner_name,
+        "error": str(error),
+        "error_type": type(error).__name__,
+        "model_id": OLLAMA_MODEL_ID,
+        "model_url": OLLAMA_URL,
+        "text_length": len(text) if text else 0,
+        "text_preview": _truncate_for_log(text, text_preview_len) if text else "",
+    }
+    if row_index is not None:
+        extra["row_index"] = row_index
+    extra.update(extra_fields)
+    logger.warning("LangExtract extraction failed", extra=extra)
 
 
 # ----------------------------------------------------------------------
@@ -387,9 +534,10 @@ _COLOR_SEP_SPLIT_RE = LABEL_SPLIT_RE_shop4
 
 def _label_matches_color_unified(label_raw: str, color_raw: str, color_norm: str) -> bool:
     """
-    统一标签→颜色匹配（供 shop3/4/9/11/12/14/15/16/17 共用）。
+    统一标签→颜色匹配（供各 shop 共用）。
 
     匹配策略（按顺序）:
+      0. 后缀清理：去除 "系/色"（如 "青系"→"青", "黒色"→"黒"）
       1. 精确归一化相等
       2. label_raw 为 color_raw 原文子串
       3. label_norm 为 color_raw 子串（小写，shop14）
@@ -403,7 +551,9 @@ def _label_matches_color_unified(label_raw: str, color_raw: str, color_norm: str
     if not label_raw:
         return False
 
-    label_norm = _norm_strip(str(label_raw))
+    # 0. 后缀清理：去除 "系/色"（shop2 数据常见 "青系" "黒色" 等写法）
+    label_cleaned = re.sub(r"[系色]$", "", str(label_raw).strip()).strip()
+    label_norm = _norm_strip(label_cleaned)
     color_raw_s = str(color_raw or "")
     color_raw_l = color_raw_s.lower()
     color_raw_norm = _norm_strip(color_raw_s)
@@ -413,8 +563,7 @@ def _label_matches_color_unified(label_raw: str, color_raw: str, color_norm: str
         return True
 
     # 2. 原文子串 (label in color)
-    lbl_stripped = str(label_raw).strip()
-    if lbl_stripped and lbl_stripped in color_raw_s:
+    if label_cleaned and label_cleaned in color_raw_s:
         return True
 
     # 3. shop14: label_norm in color (小写)
@@ -422,7 +571,7 @@ def _label_matches_color_unified(label_raw: str, color_raw: str, color_norm: str
         return True
 
     # 4. shop11: 分割后任一分片匹配
-    for tok in _COLOR_SEP_SPLIT_RE.split(str(label_raw)):
+    for tok in _COLOR_SEP_SPLIT_RE.split(label_cleaned):
         tok = tok.strip()
         if not tok:
             continue
@@ -435,7 +584,7 @@ def _label_matches_color_unified(label_raw: str, color_raw: str, color_norm: str
     candidates: set = set()
     if label_norm in SYNONYM_LOOKUP_NORM:
         candidates.update(SYNONYM_LOOKUP_NORM[label_norm])
-    for tok in _COLOR_SEP_SPLIT_RE.split(str(label_raw)):
+    for tok in _COLOR_SEP_SPLIT_RE.split(label_cleaned):
         tn = _norm_strip(tok.strip())
         if tn and tn in SYNONYM_LOOKUP_NORM:
             candidates.update(SYNONYM_LOOKUP_NORM[tn])
@@ -596,6 +745,309 @@ def _normalize_amount_text(s: str) -> Optional[int]:
         return None
 
 
+# ======================================================================
+# 公共类型强转函数（从 shop2/4/9/11/14 提取合并）
+# ======================================================================
+
+_INT_RE = re.compile(r"[+-]?\d+")
+
+# 符号字符集（shop2 定义，多处引用）
+SIGN_MINUS_CHARS = frozenset({"-", "−", "－", "–", "—", "―"})
+SIGN_PLUS_CHARS = frozenset({"+", "＋"})
+
+
+def coerce_int(val) -> Optional[int]:
+    """
+    把 int/float/str 的数字（含 '円'、'¥'、逗号、全角符号）稳健转成 int。
+
+    合并自 shop2._coerce_int / shop11._coerce_int / shop4._coerce_int_maybe。
+    统一处理：None / NaN / bool / int / float / 字符串（去逗号/去"円"/去全角符号）。
+    """
+    if val is None:
+        return None
+    try:
+        if pd.isna(val):
+            return None
+    except Exception:
+        pass
+
+    if isinstance(val, bool):
+        return None
+    if isinstance(val, int):
+        return val
+    if isinstance(val, float):
+        return int(val)
+
+    s = str(val).strip()
+    if not s or s.lower() in {"nan", "none", "null"}:
+        return None
+    s = s.replace(",", "").replace("円", "").replace("¥", "")
+    s = s.replace("−", "-").replace("－", "-").replace("＋", "+")
+    m = _INT_RE.search(s)
+    if not m:
+        return None
+    return int(m.group(0))
+
+
+def coerce_signed_int(x) -> Optional[int]:
+    """
+    全角数字/符号→半角，提取带符号整数。
+
+    合并自 shop9._coerce_signed_int。
+    处理：全角数字、全角 +/-、逗号分隔符。
+    """
+    if x is None:
+        return None
+    if isinstance(x, int) and not isinstance(x, bool):
+        return int(x)
+
+    s = str(x)
+    # 全角数字/符号 -> 半角
+    s = s.translate(str.maketrans("０１２３４５６７８９＋－−，", "0123456789+--,"))
+
+    sign = 1
+    digits = []
+    sign_seen = False
+    started = False
+    for ch in s:
+        if not started and not sign_seen and ch in "+-":
+            sign_seen = True
+            sign = -1 if ch == "-" else 1
+            continue
+        if ch.isdigit():
+            started = True
+            digits.append(ch)
+            continue
+        if started and ch in {",", " "}:
+            # 千分位分隔符忽略
+            continue
+        if started:
+            break
+
+    if not digits:
+        return None
+    try:
+        return sign * int("".join(digits))
+    except Exception:
+        return None
+
+
+def coerce_amount_yen(v) -> Optional[int]:
+    """
+    带符号金额解析，支持 +/- 前缀和 to_int_yen 兜底。
+
+    合并自 shop14._coerce_amount_yen。
+    处理：符号前缀 → to_int_yen → 纯数字兜底。
+    """
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        try:
+            return int(v)
+        except Exception:
+            return None
+
+    s = str(v).strip()
+    if not s:
+        return None
+
+    sign = 1
+    if s[:1] in SIGN_PLUS_CHARS:
+        s = s[1:].strip()
+    elif s[:1] in SIGN_MINUS_CHARS:
+        sign = -1
+        s = s[1:].strip()
+
+    n = to_int_yen(s)
+    if n is None:
+        s2 = re.sub(r"[^\d]", "", s)
+        if not s2:
+            return None
+        try:
+            n = int(s2)
+        except Exception:
+            return None
+
+    return sign * int(n)
+
+
+# ======================================================================
+# 公共提取模式调度（从 shop2/3/4/9/11/12/14 提取合并）
+# ======================================================================
+
+def dispatch_extraction(
+    mode: str,
+    regex_fn: Callable,
+    llm_fn: Callable,
+    *,
+    has_result_fn: Optional[Callable] = None,
+) -> tuple:
+    """
+    三模式（regex / llm / auto）提取调度的通用实现。
+
+    合并自各 shop 的 _extract_specs_shop*_dispatch 中重复的 if/elif/else 逻辑。
+
+    参数:
+        mode: "regex" | "llm" | "auto"（通常来自 EXTRACTION_MODE）
+        regex_fn: 无参调用，返回提取结果（类型由 shop 自定）
+        llm_fn: 无参调用，返回提取结果
+        has_result_fn: 判断 regex 结果是否"有内容"的函数。
+                       默认 bool(result)。用于 auto 模式下决定是否 fallback 到 LLM。
+
+    返回:
+        (result, method_str)
+        method_str: "regex" | "llm"
+
+    示例:
+        result, method = dispatch_extraction(
+            EXTRACTION_MODE,
+            regex_fn=lambda: _extract_specs_regex(text),
+            llm_fn=lambda: _extract_specs_llm(text, row_index=i),
+        )
+    """
+    check = has_result_fn or bool
+
+    if mode == "regex":
+        return regex_fn(), "regex"
+
+    if mode == "llm":
+        return llm_fn(), "llm"
+
+    # auto: regex 优先，无结果时 LLM 兜底
+    result = regex_fn()
+    if check(result):
+        return result, "regex"
+
+    return llm_fn(), "llm"
+
+
+# ======================================================================
+# 公共正则模式 & 标签清洗（从 shop3/4/9/12 等提取合并）
+# ======================================================================
+
+def clean_label_token(tok: str) -> str:
+    """
+    清洗标签 token：去除括号内容（半角+全角），strip 空白。
+
+    合并自 shop3._clean_label_token（shop3/4/12 等多处使用相同逻辑）。
+    """
+    if tok is None:
+        return ""
+    t = str(tok).strip()
+    t = re.sub(r"\(.*?\)", "", t)
+    t = re.sub(r"（.*?）", "", t)
+    return t.strip()
+
+
+# 颜色±金额 正则模式（各 shop 共用的基础变体）
+# DELTA_PATTERN_STRICT: 严格模式 —— 标签后紧跟 ±金额（shop3/12 等使用）
+DELTA_PATTERN_STRICT = re.compile(
+    r"""(?P<labels>[^+\-−－\d¥￥円]+?)
+        (?P<sign>[+\-−－])\s*
+        (?P<amount>[０-９0-9][０-９0-9,，]*)\s*(?:円)?
+    """,
+    re.UNICODE | re.VERBOSE,
+)
+
+# DELTA_PATTERN_LOOSE: 宽松模式 —— 允许日文/汉字/连字符等标签字符（shop3 fallback）
+DELTA_PATTERN_LOOSE = re.compile(
+    r"""(?P<labels>[\u3000\u30A0-\u30FF\u4E00-\u9FFF\w\-\s\/、，,・]+?)
+        (?P<sign>[+\-−－])\s*
+        (?P<amount>[０-９0-9][０-９0-9,，]*)\s*(?:円)?
+    """,
+    re.UNICODE | re.VERBOSE,
+)
+
+# ABS_PRICE_PATTERN: 绝对价格模式 —— 标签后跟金额，无 ± 符号（shop9/12 等使用）
+ABS_PRICE_PATTERN = re.compile(
+    r"""(?P<labels>[^0-9０-９¥￥円]+?)\s*(?:¥|￥)?\s*(?P<amount>[０-９0-9][０-９0-9,，]*)\s*(?:円)?""",
+    re.I,
+)
+
+# SIGNED_AMOUNT_PATTERN: 提取文本中所有 ±金额（shop3 的 _extract_signed_amounts_from_text）
+SIGNED_AMOUNT_PATTERN = re.compile(r"([+\-−－])\s*([0-9０-９][0-9０-９,，]*)")
+
+
+# ======================================================================
+# 公共 LLM Guardrails（从 shop2/3/4/12 提取合并）
+# ======================================================================
+
+def llm_guardrail_check(
+    label: str,
+    amount: int,
+    source_text: str,
+    *,
+    check_label: bool = True,
+    check_amount: bool = True,
+) -> bool:
+    """
+    LLM 提取结果的通用防幻觉验证。
+
+    合并自 shop2/3/4/12 中重复出现的 Guardrail A/B 逻辑。
+
+    Guardrail A: label（颜色标签）必须在原文中出现
+    Guardrail B: amount（金额）的绝对值必须在原文中出现（去逗号后比较）
+
+    参数:
+        label: LLM 提取的颜色标签
+        amount: LLM 提取的金额（int）
+        source_text: 原始文本
+        check_label: 是否检查标签存在性（默认 True）
+        check_amount: 是否检查金额存在性（默认 True）
+
+    返回:
+        True = 通过验证，False = 疑似幻觉应丢弃
+    """
+    if not source_text:
+        return False
+
+    # Guardrail A: label 在原文中
+    if check_label and label:
+        if label not in source_text:
+            return False
+
+    # Guardrail B: 金额绝对值在原文中（去逗号比较）
+    if check_amount and amount is not None and amount != 0:
+        text_no_commas = source_text.replace(",", "").replace("，", "")
+        if str(abs(int(amount))) not in text_no_commas:
+            return False
+
+    return True
+
+
+def apply_llm_guardrails(
+    rules: dict,
+    source_text: str,
+    *,
+    check_label: bool = True,
+    check_amount: bool = True,
+) -> dict:
+    """
+    对 {label: amount} 字典批量应用 LLM guardrails，返回过滤后的字典。
+
+    合并自 shop2._extract_specs_shop2_llm 中的过滤循环。
+
+    参数:
+        rules: {group_label: delta_yen} 字典
+        source_text: 原始文本
+        check_label/check_amount: 同 llm_guardrail_check
+
+    返回:
+        过滤后的 {label: amount} 字典
+    """
+    if not rules:
+        return {}
+    return {
+        label: int(amount)
+        for label, amount in rules.items()
+        if llm_guardrail_check(
+            label, amount, source_text,
+            check_label=check_label,
+            check_amount=check_amount,
+        )
+    }
+
+
 def _build_jan_map(info_df: pd.DataFrame) -> Dict[str, str]:
     """
     构建 { jan_digits -> part_number } 映射。
@@ -662,6 +1114,7 @@ def resolve_color_prices(
     cleaner_name: str,
     recorded_at: object,
     emit_default_rows: bool = True,
+    skip_non_positive: bool = False,
     logger: Optional[logging.Logger] = None,
     log_seq_start: int = 0,
     row_index: int = -1,
@@ -688,6 +1141,7 @@ def resolve_color_prices(
         cleaner_name: 清洗器名（用于日志）
         recorded_at: 记录时间
         emit_default_rows: 未匹配颜色是否生成行（False → 仅输出有明确定价的颜色）
+        skip_non_positive: 最终价格 <= 0 时跳过该颜色（True → 不生成行，仅 warning 日志）
         logger: 日志器（None 则跳过所有日志）
         log_seq_start: 日志序号起始值
         row_index: 行号（用于日志）
@@ -897,6 +1351,26 @@ def resolve_color_prices(
         if not emit_default_rows and effective_source == "default_zero":
             continue
 
+        # skip_non_positive → 价格 <= 0 跳过（shop2 等需要）
+        if skip_non_positive and final_price is not None and int(final_price) <= 0:
+            if logger:
+                _seq += 1
+                logger.warning(
+                    "Skipping item: price <= 0",
+                    extra={
+                        **_log_ctx,
+                        "event_type": "output_record",
+                        "log_seq": _seq,
+                        "part_number": pn,
+                        "color_norm": col_norm,
+                        "base_price": base_price,
+                        "spec_value": spec_value,
+                        "final_price": int(final_price),
+                        "skip_reason": "price <= 0",
+                    },
+                )
+            continue
+
         output_rows.append({
             "part_number": pn,
             "shop_name": shop_name,
@@ -1020,3 +1494,192 @@ def resolve_color_prices(
         )
 
     return output_rows, _seq
+
+
+# ======================================================================
+# 1. DataFrame 输出组装
+# ======================================================================
+
+_OUTPUT_COLUMNS = ["part_number", "shop_name", "price_new", "recorded_at"]
+
+
+def assemble_output_df(
+    rows: List[dict],
+    *,
+    coerce_price: bool = True,
+) -> pd.DataFrame:
+    """
+    将行列表组装为标准输出 DataFrame 并做统一的后处理。
+
+    处理:
+      1. 创建 DataFrame (columns = part_number, shop_name, price_new, recorded_at)
+      2. dropna(subset=["part_number", "price_new"])
+      3. part_number → str
+      4. price_new → Int64 (可选, coerce_price=True 时)
+
+    参数:
+        rows: [{"part_number", "shop_name", "price_new", "recorded_at"}, ...]
+        coerce_price: 是否将 price_new 转为 Int64 (默认 True)
+
+    返回:
+        pd.DataFrame — 列: part_number(str), shop_name, price_new(Int64), recorded_at
+    """
+    out = pd.DataFrame(rows, columns=_OUTPUT_COLUMNS)
+    if not out.empty:
+        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
+        out["part_number"] = out["part_number"].astype(str)
+        if coerce_price:
+            out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
+    return out
+
+
+# ======================================================================
+# 2. 清洗器 开始/完了 日志
+# ======================================================================
+
+def log_cleaner_start(
+    logger: logging.Logger,
+    *,
+    cleaner_name: str,
+    shop_name: str,
+    input_rows: int,
+    log_seq: int = 0,
+    extraction_mode: Optional[str] = None,
+) -> None:
+    """清洗器开始时的统一日志。"""
+    extra: dict = {
+        "event_type": "cleaner_start",
+        "shop_name": shop_name,
+        "cleaner_name": cleaner_name,
+        "log_seq": log_seq,
+        "input_rows": input_rows,
+    }
+    if extraction_mode is not None:
+        extra["extraction_mode"] = extraction_mode
+    logger.info(f"{cleaner_name} cleaner started", extra=extra)
+
+
+def log_cleaner_complete(
+    logger: logging.Logger,
+    *,
+    cleaner_name: str,
+    shop_name: str,
+    input_rows: int,
+    output_records: int,
+    start_time: float,
+    log_seq: int = 0,
+) -> None:
+    """清洗器完了時的统一日志。"""
+    elapsed = round(time.time() - start_time, 2)
+    logger.info(
+        f"{cleaner_name} cleaner completed",
+        extra={
+            "event_type": "cleaner_complete",
+            "shop_name": shop_name,
+            "cleaner_name": cleaner_name,
+            "log_seq": log_seq,
+            "input_rows": input_rows,
+            "output_records": output_records,
+            "elapsed_seconds": elapsed,
+        },
+    )
+
+
+# ======================================================================
+# 3. 行スキップ日志
+# ======================================================================
+
+def log_row_skip(
+    logger: logging.Logger,
+    *,
+    cleaner_name: str,
+    shop_name: str,
+    row_index: int,
+    skip_reason: str,
+    log_seq: int = 0,
+    **extra_fields: object,
+) -> None:
+    """行がスキップされた際の統一 DEBUG ログ。
+
+    Parameters
+    ----------
+    extra_fields : keyword arguments
+        追加コンテキスト (model_text, capacity_gb, data_raw, …) を
+        そのまま extra dict にマージする。
+    """
+    extra: dict = {
+        "event_type": "row_skip",
+        "shop_name": shop_name,
+        "cleaner_name": cleaner_name,
+        "log_seq": log_seq,
+        "row_index": row_index,
+        "skip_reason": skip_reason,
+    }
+    extra.update(extra_fields)
+    logger.debug(
+        f"Row {row_index}: skip ({skip_reason})",
+        extra=extra,
+    )
+
+
+# ======================================================================
+# 4. 必須列バリデーション
+# ======================================================================
+
+def validate_columns(
+    df: pd.DataFrame,
+    required: List[str],
+    *,
+    cleaner_name: str,
+    shop_name: str,
+    logger: Optional[logging.Logger] = None,
+    log_seq: int = 0,
+    lenient: bool = False,
+) -> int:
+    """必須列の存在を検証し、欠落時にログ出力 + エラーを投げる。
+
+    Parameters
+    ----------
+    lenient : bool
+        True の場合、欠落列を None で埋めて処理を続行する (shop2 方式)。
+        False の場合 (デフォルト)、ValueError を送出する。
+
+    Returns
+    -------
+    int
+        更新後の log_seq (ログ出力した分だけインクリメント)。
+    """
+    seq = log_seq
+    for c in required:
+        if c not in df.columns:
+            if logger is not None:
+                if lenient:
+                    logger.warning(
+                        f"Missing column, filling with None: {c}",
+                        extra={
+                            "event_type": "validation_error",
+                            "shop_name": shop_name,
+                            "cleaner_name": cleaner_name,
+                            "log_seq": seq,
+                            "missing_column": c,
+                            "available_columns": list(df.columns),
+                        },
+                    )
+                else:
+                    logger.error(
+                        f"Missing required column: {c}",
+                        extra={
+                            "event_type": "validation_error",
+                            "shop_name": shop_name,
+                            "cleaner_name": cleaner_name,
+                            "log_seq": seq,
+                            "missing_column": c,
+                            "available_columns": list(df.columns),
+                        },
+                    )
+                seq += 1
+            if lenient:
+                df[c] = None
+            else:
+                raise ValueError(f"{cleaner_name} 清洗器缺少必要列：{c}")
+    return seq

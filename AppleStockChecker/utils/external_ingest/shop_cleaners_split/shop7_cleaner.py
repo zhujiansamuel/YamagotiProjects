@@ -13,7 +13,13 @@ from ..cleaner_tools import (
     extract_price_yen,
     PriceDecomposition,
     resolve_color_prices,
+    _label_matches_color_unified,
     LABEL_SPLIT_RE_shop7,
+    assemble_output_df,
+    log_cleaner_start,
+    log_cleaner_complete,
+    log_row_skip,
+    validate_columns,
 )
 import re
 import time
@@ -36,12 +42,12 @@ shop7 清洗器 — 買取ホムラ
     │   └─ parse_dt_aware()           ← 时间解析
     │
     ├─ Step 3: 颜色减价解析（下一行检测）
-    │   └─ _parse_color_deltas_shop7()
+    │   └─ _extract_specs_shop7_regex()
     │       ├─ DELTA_RE               ← 核心正则: 标签+金额
     │       └─ _normalize_amount_text()  ← 金额文本 → int（cleaner_tools）
     │
     ├─ Step 4: label → color 匹配
-    │   └─ _label_matches_color_shop7()  ← 精确 | 子串匹配（shop7 专用）
+    │   └─ _label_matches_color_unified()  ← 统一匹配（cleaner_tools）
     │
     └─ Step 5: part_number 输出
         └─ base_price + color delta → final price
@@ -85,7 +91,7 @@ DELTA_RE = re.compile(
 )
 
 
-def _parse_color_deltas_shop7(text: str) -> List[Tuple[str, int]]:
+def _extract_specs_shop7_regex(text: str) -> List[Tuple[str, int]]:
     """
     解析颜色减价文本，返回 [(颜色标签, delta金额)] 列表。
     例如: "シルバー/ディープブルー-3000" → [("シルバー", -3000), ("ディープブルー", -3000)]
@@ -129,27 +135,6 @@ def _parse_color_deltas_shop7(text: str) -> List[Tuple[str, int]]:
 
 
 # ----------------------------------------------------------------------
-# Step 4: 颜色匹配
-# ----------------------------------------------------------------------
-
-def _label_matches_color_shop7(label_raw: str, col_raw: str, col_norm: str) -> bool:
-    """
-    判断提取的颜色标签是否匹配目标颜色。
-    匹配策略：精确(归一) | 原文子串。
-    """
-    label_norm = _norm_strip(label_raw)
-    # 精确匹配归一化颜色
-    if label_norm == col_norm:
-        return True
-    # 标签是原文颜色的子串
-    if label_norm and label_norm in _norm_strip(col_raw):
-        return True
-    if label_raw and label_raw in str(col_raw):
-        return True
-    return False
-
-
-# ----------------------------------------------------------------------
 # 清洗主函数
 # ----------------------------------------------------------------------
 
@@ -157,36 +142,13 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
     t_start = time.time()
     _log_seq = 0
 
-    logger.info(
-        "shop7 cleaner started",
-        extra={
-            "event_type": "cleaner_start",
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "log_seq": _log_seq,
-            "input_rows": len(df),
-            "extraction_mode": "regex",
-        },
-    )
+    log_cleaner_start(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), log_seq=_log_seq, extraction_mode="regex")
     _log_seq += 1
 
     # ── Step 1: 加载参考数据 & 输入验证 ──────────────────────────────
-    need_cols = ["data", "data2", "data3", "time-scraped"]
-    for c in need_cols:
-        if c not in df.columns:
-            logger.error(
-                f"Missing required column: {c}",
-                extra={
-                    "event_type": "validation_error",
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "log_seq": _log_seq,
-                    "missing_column": c,
-                    "available_columns": list(df.columns),
-                },
-            )
-            _log_seq += 1
-            raise ValueError(f"shop7 清洗器缺少必要列：{c}")
+    _log_seq = validate_columns(df, ["data", "data2", "data3", "time-scraped"],
+                                cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                                logger=logger, log_seq=_log_seq)
 
     info_df = _load_iphone17_info_df_from_db()
 
@@ -262,20 +224,10 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
 
         if not model_norm or pd.isna(c):
             _log_seq += 1
-            logger.debug(
-                f"Row {i}: skip (model/cap missing)",
-                extra={
-                    "event_type": "row_skip",
-                    "log_seq": _log_seq,
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "row_index": i,
-                    "model_text": model_text,
-                    "model_norm": model_norm or "",
-                    "capacity_gb": int(c) if pd.notna(c) else None,
-                    "skip_reason": "model_or_cap_missing",
-                },
-            )
+            log_row_skip(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                         row_index=i, skip_reason="model_or_cap_missing", log_seq=_log_seq,
+                         model_text=model_text, model_norm=model_norm or "",
+                         capacity_gb=int(c) if pd.notna(c) else None)
             continue
 
         cap_gb = int(c)
@@ -283,20 +235,9 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         color_map = pn_map.get(key)
         if not color_map:
             _log_seq += 1
-            logger.debug(
-                f"Row {i}: skip (no color_map for key={key})",
-                extra={
-                    "event_type": "row_skip",
-                    "log_seq": _log_seq,
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "row_index": i,
-                    "model_text": model_text,
-                    "model_norm": model_norm,
-                    "capacity_gb": cap_gb,
-                    "skip_reason": "no_color_map",
-                },
-            )
+            log_row_skip(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                         row_index=i, skip_reason="no_color_map", log_seq=_log_seq,
+                         model_text=model_text, model_norm=model_norm, capacity_gb=cap_gb)
             continue
 
         # ---- Step 3: 下一行是否为颜色减价行 ----
@@ -311,7 +252,7 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
 
             if is_color_line:
                 source_text_raw_full = nxt_data2
-                labels_and_deltas = _parse_color_deltas_shop7(nxt_data2)
+                labels_and_deltas = _extract_specs_shop7_regex(nxt_data2)
 
         extraction_method = "regex" if labels_and_deltas else "none"
 
@@ -325,7 +266,7 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         )
 
         new_rows, _log_seq = resolve_color_prices(
-            decomp, color_map, _label_matches_color_shop7,
+            decomp, color_map, _label_matches_color_unified,
             shop_name=SHOP_NAME, cleaner_name=CLEANER_NAME,
             recorded_at=rec_at,
             logger=logger, log_seq_start=_log_seq,
@@ -335,23 +276,8 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         rows.extend(new_rows)
 
     # ── 构建输出 DataFrame ───────────────────────────────────────────
-    out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
-    if not out.empty:
-        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
-        out["part_number"] = out["part_number"].astype(str)
-        out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
+    out = assemble_output_df(rows)
 
-    elapsed = round(time.time() - t_start, 2)
-    logger.info(
-        "shop7 cleaner completed",
-        extra={
-            "event_type": "cleaner_complete",
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "log_seq": _log_seq,
-            "output_rows": len(out),
-            "elapsed_seconds": elapsed,
-        },
-    )
+    log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=len(out), start_time=t_start, log_seq=_log_seq)
 
     return out

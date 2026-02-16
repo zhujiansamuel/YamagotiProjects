@@ -10,8 +10,8 @@ shop14_cleaner  —  買取楽園
     ├─ Step 3  base_price 提取
     ├─ Step 4  remark文本归一化（3列合并）
     ├─ Step 5  价格规则抽取 dispatch（EXTRACTION_MODE: regex / llm / auto）
-    │           ├─ regex路径: _extract_rules_shop14_regex()
-    │           └─ llm路径:   _extract_rules_shop14_llm_with_guardrails()
+    │           ├─ regex路径: _extract_specs_shop14_regex()
+    │           └─ llm路径:   _extract_specs_shop14_llm()
     ├─ Step 6  全色处理（all_delta 快捷路径）
     ├─ Step 7  label → color 匹配（家族同义词）
     ├─ Step 8  价格计算（abs优先 > base+delta > base）
@@ -40,10 +40,19 @@ from ..cleaner_tools import (
     PriceDecomposition,
     resolve_color_prices,
     _label_matches_color_unified,
+    assemble_output_df,
+    log_cleaner_start,
+    log_cleaner_complete,
+    coerce_amount_yen,
+    dispatch_extraction,
+    lx,
+    HAS_LANGEXTRACT,
+    log_llm_extraction_error,
     LABEL_SPLIT_RE_shop14,
     OLLAMA_URL,
     OLLAMA_MODEL_ID,
     EXTRACTION_MODE,
+    validate_columns,
 )
 
 # ---------------------------------------------------------------------------
@@ -99,37 +108,8 @@ def _split_labels(labels: str) -> List[str]:
     return [p.strip() for p in parts if p and p.strip()]
 
 
-def _coerce_amount_yen(v) -> Optional[int]:
-    if v is None:
-        return None
-    if isinstance(v, (int, float)):
-        try:
-            return int(v)
-        except Exception:
-            return None
-
-    s = str(v).strip()
-    if not s:
-        return None
-
-    sign = 1
-    if s[:1] in {"+", "＋"}:
-        s = s[1:].strip()
-    elif s[:1] in {"-", "−", "－"}:
-        sign = -1
-        s = s[1:].strip()
-
-    n = to_int_yen(s)
-    if n is None:
-        s2 = re.sub(r"[^\d]", "", s)
-        if not s2:
-            return None
-        try:
-            n = int(s2)
-        except Exception:
-            return None
-
-    return sign * int(n)
+# _coerce_amount_yen → cleaner_tools.coerce_amount_yen 统一导入
+_coerce_amount_yen = coerce_amount_yen
 
 
 def _labels_from_text_fallback(extraction_text: str) -> str:
@@ -252,7 +232,7 @@ def _split_color_amount_pairs_multi(txt: str) -> List[Tuple[str, int]]:
 # Step 7-A: 纯正则抽取路径
 # ---------------------------------------------------------------------------
 
-def _extract_rules_shop14_regex(
+def _extract_specs_shop14_regex(
     text: str,
 ) -> Dict[str, Union[Optional[int], List[Tuple[str, int]]]]:
     """
@@ -316,319 +296,91 @@ def _extract_rules_shop14_regex(
     return out
 
 
-# ---------------------------------------------------------------------------
-# Step 7-B: LangExtract (LLM) 路径
-# ---------------------------------------------------------------------------
-
-@lru_cache(maxsize=1)
-def _shop14_lx_prompt_and_examples():
-    import langextract as lx
-
-    prompt = textwrap.dedent(
-        """\
-        你是信息抽取系统。请从输入文本中抽取"按颜色的价格规则（円）"。
-
-        规则类型只有三类：
-        1) all_colors：文本出现"全色"，可选跟金额（例如"全色 -3000""全色 3000円"）。
-           表示所有颜色统一调整：final = base + amount_yen。若没写金额，amount_yen=0。
-        2) abs_group：颜色标签(一个或多个)后面出现一个金额（例如"青 229,500""青/銀 229500円"）。
-           表示这些颜色的最终价格等于该绝对金额。
-        3) delta_group：颜色标签(一个或多个)后面出现带正负号的金额（例如"橙 -2500""銀+1000"）。
-           表示这些颜色在基准价上加上差价（可为负）。
-
-        分隔符可能是空格、换行、"/""／""、"","";"等。多个颜色可能共用同一个金额（例如"青/銀 229,500"），
-        这种情况请把 attributes.labels 写成 "青/銀"（原样即可）。
-
-        输出要求（非常重要）：
-        - Use exact text for extraction_text（必须是原文连续子串，不要改写）。
-        - 只抽取原文明确出现的规则，不要推断/补全。
-        - attributes.amount_yen 必须是纯整数（去掉逗号/円/¥），差价允许负数。
-        - attributes.labels：颜色标签，字符串（单色就写单个；多色就用原文分隔符，如 "青/銀"）。
-        """
-    )
-
-    examples = [
-        lx.data.ExampleData(
-            text="青 229,500",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="abs_group",
-                    extraction_text="青 229,500",
-                    attributes={"labels": "青", "amount_yen": "229500"},
-                )
-            ],
-        ),
-        lx.data.ExampleData(
-            text="橙 -2500",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="delta_group",
-                    extraction_text="橙 -2500",
-                    attributes={"labels": "橙", "amount_yen": "-2500"},
-                )
-            ],
-        ),
-        lx.data.ExampleData(
-            text="全色 -3,000円",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="all_colors",
-                    extraction_text="全色 -3,000円",
-                    attributes={"amount_yen": "-3000"},
-                )
-            ],
-        ),
-        lx.data.ExampleData(
-            text="青/銀 229,500",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="abs_group",
-                    extraction_text="青/銀 229,500",
-                    attributes={"labels": "青/銀", "amount_yen": "229500"},
-                )
-            ],
-        ),
-        lx.data.ExampleData(
-            text="橙/銀 -2,500円",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="delta_group",
-                    extraction_text="橙/銀 -2,500円",
-                    attributes={"labels": "橙/銀", "amount_yen": "-2500"},
-                )
-            ],
-        ),
-        lx.data.ExampleData(
-            text="青 229,500\n橙 -2500",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="abs_group",
-                    extraction_text="青 229,500",
-                    attributes={"labels": "青", "amount_yen": "229500"},
-                ),
-                lx.data.Extraction(
-                    extraction_class="delta_group",
-                    extraction_text="橙 -2500",
-                    attributes={"labels": "橙", "amount_yen": "-2500"},
-                ),
-            ],
-        ),
-        lx.data.ExampleData(
-            text="全色",
-            extractions=[
-                lx.data.Extraction(
-                    extraction_class="all_colors",
-                    extraction_text="全色",
-                    attributes={"amount_yen": "0"},
-                )
-            ],
-        ),
-    ]
-
-    return prompt, examples
+# Step 7-B: LLM 路径 — 已提取到 shop_cleaners_split_llm/llm_shop14.py
+from ..shop_cleaners_split_llm.llm_shop14 import (
+    extract_specs_shop14_llm as _extract_specs_shop14_llm_impl,
+)
 
 
-@lru_cache(maxsize=4096)
-def _shop14_extract_rules_with_langextract(
-    text: str,
-) -> Dict[str, Union[Optional[int], List[Tuple[str, int]], List[dict]]]:
-    """
-    用 LangExtract(Ollama) 抽取规则。
-    返回: {"all_delta": Optional[int], "abs": [...], "delta": [...], "raw": [...]}
-    """
-    out: Dict = {"all_delta": None, "abs": [], "delta": [], "raw": []}
-    s = _clean_remark_frag(text)
-    if not s:
-        return out
-
-    import langextract as lx
-
-    prompt, examples = _shop14_lx_prompt_and_examples()
-
-    try:
-        result = lx.extract(
-            text_or_documents=s,
-            prompt_description=prompt,
-            examples=examples,
-            language_model_type=lx.inference.OllamaLanguageModel,
-            model_id=OLLAMA_MODEL_ID,
-            model_url=OLLAMA_URL,
-            fence_output=False,
-            use_schema_constraints=False,
-        )
-    except TypeError:
-        result = lx.extract(
-            text_or_documents=s,
-            prompt_description=prompt,
-            examples=examples,
-            model_id=OLLAMA_MODEL_ID,
-            model_url=OLLAMA_URL,
-            fence_output=False,
-            use_schema_constraints=False,
-        )
-
-    all_delta: Optional[int] = None
-    abs_list: List[Tuple[str, int]] = []
-    delta_list: List[Tuple[str, int]] = []
-
-    for e in (getattr(result, "extractions", None) or []):
-        cls = str(getattr(e, "extraction_class", "") or "").strip()
-        txt = str(getattr(e, "extraction_text", "") or "")
-        attrs = getattr(e, "attributes", {}) or {}
-
-        out["raw"].append({"class": cls, "text": txt, "attributes": attrs})
-
-        cls_l = cls.lower().strip()
-
-        # multi-pair 检测
-        multi_pairs = _split_color_amount_pairs_multi(txt)
-        if multi_pairs:
-            vals_abs = [abs(v) for _, v in multi_pairs]
-            kind: Optional[str] = None
-            if "abs" in cls_l:
-                kind = "abs"
-            elif "delta" in cls_l or "diff" in cls_l:
-                kind = "delta"
-            else:
-                if all(v >= 20000 for v in vals_abs):
-                    kind = "abs"
-                elif all(v <= 20000 for v in vals_abs):
-                    kind = "delta"
-                else:
-                    big = sum(1 for v in vals_abs if v >= 20000)
-                    kind = "abs" if big >= len(vals_abs) / 2.0 else "delta"
-
-            for label, amt in multi_pairs:
-                if kind == "abs":
-                    abs_list.append((label, abs(int(amt))))
-                else:
-                    delta_list.append((label, int(amt)))
-
-            logger.debug(
-                "[LangExtract-multi] multi-pair detected",
-                extra={
-                    "event_type": "llm_multi_pair",
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "extraction_text": _truncate_for_log(txt),
-                    "kind": kind,
-                    "pairs": str(multi_pairs),
-                },
-            )
-            continue
-
-        # 全色
-        amount = None
-        if isinstance(attrs, dict):
-            amount = _coerce_amount_yen(attrs.get("amount_yen")) or _coerce_amount_yen(
-                attrs.get("amount")
-            )
-        if amount is None:
-            amount = _coerce_amount_yen(txt)
-
-        if ("all" in cls_l) or ("全色" in txt):
-            all_delta = int(amount) if amount is not None else 0
-            continue
-
-        # 普通 abs/delta
-        labels_str = ""
-        if isinstance(attrs, dict):
-            labels_str = str(attrs.get("labels") or attrs.get("label") or "").strip()
-        if not labels_str:
-            labels_str = _labels_from_text_fallback(txt)
-
-        labels = _split_labels(labels_str)
-
-        kind = None
-        if "abs" in cls_l:
-            kind = "abs"
-        elif "delta" in cls_l or "diff" in cls_l:
-            kind = "delta"
-        else:
-            if amount is not None and abs(int(amount)) >= 20000:
-                kind = "abs"
-            elif amount is not None:
-                kind = "delta"
-
-        if not kind or amount is None or not labels:
-            continue
-
-        if kind == "abs":
-            v = abs(int(amount))
-            for lb in labels:
-                abs_list.append((lb, v))
-        else:
-            v = int(amount)
-            for lb in labels:
-                delta_list.append((lb, v))
-
-    out["all_delta"] = all_delta
-    out["abs"] = abs_list
-    out["delta"] = delta_list
-    return out
-
-
-def _extract_rules_shop14_llm_with_guardrails(
-    text: str,
-) -> Dict[str, Union[Optional[int], List[Tuple[str, int]]]]:
-    """LLM抽取 + Guardrails（仅LLM路径应用）"""
-    try:
-        parsed = _shop14_extract_rules_with_langextract(text)
-    except Exception as exc:
-        logger.warning(
-            "LLM extraction failed, returning empty",
-            extra={
-                "event_type": "llm_extraction_error",
-                "shop_name": SHOP_NAME,
-                "cleaner_name": CLEANER_NAME,
-                "error": str(exc),
-                "text_snippet": _truncate_for_log(text, 120),
-                "model_id": OLLAMA_MODEL_ID,
-                "model_url": OLLAMA_URL,
-            },
-        )
-        return {"all_delta": None, "abs": [], "delta": []}
-
-    return {
-        "all_delta": parsed.get("all_delta"),
-        "abs": parsed.get("abs", []),
-        "delta": parsed.get("delta", []),
-    }
+def _extract_specs_shop14_llm(text: str) -> Dict[str, Union[Optional[int], List[Tuple[str, int]]]]:
+    return _extract_specs_shop14_llm_impl(text, split_color_amount_pairs_multi_fn=_split_color_amount_pairs_multi)
 
 
 # ---------------------------------------------------------------------------
 # Step 7-C: Dispatch（三模式路由）
 # ---------------------------------------------------------------------------
 
-def _extract_rules_shop14_dispatch(
+def _extract_specs_shop14_parse(
     text: str,
     mode: str = EXTRACTION_MODE,
 ) -> Tuple[Dict[str, Union[Optional[int], List[Tuple[str, int]]]], str]:
     """
-    三模式路由。
+    单 fragment 三模式路由。
     返回: (parsed_dict, extraction_method)
     parsed_dict = {"all_delta": ..., "abs": [...], "delta": [...]}
     """
-    if mode == "regex":
-        parsed = _extract_rules_shop14_regex(text)
-        return parsed, "regex"
-
-    if mode == "llm":
-        parsed = _extract_rules_shop14_llm_with_guardrails(text)
-        return parsed, "llm"
-
-    # auto: regex first, LLM fallback
-    parsed = _extract_rules_shop14_regex(text)
-    has_results = (
-        parsed.get("all_delta") is not None
-        or parsed.get("abs")
-        or parsed.get("delta")
+    return dispatch_extraction(
+        mode,
+        regex_fn=lambda: _extract_specs_shop14_regex(text),
+        llm_fn=lambda: _extract_specs_shop14_llm(text),
+        has_result_fn=lambda r: (
+            r.get("all_delta") is not None or r.get("abs") or r.get("delta")
+        ),
     )
-    if has_results:
-        return parsed, "regex"
 
-    parsed = _extract_rules_shop14_llm_with_guardrails(text)
-    return parsed, "llm"
+
+def _extract_specs_shop14_dispatch(
+    frags: Dict[str, str],
+    combined: str,
+    *,
+    base_price: int,
+    source_text_raw: str,
+) -> PriceDecomposition:
+    """
+    多 fragment 聚合 + PriceDecomposition 構築。
+
+    frags の各値を _extract_specs_shop14_parse() で解析し結果を集約。
+    全 fragment が空の場合は combined テキストで再試行。
+    """
+    agg_all_delta: Optional[int] = None
+    agg_abs: List[Tuple[str, int]] = []
+    agg_delta: List[Tuple[str, int]] = []
+    extraction_method = "none"
+
+    for _col, frag in frags.items():
+        if not frag:
+            continue
+        parsed, method = _extract_specs_shop14_parse(frag)
+        if parsed.get("all_delta") is not None:
+            agg_all_delta = int(parsed["all_delta"])
+        agg_abs.extend(parsed.get("abs") or [])
+        agg_delta.extend(parsed.get("delta") or [])
+        extraction_method = method
+
+    # 兜底：逐列都没抽到，合并串再跑一次
+    if combined and (agg_all_delta is None) and (not agg_abs) and (not agg_delta):
+        parsed2, method2 = _extract_specs_shop14_parse(combined)
+        if parsed2.get("all_delta") is not None:
+            agg_all_delta = int(parsed2["all_delta"])
+        agg_abs.extend(parsed2.get("abs") or [])
+        agg_delta.extend(parsed2.get("delta") or [])
+        extraction_method = method2
+
+    # ---- 全色预处理 ----
+    delta_specs: List[Tuple[str, int]] = list(agg_delta)
+    abs_specs: List[Tuple[str, int]] = list(agg_abs)
+
+    if agg_all_delta is not None:
+        delta_specs = [("全色", agg_all_delta)]
+        abs_specs = []
+
+    return PriceDecomposition(
+        base_price=base_price,
+        delta_specs=delta_specs,
+        abs_specs=abs_specs,
+        extraction_method=extraction_method,
+        source_text_raw=source_text_raw,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -639,34 +391,13 @@ def clean_shop14(df: "pd.DataFrame", debug: bool = True) -> "pd.DataFrame":
     t_start = time.time()
     _log_seq = 0
 
-    logger.info(
-        "shop14 cleaner started",
-        extra={
-            "event_type": "cleaner_start",
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "log_seq": _log_seq,
-            "input_rows": len(df),
-            "extraction_mode": EXTRACTION_MODE,
-        },
-    )
+    log_cleaner_start(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), log_seq=_log_seq, extraction_mode=EXTRACTION_MODE)
     _log_seq += 1
 
     # ---- 列校验 ----
-    for c in ["name", "data6", "price2", "time-scraped"]:
-        if c not in df.columns:
-            logger.error(
-                f"Missing required column: {c}",
-                extra={
-                    "event_type": "validation_error",
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "log_seq": _log_seq,
-                    "column": c,
-                },
-            )
-            _log_seq += 1
-            raise ValueError(f"shop14 清洗器缺少必要列：{c}")
+    _log_seq = validate_columns(df, ["name", "data6", "price2", "time-scraped"],
+                                cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                                logger=logger, log_seq=_log_seq)
 
     remark_cols_map = _resolve_remark_cols(df)
 
@@ -711,46 +442,10 @@ def clean_shop14(df: "pd.DataFrame", debug: bool = True) -> "pd.DataFrame":
 
         combined = " ".join([v for v in frags.values() if v]).strip()
 
-        # ---- 逐列抽取 + 聚合 ----
-        agg_all_delta: Optional[int] = None
-        agg_abs: List[Tuple[str, int]] = []
-        agg_delta: List[Tuple[str, int]] = []
-        extraction_method = "none"
-
-        for col, frag in frags.items():
-            if not frag:
-                continue
-            parsed, method = _extract_rules_shop14_dispatch(frag)
-
-            if parsed.get("all_delta") is not None:
-                agg_all_delta = int(parsed["all_delta"])
-            agg_abs.extend(parsed.get("abs") or [])
-            agg_delta.extend(parsed.get("delta") or [])
-            extraction_method = method
-
-        # 兜底：逐列都没抽到，合并串再跑一次
-        if combined and (agg_all_delta is None) and (not agg_abs) and (not agg_delta):
-            parsed2, method2 = _extract_rules_shop14_dispatch(combined)
-            if parsed2.get("all_delta") is not None:
-                agg_all_delta = int(parsed2["all_delta"])
-            agg_abs.extend(parsed2.get("abs") or [])
-            agg_delta.extend(parsed2.get("delta") or [])
-            extraction_method = method2
-
-        # ---- 全色预处理 + 统一为 specs 格式 ----
-        delta_specs: List[Tuple[str, int]] = list(agg_delta)
-        abs_specs: List[Tuple[str, int]] = list(agg_abs)
-
-        if agg_all_delta is not None:
-            delta_specs = [("全色", agg_all_delta)]
-            abs_specs = []
-
-        # ---- PriceDecomposition + resolve_color_prices ----
-        decomp = PriceDecomposition(
+        # ---- 提取 + 聚合 ----
+        decomp = _extract_specs_shop14_dispatch(
+            frags, combined,
             base_price=base_price,
-            delta_specs=delta_specs,
-            abs_specs=abs_specs,
-            extraction_method=extraction_method,
             source_text_raw=combined,
         )
         new_rows, _log_seq = resolve_color_prices(
@@ -771,23 +466,8 @@ def clean_shop14(df: "pd.DataFrame", debug: bool = True) -> "pd.DataFrame":
         rows.extend(new_rows)
 
     # ---- 输出 DataFrame 组装 ----
-    out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
-    if not out.empty:
-        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
-        out["part_number"] = out["part_number"].astype(str)
-        out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
+    out = assemble_output_df(rows)
 
-    elapsed = round(time.time() - t_start, 2)
-    logger.info(
-        "shop14 cleaner completed",
-        extra={
-            "event_type": "cleaner_complete",
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "log_seq": _log_seq,
-            "output_rows": len(out),
-            "elapsed_seconds": elapsed,
-        },
-    )
+    log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=len(out), start_time=t_start, log_seq=_log_seq)
 
     return out

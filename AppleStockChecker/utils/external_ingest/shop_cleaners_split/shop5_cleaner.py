@@ -7,54 +7,16 @@ shop5_1～shop5_4 为同一店铺不同数据源变体，逻辑相同，统一�
 """
 from __future__ import annotations
 
-import os
+import logging
 import re
-import time
-from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import pandas as pd
 
 from ...external_ingest.helpers import parse_dt_aware
-from ..cleaner_tools import extract_price_yen
+from ..cleaner_tools import extract_price_yen, assemble_output_df, validate_columns, _load_jan_to_pn_from_csv, log_cleaner_start
 
-
-def _resolve_info_path() -> Path:
-    try:
-        from django.conf import settings
-        p = getattr(settings, "EXTERNAL_IPHONE17_INFO_PATH", None)
-        if p:
-            return Path(p)
-    except Exception:
-        pass
-    envp = os.getenv("IPHONE17_INFO_CSV")
-    if envp and Path(envp).exists():
-        return Path(envp)
-    return Path(__file__).resolve().parents[2] / "data" / "iphone17_info.csv"
-
-
-def _load_jan_to_pn() -> Dict[str, str]:
-    """
-    返回 { jan(13位字符串) : part_number } 的字典。
-    若 info 文件没有 jan 列，则返回空字典。
-    """
-    path = _resolve_info_path()
-    if not path.exists():
-        return {}
-    if re.search(r"\.(xlsx|xlsm|xls|ods)$", str(path), re.I):
-        df = pd.read_excel(path)
-    else:
-        df = pd.read_csv(path, encoding="utf-8-sig")
-
-    if "part_number" not in df.columns:
-        return {}
-
-    if "jan" in df.columns:
-        df = df.copy()
-        df["jan"] = df["jan"].astype(str).str.replace(r"[^\d]", "", regex=True)
-        df = df[df["jan"].str.fullmatch(r"\d{13}", na=False)]
-        return dict(zip(df["jan"].astype(str), df["part_number"].astype(str)))
-    return {}
+logger = logging.getLogger(__name__)
 
 
 def _extract_jan_from_data(x: object) -> Optional[str]:
@@ -80,12 +42,10 @@ def _clean_shop5_soramimi(df: pd.DataFrame, variant: str) -> pd.DataFrame:
     shop_name 固定 '森森買取'
     """
     # 必要列检查
-    need_cols = ["price", "data", "name", "time-scraped"]
-    for c in need_cols:
-        if c not in df.columns:
-            raise ValueError(f"shop5-{variant} 清洗器缺少必要列：{c}")
+    validate_columns(df, ["price", "data", "name", "time-scraped"],
+                     cleaner_name=f"shop5-{variant}", shop_name="森森買取")
 
-    print(f"shop5-{variant}:森森買取---------->进入清洗器时间：", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+    log_cleaner_start(logger, cleaner_name=f"shop5-{variant}", shop_name="森森買取", input_rows=len(df))
 
     # 1) 过滤掉 name 含"中古"的行
     src = df.copy()
@@ -99,7 +59,7 @@ def _clean_shop5_soramimi(df: pd.DataFrame, variant: str) -> pd.DataFrame:
         return pd.DataFrame(columns=["part_number", "shop_name", "price_new", "recorded_at"])
 
     # 3) 载入 JAN -> PN 映射
-    jan_to_pn = _load_jan_to_pn()
+    jan_to_pn = _load_jan_to_pn_from_csv()
 
     # 4) 逐列解析
     jan_series = src["data"].map(_extract_jan_from_data)
@@ -123,10 +83,7 @@ def _clean_shop5_soramimi(df: pd.DataFrame, variant: str) -> pd.DataFrame:
             "recorded_at": ts,
         })
 
-    out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
-    if not out.empty:
-        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
-        out["part_number"] = out["part_number"].astype(str)
+    out = assemble_output_df(rows, coerce_price=False)
     return out
 
 

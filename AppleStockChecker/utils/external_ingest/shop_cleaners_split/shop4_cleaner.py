@@ -10,15 +10,15 @@ shop4 清洗器 — モバイルミックス
     │
     ├─ _normalize_amount_text()              ← Step 2: 全角→半角归一化
     │
-    ├─ _parse_color_delta_shop4_regex()      ← Step 3: 正则提取单行色差
+    ├─ _extract_specs_shop4_regex_line()      ← Step 3: 正则提取单行色差
     │
-    ├─ _collect_adjustments_shop4_dispatch() ← Step 4: 模式调度（EXTRACTION_MODE）
+    ├─ _extract_specs_shop4_dispatch() ← Step 4: 模式调度（EXTRACTION_MODE）
     │   │
     │   ├─ regex 路径:
-    │   │   └─ _collect_adjustments_shop4_regex()   ← Step 5a: 正则逐行收集
+    │   │   └─ _extract_specs_shop4_regex_block()   ← Step 5a: 正则逐行收集
     │   │
     │   └─ llm 路径:
-    │       ├─ _collect_adjustments_shop4_llm()      ← Step 5b: LLM 核心提取
+    │       ├─ _extract_specs_shop4_llm()             ← Step 5b: LLM 核心提取
     │       └─ Guardrails (coerce + validate)        ← Step 6: 防幻觉过滤
     │
     ├─ _label_matches_color_unified()       ← Step 7: 标签→颜色匹配（cleaner_tools 统一）
@@ -27,11 +27,8 @@ shop4 清洗器 — モバイルミックス
 """
 
 import logging
-import os
 import re
-import textwrap
 import time
-from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -44,14 +41,15 @@ from ..cleaner_tools import (
     _normalize_model_generic,
     _load_iphone17_info_df_from_db,
     _build_color_map,
-    _truncate_for_log,
     _norm_strip,
     _normalize_amount_text,
-    normalize_text_basic,
     _label_matches_color_unified,
+    assemble_output_df,
+    log_cleaner_start,
+    log_cleaner_complete,
+    validate_columns,
+    dispatch_extraction,
     LABEL_SPLIT_RE_shop4 as LABEL_SPLIT_RE,
-    OLLAMA_URL,
-    OLLAMA_MODEL_ID,
     EXTRACTION_MODE,
 )
 
@@ -77,24 +75,6 @@ _norm = _norm_strip
 # Step 1: 全角→半角 & 金额归一化
 # ----------------------------------------------------------------------
 # LABEL_SPLIT_RE: 从 cleaner_tools.LABEL_SPLIT_RE_shop4 导入
-
-def _coerce_int_maybe(v) -> Optional[int]:
-    if v is None:
-        return None
-    if isinstance(v, int):
-        return v
-    if isinstance(v, float):
-        return int(v)
-    s = str(v).strip()
-    if not s:
-        return None
-    sign = 1
-    if s[0] in ("-", "−", "－"):
-        sign = -1
-    amt = _normalize_amount_text(s)
-    if amt is None:
-        return None
-    return sign * int(amt)
 
 def _split_labels(label: str) -> List[str]:
     return [p.strip() for p in LABEL_SPLIT_RE.split(label or "") if p and p.strip()]
@@ -168,7 +148,7 @@ _COLOR_DELTA_RE = re.compile(
     re.VERBOSE,
 )
 
-def _parse_color_delta_shop4_regex(line: str) -> Optional[List[Tuple[str, int]]]:
+def _extract_specs_shop4_regex_line(line: str) -> Optional[List[Tuple[str, int]]]:
     if not line or not isinstance(line, str):
         return None
     s = line.strip()
@@ -240,7 +220,7 @@ def _parse_color_delta_shop4_regex(line: str) -> Optional[List[Tuple[str, int]]]
 _SHOP4_LINE_SPLIT_BY_YEN_SLASH = re.compile(r"円\s*[／/]\s*")
 
 
-def _collect_adjustments_shop4_regex(
+def _extract_specs_shop4_regex_block(
     df: pd.DataFrame, start_idx: int,
 ) -> Tuple[Dict[str, int], List[Tuple[str, int]], Dict[str, str]]:
     """
@@ -277,7 +257,7 @@ def _collect_adjustments_shop4_regex(
             seg = seg.strip()
             if not seg:
                 continue
-            parsed = _parse_color_delta_shop4_regex(seg)
+            parsed = _extract_specs_shop4_regex_line(seg)
             if not parsed:
                 continue
             for label, delta in parsed:
@@ -294,329 +274,45 @@ def _collect_adjustments_shop4_regex(
 # Step 5b: LLM 核心提取
 # ----------------------------------------------------------------------
 
-try:
-    import langextract as lx
-    from langextract.data import ExampleData, Extraction
-    _HAS_LANGEXTRACT = True
-except Exception:
-    lx = None
-    ExampleData = None
-    Extraction = None
-    _HAS_LANGEXTRACT = False
-
-_SHOP4_LE_PROMPT = textwrap.dedent("""\
-You are extracting structured information from a Japanese iPhone pricing table.
-
-Input text contains one or more lines. A relevant line expresses:
-- a color label (e.g., シルバー, ディープブルー) OR 全色 (means "all colors"),
-- optionally followed by a signed yen adjustment amount.
-
-Rules:
-- Extract one item per color label.
-- extraction_text MUST be the exact color label substring from the input (do not translate).
-- attributes MUST include delta_yen as an integer (negative for discounts).
-- Sign can be + or - and may include unicode minus characters: '−' or '－'.
-- Amount may include commas and/or full-width digits.
-- If a line indicates 全色 but has no amount, set delta_yen = 0.
-- If a line does not express a color adjustment, output no extractions.
-""").strip()
-
-@lru_cache()
-def _get_shop4_le_examples():
-    if not _HAS_LANGEXTRACT:
-        return []
-
-    examples = [
-        ExampleData(
-            text="シルバー-1,000円",
-            extractions=[
-                Extraction(
-                    extraction_class="color_delta",
-                    extraction_text="シルバー",
-                    attributes={"delta_yen": -1000},
-                )
-            ],
-        ),
-        ExampleData(
-            text="シルバー/ディープブルー-3,000円",
-            extractions=[
-                Extraction(
-                    extraction_class="color_delta",
-                    extraction_text="シルバー",
-                    attributes={"delta_yen": -3000},
-                ),
-                Extraction(
-                    extraction_class="color_delta",
-                    extraction_text="ディープブルー",
-                    attributes={"delta_yen": -3000},
-                ),
-            ],
-        ),
-        ExampleData(
-            text="全色-2,000円",
-            extractions=[
-                Extraction(
-                    extraction_class="color_delta",
-                    extraction_text="全色",
-                    attributes={"delta_yen": -2000},
-                ),
-            ],
-        ),
-        ExampleData(
-            text="全色",
-            extractions=[
-                Extraction(
-                    extraction_class="color_delta",
-                    extraction_text="全色",
-                    attributes={"delta_yen": 0},
-                ),
-            ],
-        ),
-        ExampleData(
-            text="ブルー ＋０円",
-            extractions=[
-                Extraction(
-                    extraction_class="color_delta",
-                    extraction_text="ブルー",
-                    attributes={"delta_yen": 0},
-                ),
-            ],
-        ),
-        ExampleData(
-            text="全色－２，０００円",
-            extractions=[
-                Extraction(
-                    extraction_class="color_delta",
-                    extraction_text="全色",
-                    attributes={"delta_yen": -2000},
-                ),
-            ],
-        ),
-    ]
-    return examples
-
-def _lx_extract_color_deltas(text: str) -> list:
-    """
-    对 text 做一次 LangExtract 抽取，返回 result.extractions（若不可用则空列表）。
-    """
-    if not (_HAS_LANGEXTRACT and isinstance(text, str) and text.strip()):
-        return []
-
-    import langextract as lx
-
-    kwargs = dict(
-        text_or_documents=text,
-        prompt_description=_SHOP4_LE_PROMPT,
-        examples=_get_shop4_le_examples(),
-        model_id=OLLAMA_MODEL_ID,
-        model_url=OLLAMA_URL,
-        fence_output=False,
-        use_schema_constraints=False,
-        extraction_passes=1,
-        max_workers=1,
-        max_char_buffer=1500,
-        temperature=0.0,
-        language_model_params={
-            "timeout": 60,
-            "keep_alive": 10 * 60,
-        },
-    )
-
-    # 兼容不同版本：有的版本建议显式指定 OllamaLanguageModel
-    try:
-        if hasattr(lx, "inference") and hasattr(lx.inference, "OllamaLanguageModel"):
-            kwargs["language_model_type"] = lx.inference.OllamaLanguageModel
-    except Exception:
-        pass
-
-    try:
-        result = lx.extract(**kwargs)
-    except Exception:
-        return []
-
-    exts = getattr(result, "extractions", None)
-    return list(exts) if exts else []
-
-def _get_start_pos(extraction) -> int:
-    ci = getattr(extraction, "char_interval", None)
-    if ci is None:
-        return 0
-    for attr in ("start_pos", "start", "begin"):
-        if hasattr(ci, attr):
-            try:
-                return int(getattr(ci, attr))
-            except Exception:
-                pass
-    if isinstance(ci, dict):
-        for k in ("start_pos", "start", "begin"):
-            if k in ci:
-                try:
-                    return int(ci[k])
-                except Exception:
-                    pass
-    return 0
-
-# ----------------------------------------------------------------------
-# Step 6: LLM + Guardrails（仅 LLM 路径使用）
-# ----------------------------------------------------------------------
-
-def _collect_adjustments_shop4_llm_with_guardrails(
-    df: pd.DataFrame,
-    start_idx: int,
-    row_index: object = None,
-) -> Tuple[Dict[str, int], List[Tuple[str, int]], Dict[str, str]]:
-    """
-    用 LangExtract 一次性解析"机种段落"(block)里的所有颜色±金额，
-    并应用 guardrails 过滤幻觉。
-    返回：(adjustments, delta_specs, color_delta_label_map)
-    """
-    _empty: Tuple[Dict[str, int], List[Tuple[str, int]], Dict[str, str]] = ({}, [], {})
-    lines: List[str] = []
-    n = len(df)
-
-    # 收集 block 文本：从 start_idx 到下一个 data11 非空前一行
-    # 排除「纯金额行且下一行为机型行」的下一 block 基准价行
-    for j in range(start_idx, n):
-        if j > start_idx:
-            nxt_model = ""
-            val = df["data11"].iat[j] if "data11" in df.columns else ""
-            nxt_model = str(val) if val is not None else ""
-            if nxt_model.strip():
-                break
-            if _is_next_model_base_price_row(df, j, n):
-                break
-        raw = df["data"].iat[j] if "data" in df.columns else ""
-        lines.append("" if raw is None else str(raw))
-
-    if not lines:
-        return _empty
-
-    block_text = "\n".join(lines)
-
-    # 计算每一行在 block_text 的范围，用于识别"同一行(机种行)的全色"
-    line0_start = 0
-    line0_end = len(lines[0]) if lines else 0
-
-    try:
-        exts = _lx_extract_color_deltas(block_text)
-    except Exception as e:
-        logger.warning(
-            "LangExtract extraction failed",
-            extra={
-                "event_type": "llm_extraction_error",
-                "shop_name": SHOP_NAME,
-                "cleaner_name": CLEANER_NAME,
-                "error": str(e),
-                "error_type": type(e).__name__,
-                "model_id": OLLAMA_MODEL_ID,
-                "model_url": OLLAMA_URL,
-                "row_index": row_index,
-                "text_length": len(block_text),
-                "text_preview": _truncate_for_log(block_text, 100),
-            },
-        )
-        return _empty
-
-    if not exts:
-        return _empty
-
-    # 按出现顺序处理，保持覆盖逻辑一致
-    exts = sorted(exts, key=_get_start_pos)
-
-    result: Dict[str, int] = {}
-    delta_specs: List[Tuple[str, int]] = []
-    color_delta_label_map: Dict[str, str] = {}
-    global_all_delta: Optional[int] = None
-
-    for ex in exts:
-        cls = str(getattr(ex, "extraction_class", "") or "").strip()
-        if cls and cls.lower() not in {"color_delta", "colordelta", "color"}:
-            # 防止模型乱输出其他类（Guardrail: class filter）
-            continue
-
-        label = str(getattr(ex, "extraction_text", "") or "").strip()
-        if not label:
-            continue
-
-        # Guardrail: label 必须在原文中出现
-        if label not in block_text:
-            continue
-
-        attrs = getattr(ex, "attributes", None)
-        attrs = attrs if isinstance(attrs, dict) else {}
-        delta = _coerce_int_maybe(attrs.get("delta_yen"))
-        if delta is None:
-            # 兜底：如果是"全色"且无金额，按 0
-            if "全色" in label and not re.search(r"[0-9０-９]", block_text):
-                delta = 0
-            else:
-                continue
-
-        # Guardrail: delta 金额的绝对值必须在原文中出现（防幻觉金额）
-        block_text_no_commas = block_text.replace(",", "").replace("，", "")
-        if delta != 0 and str(abs(int(delta))) not in block_text_no_commas:
-            continue
-
-        start_pos = _get_start_pos(ex)
-
-        # same-line（机种行同一行 data）里的 全色：作为最高优先级的 ALL
-        if "全色" in label and line0_start <= start_pos < max(line0_end, line0_start):
-            global_all_delta = int(delta)
-
-        # label 可能是复合项，拆分后分别写入
-        for lbl in _split_labels(label):
-            delta_specs.append((lbl, int(delta)))
-            if "全色" in lbl:
-                result["ALL"] = int(delta)
-            else:
-                nk = _norm(lbl)
-                result[nk] = int(delta)
-                color_delta_label_map[nk] = lbl
-
-    # 同行全色优先覆盖
-    if global_all_delta is not None:
-        result["ALL"] = int(global_all_delta)
-
-    return result, delta_specs, color_delta_label_map
+# LLM 相关代码已提取到 shop_cleaners_split_llm/llm_shop4.py
+from ..shop_cleaners_split_llm.llm_shop4 import (
+    extract_specs_shop4_llm as _extract_specs_shop4_llm,
+)
 
 # ----------------------------------------------------------------------
 # Step 7: 提取模式调度
 # ----------------------------------------------------------------------
 
-def _collect_adjustments_shop4_dispatch(
+def _extract_specs_shop4_dispatch(
     df: pd.DataFrame,
     start_idx: int,
+    *,
+    base_price: int,
+    source_text_raw: str,
     row_index: object = None,
-) -> Tuple[Dict[str, int], str, List[Tuple[str, int]], Dict[str, str]]:
+) -> PriceDecomposition:
     """
     根据 EXTRACTION_MODE 决定提取方式：
       - "regex": 只用正则
       - "llm":   只用 LLM + Guardrails
       - "auto":  正则优先，正则无颜色结果时 LLM + Guardrails 兜底
 
-    返回 (adjustments, extraction_method, delta_specs, color_delta_label_map)
+    返回 PriceDecomposition
     """
-    mode = EXTRACTION_MODE
-
-    if mode == "regex":
-        result, ds, cdl = _collect_adjustments_shop4_regex(df, start_idx)
-        return result, "regex", ds, cdl
-
-    if mode == "llm":
-        result, ds, cdl = _collect_adjustments_shop4_llm_with_guardrails(
-            df, start_idx, row_index=row_index,
-        )
-        return result, "llm", ds, cdl
-
-    # ---- auto: 正則優先，正則無颜色结果时 LLM 兜底 ----
-    regex_result, ds, cdl = _collect_adjustments_shop4_regex(df, start_idx)
-    if regex_result:
-        return regex_result, "regex", ds, cdl
-
-    llm_result, ds, cdl = _collect_adjustments_shop4_llm_with_guardrails(
-        df, start_idx, row_index=row_index,
+    (_, ds, _), method = dispatch_extraction(
+        EXTRACTION_MODE,
+        regex_fn=lambda: _extract_specs_shop4_regex_block(df, start_idx),
+        llm_fn=lambda: _extract_specs_shop4_llm(df, start_idx, row_index=row_index),
+        has_result_fn=lambda r: bool(r[0]),  # r = (adjustments, delta_specs, label_map)
     )
-    return llm_result, "llm", ds, cdl
+
+    return PriceDecomposition(
+        delta_specs=list(ds),
+        abs_specs=[],
+        extraction_method=method,
+        base_price=base_price,
+        source_text_raw=source_text_raw,
+    )
 
 # ----------------------------------------------------------------------
 # Step 8: 清洗主函数
@@ -626,34 +322,12 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
     start_time = time.time()
     _log_seq = 0
 
-    logger.info(
-        "shop4 cleaner started",
-        extra={
-            "event_type": "cleaner_start",
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "log_seq": _log_seq,
-            "input_rows": len(df),
-            "extraction_mode": EXTRACTION_MODE,
-        },
-    )
+    log_cleaner_start(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), log_seq=_log_seq, extraction_mode=EXTRACTION_MODE)
     _log_seq += 1
 
-    for c in ["data", "data11", "time-scraped"]:
-        if c not in df.columns:
-            logger.error(
-                f"Missing required column: {c}",
-                extra={
-                    "event_type": "validation_error",
-                    "shop_name": SHOP_NAME,
-                    "cleaner_name": CLEANER_NAME,
-                    "log_seq": _log_seq,
-                    "missing_column": c,
-                    "available_columns": list(df.columns),
-                },
-            )
-            _log_seq += 1
-            raise ValueError(f"shop4 清洗器缺少必要列：{c}")
+    _log_seq = validate_columns(df, ["data", "data11", "time-scraped"],
+                                cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME,
+                                logger=logger, log_seq=_log_seq)
 
     info_df = _load_iphone17_info_df_from_db()
     pn_map = _build_color_map(info_df)
@@ -693,10 +367,6 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         if base_price is None:
             continue
 
-        # ---- 提取 ----
-        _, extraction_method, delta_specs_raw, _ = \
-            _collect_adjustments_shop4_dispatch(df, i, row_index=i)
-
         # ---- 收集 block 文本（source_text_raw_full） ----
         # 排除「纯金额行且下一行为机型行」的下一 block 基准价行，避免日志误导
         block_lines_raw = []
@@ -708,13 +378,12 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
                 block_lines_raw.append(raw.strip())
         source_text_raw_full = " | ".join(block_lines_raw)
 
-        # ---- PriceDecomposition + resolve_color_prices ----
-        decomp = PriceDecomposition(
+        # ---- 提取 ----
+        decomp = _extract_specs_shop4_dispatch(
+            df, i,
             base_price=base_price,
-            delta_specs=list(delta_specs_raw),
-            abs_specs=[],
-            extraction_method=extraction_method,
             source_text_raw=source_text_raw_full,
+            row_index=i,
         )
 
         new_rows, _log_seq = resolve_color_prices(
@@ -734,24 +403,8 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         )
         rows.extend(new_rows)
 
-    out = pd.DataFrame(rows, columns=["part_number", "shop_name", "price_new", "recorded_at"])
-    if not out.empty:
-        out = out.dropna(subset=["part_number", "price_new"]).reset_index(drop=True)
-        out["part_number"] = out["part_number"].astype(str)
-        out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
+    out = assemble_output_df(rows)
 
-    elapsed = round(time.time() - start_time, 2)
-    logger.info(
-        "shop4 cleaner completed",
-        extra={
-            "event_type": "cleaner_complete",
-            "shop_name": SHOP_NAME,
-            "cleaner_name": CLEANER_NAME,
-            "log_seq": _log_seq,
-            "input_rows": len(df),
-            "output_records": len(out),
-            "elapsed_seconds": elapsed,
-        },
-    )
+    log_cleaner_complete(logger, cleaner_name=CLEANER_NAME, shop_name=SHOP_NAME, input_rows=len(df), output_records=len(out), start_time=start_time, log_seq=_log_seq)
 
     return out
