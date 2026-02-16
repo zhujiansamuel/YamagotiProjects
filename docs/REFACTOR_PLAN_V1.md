@@ -387,7 +387,7 @@ psycopg2-binary          # PG 读取原始数据
 
 - **数据摄入层**: WebScraper tasks, shop cleaners, DataIngestionLog
 - **PG 原始数据表**: Iphone, SecondHandShop, PurchasingShopPriceRecord, OfficialStore, InventoryRecord
-- **AutoML pipeline**: AutomlCausalJob, automl_tasks.py, gpu_utils.py (CuPy)
+- **AutoML pipeline**: AutomlCausalJob, automl_tasks.py, utils/automl_tasks/gpu_utils.py (CuPy)
 - **Django Admin**: SimpleUI/SimplePro 管理界面
 - **认证/权限**: JWT + Session 认证体系
 - **WebSocket**: consumers.py 实时通知

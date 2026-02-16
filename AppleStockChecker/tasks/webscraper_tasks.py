@@ -29,12 +29,12 @@ from django.utils import timezone
 from AppleStockChecker.models import Iphone, SecondHandShop, PurchasingShopPriceRecord, DataIngestionLog
 from AppleStockChecker.utils.external_ingest.registry import run_cleaner
 from AppleStockChecker.utils.external_ingest.webscraper import fetch_webscraper_export_sync
-from AppleStockChecker.utils.redis_temp_storage import (
+from AppleStockChecker.utils.webscraper_tasks.redis_temp_storage import (
     store_dataframe,
     retrieve_dataframe,
     make_redis_key,
 )
-from AppleStockChecker.utils.shop_queue_mapping import (
+from AppleStockChecker.utils.webscraper_tasks.shop_queue_mapping import (
     get_shop_queue,
     get_cleaner_name,
 )

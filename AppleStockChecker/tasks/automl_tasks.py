@@ -12,7 +12,7 @@ import numpy as np
 import logging
 
 # 导入 GPU 工具模块
-from AppleStockChecker.utils.gpu_utils import (
+from AppleStockChecker.utils.automl_tasks.gpu_utils import (
     check_gpu_availability,
     get_array_module,
     to_cpu,

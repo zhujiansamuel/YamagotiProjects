@@ -3,13 +3,14 @@ import logging
 from datetime import timedelta
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
-from AppleStockChecker.collectors import collect_items_for_psta
-from AppleStockChecker.utils.timebox import nearest_past_minute_iso
-
-from AppleStockChecker.ws_notify import (
+from AppleStockChecker.utils.timestamp_alignment_task import (
+    collect_items_for_psta,
+    nearest_past_minute_iso,
     notify_progress_all,
     notify_batch_items_all,
     notify_batch_done_all,
+    FeatureWriter,
+    FeatureRecord,
 )
 from typing import Any, Dict, List, Optional
 from collections import Counter, defaultdict
@@ -20,7 +21,6 @@ from decimal import Decimal, ROUND_HALF_UP
 import os
 import logging
 from typing import Any, Callable, Dict, Iterable, Tuple, Optional, Union
-from AppleStockChecker.features.api import FeatureWriter, FeatureRecord
 from typing import Optional, Dict, Any, List
 
 logger = logging.getLogger(__name__)
@@ -1836,8 +1836,7 @@ def _run_aggregation(
     )
     from django.utils import timezone
     from AppleStockChecker.models import OverallBar
-    # FeatureWriter / FeatureRecord 需要在模块顶部 import：
-    # from AppleStockChecker.features import FeatureWriter, FeatureRecord
+    # FeatureWriter / FeatureRecord 已在模块顶部从 utils.timestamp_alignment_task 导入
 
     WATERMARK_MINUTES = 5
     now = timezone.now()

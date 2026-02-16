@@ -3,16 +3,17 @@ from uuid import uuid4
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
-from .tasks.timestamp_alignment_task import batch_generate_psta_same_ts
+from AppleStockChecker.tasks.timestamp_alignment_task import (
+    batch_generate_psta_same_ts,
+    psta_finalize_buckets,
+)
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticatedOrReadOnly, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
-from AppleStockChecker.tasks.timestamp_alignment_task import batch_generate_psta_same_ts
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from celery import shared_task, chord
-from .tasks.timestamp_alignment_task import psta_finalize_buckets
 
 def _to_aware(dt_or_iso):
     """接受 datetime 或 ISO 字符串，返回 aware datetime（项目时区）。"""
@@ -69,7 +70,7 @@ def dispatch_psta_batch_same_ts(request):
     '''
     触发示例（无需 body）
     最简单：空 POST（JWT 头按需加）
-    # 空 body 触发，任务内默认收集“最近15分钟”的一批
+    # 空 body 触发，任务内默认收集"最近15分钟"的一批
     curl -X POST "http://127.0.0.1:8000/AppleStockChecker/purchasing-time-analyses/dispatch_ts/"
 
     指定收集窗口/限流（可选）
@@ -106,46 +107,3 @@ def dispatch_psta_batch_same_ts(request):
         task_id=job_id,
     )
     return Response({"task_id": async_res.id, "job_id": job_id}, status=status.HTTP_202_ACCEPTED)
-
-
-# @api_view(["POST"])
-# @permission_classes([AllowAny])
-# def dispatch_psta_range(request):
-#     """
-#     POST body:
-#       {
-#         "start": "2025-10-01T00:00:00+09:00",
-#         "end":   "2025-11-01T00:00:00+09:00",
-#         "shop_ids": [...],         # 可选
-#         "iphone_ids": [...],       # 可选
-#         "step_minutes": 1,         # 可选；15分钟桶可以传15
-#         "query_window_minutes": 15,# 拉取窗口
-#         "max_items": 1000          # 限流
-#       }
-#     """
-#     body = request.data or {}
-#     job_id = body.get("job_id") or uuid4().hex
-#     start = _to_aware(body["start"])
-#     end   = _to_aware(body["end"])
-#     step  = int(body.get("step_minutes", 1))
-#     # 生成时间序列（建议倒序），并发控制交给 Celery
-#     ts_list = []
-#     cur = end
-#     while cur >= start:
-#         ts_list.append(cur.isoformat(timespec="seconds"))
-#         cur = cur - timezone.timedelta(minutes=step)
-#
-#     # 组装并发子任务（或分批次多次 apply_async）
-#     subtasks = [
-#         batch_generate_psta_same_ts.s(
-#             job_id=job_id,
-#             timestamp_iso=ts_iso,
-#             query_window_minutes=body.get("query_window_minutes", 15),
-#             shop_ids=body.get("shop_ids"),
-#             iphone_ids=body.get("iphone_ids"),
-#             max_items=body.get("max_items"),
-#         ) for ts_iso in ts_list
-#     ]
-#     # 并发数可用 chord+chunks 控制；或者逐批次 apply_async
-#     chord_res = chord(subtasks)(psta_finalize_buckets.s(job_id, ts_list[0]))
-#     return Response({"job_id": job_id, "count": len(ts_list), "chord_id": chord_res.id}, status=202)

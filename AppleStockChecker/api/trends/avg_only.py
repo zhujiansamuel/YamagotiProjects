@@ -1,14 +1,13 @@
-from .trends_core import compute_trends_for_model_capacity
-
-from rest_framework.decorators import api_view, permission_classes
+from .core import compute_trends_for_model_capacity
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+
 class TrendsAvgOnlyApiView(APIView):
     """
     POST /AppleStockChecker/api/trends/model-colors/avg-only/
-    请求体与 /model-colors/ 完全一致，但仅返回平均线（A/B/C），不带店铺明细，以加速“只重算平均线”的场景。
+    请求体与 /model-colors/ 完全一致，但仅返回平均线（A/B/C），不带店铺明细，以加速"只重算平均线"的场景。
     """
     permission_classes = [IsAuthenticated]
 

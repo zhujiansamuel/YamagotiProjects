@@ -48,11 +48,9 @@ from .views_frontend import (
     RawPriceChartsView,
     PstaRawChartsView,
 )
-from .api_trends_TrendsAvgOnly import TrendsAvgOnlyApiView
-from .api_trends_model_colors import trends_model_colors
-from .api_trends_color_std import TrendsColorStdApiView
-from .api import dispatch_psta_batch_same_ts
-from .api_automl import (
+from .api.trends import trends_model_colors, TrendsAvgOnlyApiView, TrendsColorStdApiView
+from .api.api import dispatch_psta_batch_same_ts
+from .api.api_automl import (
     TriggerPreprocessingRapidView,
     TriggerCauseAndEffectTestingView,
     TriggerQuantificationOfImpactView,
@@ -65,7 +63,7 @@ from .api_automl import (
     AutoMLJobResultView,
     CompletedJobsListView,
 )
-from .api_goods_sync import (
+from .api.api_goods_sync import (
     GoodsSyncFetchView,
     GoodsMappingsView,
     GoodsMappingStatisticsView,

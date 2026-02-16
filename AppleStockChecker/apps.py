@@ -7,8 +7,7 @@ class ApplestockcheckerConfig(AppConfig):
     verbose_name = "Iphone价格监控"
 
     def ready(self):
-        # 激活 SQLite PRAGMA 与 Celery 连接防腐
-        from . import db_sqlite_tweaks  # noqa: F401
-        from . import celery_sqlite_safety  # noqa: F401
+        # Celery worker 连接安全（fork 后关闭继承连接、任务前清理过期连接）
+        from . import celery_db_connection_safety  # noqa: F401
 
 

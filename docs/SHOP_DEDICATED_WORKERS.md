@@ -369,7 +369,7 @@ curl -X POST "http://localhost:8000/AppleStockChecker/purchasing-price-records/i
 **解决方案**:
 1. 确保 shop worker 已启动并正常运行
 2. 检查 Redis 连接是否正常
-3. 如需增加 TTL，修改 `redis_temp_storage.py` 中的 `DEFAULT_TTL`
+3. 如需增加 TTL，修改 `utils/webscraper_tasks/redis_temp_storage.py` 中的 `DEFAULT_TTL`
 
 ### Q2: 如何查看某个 shop 队列的长度？
 
@@ -491,8 +491,8 @@ find logs/ -name "*.log" -mtime +7 -delete
 
 ### 代码实现位置
 
-- **Redis 临时存储**: `AppleStockChecker/utils/redis_temp_storage.py`
-- **队列映射**: `AppleStockChecker/utils/shop_queue_mapping.py`
+- **Redis 临时存储**: `AppleStockChecker/utils/webscraper_tasks/redis_temp_storage.py`
+- **队列映射**: `AppleStockChecker/utils/webscraper_tasks/shop_queue_mapping.py`
 - **任务定义**: `AppleStockChecker/tasks/webscraper_tasks.py`
 - **Celery 配置**: `YamagotiProjects/celery.py`
 

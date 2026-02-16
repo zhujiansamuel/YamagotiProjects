@@ -1,12 +1,8 @@
-from .trends_core import compute_trends_for_model_capacity
-from .models import Iphone, PurchasingShopPriceRecord
+from .core import compute_trends_for_model_capacity, _norm_name
+from ...models import PurchasingShopPriceRecord
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-
-def _norm_name(s: str) -> str:
-    """统一店名/字符串比较：去首尾空白"""
-    return (s or "").strip()
 
 
 @api_view(["POST"])

@@ -1,10 +1,8 @@
 # AppleStockChecker/utils/external_ingest/registry.py
 from __future__ import annotations
-from typing import Callable, Dict
+from typing import Dict, Protocol
 import pandas as pd
-# from .base_cleaners import CLEANERS, Cleaner
-from .base_cleaners import Cleaner
-#
+
 from .shop_cleaners_split.shop1_cleaner import clean_shop1
 from .shop_cleaners_split.shop2_cleaner import clean_shop2
 from .shop_cleaners_split.shop3_cleaner import clean_shop3
@@ -24,6 +22,11 @@ from .shop_cleaners_split.shop16_cleaner import clean_shop16
 from .shop_cleaners_split.shop17_cleaner import clean_shop17
 from .shop_cleaners_split.shop18_cleaner import clean_shop18
 from .shop_cleaners_split.shop20_cleaner import clean_shop20
+
+
+class Cleaner(Protocol):
+    def __call__(self, df: pd.DataFrame) -> pd.DataFrame: ...
+
 
 CLEANERS = {
     "shop1":  clean_shop1,
