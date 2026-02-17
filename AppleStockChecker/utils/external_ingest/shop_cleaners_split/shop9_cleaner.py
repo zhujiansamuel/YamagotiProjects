@@ -4,395 +4,310 @@ from __future__ import annotations
 shop9 清洗器 — アキモバ
 
   原始文本（買取価格 + 色・詳細等）
-    │ 配置: EXTRACTION_MODE / OLLAMA_URL / OLLAMA_MODEL_ID (cleaner_tools)
-    │
-    ├─ _coerce_signed_int()                  ← Step 1: 金額解析（全角→半角、符号処理）
-    │
-    ├─ _bucket_amount()                      ← Step 2: abs/delta 分類（量級・符号ヒント）
-    │
-    ├─ dispatch_extraction_to_price_decomposition() ← Step 7: モード調度（EXTRACTION_MODE）
-    │   │
-    │   ├─ regex 路径:
-    │   │   ├─ _extract_specs_shop9_regex()       ← Step 5: 正則提取（内含 abs/delta 辅助）
-    │   │   └─ _direct_abs_overrides_for_row()    ← Step 5c: テキスト直接覆写
-    │   │
-    │   └─ llm 路径:
-    │       ├─ _extract_specs_shop9_llm_core()        ← Step 6a: LLM 核心提取
-    │       └─ _bucket_amount() guardrail         ← Step 6b: abs/delta 防幻觉過濾
-    │
-    ├─ _map_to_available_color()             ← Step 3: ラベル→カラーマッチング（cleaner_tools 统一）
-    │
-    └─ clean_shop9()                         ← Step 8: 主函数、出力行生成
+    两阶段流水线（与 shop17/16/15/14/12/11 对齐）:
+    ├─ _clean_shop9_text()                 ← 合并 買取価格 + 色・詳細等，归一化
+    ├─ 前置  all_delta 检测（全色±N）
+    ├─ 阶段 1  _match_shop9()              ← NONE_RE / DELTA_RE(分支) / ABS_RE
+    ├─ expand_match_tokens()
+    ├─ 阶段 2  match_tokens_to_specs()
+    ├─ _label_matches_color_unified()
+    └─ clean_shop9()                        ← 主函数
+
+  [暂未启用] _direct_abs_overrides_for_row：按「alias + 金額」在原文中扫描覆盖 abs，
+    已注释。若需恢复，取消注释主流程中的调用与 _merge_abs_overrides 即可。
 """
 
 import logging
 import os
 import re
-import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import pandas as pd
-from ...external_ingest.cleaner_tools import parse_dt_aware
+from ...external_ingest.cleaner_tools import to_int_yen, parse_dt_aware
 from ..cleaner_tools import (
     extract_price_yen,
     _parse_capacity_gb,
     _normalize_model_generic,
-    _truncate_for_log,
     _norm_strip,
-    _normalize_amount_text,
     normalize_text_basic,
     PriceDecomposition,
     resolve_color_prices,
     _label_matches_color_unified,
+    MatchToken,
+    FORMAT_HINT_SIGNED,
+    FORMAT_HINT_SEP_MINUS,
+    FORMAT_HINT_AFTER_YEN,
+    FORMAT_HINT_PLAIN_DIGITS,
+    FORMAT_HINT_COLON_PREFIX,
+    FORMAT_HINT_NONE,
+    expand_match_tokens,
+    match_tokens_to_specs,
     LABEL_SPLIT_RE_shop9,
-    SYNONYM_LOOKUP_NORM,
     EXTRACTION_MODE,
     log_row_skip,
-    coerce_signed_int,
-    dispatch_extraction_to_price_decomposition,
     setup_color_cleaner,
     finalize_color_cleaner,
+    coerce_amount_yen,
 )
 
-# 初始化 logger
+# ----------------------------------------------------------------------
+# Logging
+# ----------------------------------------------------------------------
+
 logger = logging.getLogger(__name__)
 
 CLEANER_NAME = "shop9"
 SHOP_NAME = "アキモバ"
 
-# DEBUG 功能现在由 logging 级别控制（在 settings.py 的 LOGGING 配置中）
-# 控制台显示 INFO 级别（简洁），文件记录 DEBUG 级别（详細）
-
 # ----------------------------------------------------------------------
 # 配置
 # ----------------------------------------------------------------------
 
-ABS_LIKE_MIN = int(os.getenv("SHOP9_ABS_LIKE_MIN", "50000"))  # iPhone17 绝对价量级阈值
-
+ABS_LIKE_MIN = int(os.getenv("SHOP9_ABS_LIKE_MIN", "50000"))  # 绝对价量级阈值（_direct_abs_overrides 用，目前未启用）
 COL_MODEL = "機種名"
 COL_PRICE = "買取価格"
 COL_COLOR = "色・詳細等"
-COL_TIME  = "time-scraped"
+COL_TIME = "time-scraped"
 
 # ----------------------------------------------------------------------
 # 辅助工具函数
 # ----------------------------------------------------------------------
 
-_norm = _norm_strip  # 颜色匹配用归一化（去空格 + 转小写）
+_norm = _norm_strip
 
 
-def _norm_cls(x: str) -> str:
-    # 容错：abs price / abs-price / ABS_PRICE 统一
-    s = (x or "").strip().lower()
-    s = s.replace("-", "_").replace(" ", "_")
-    return s
-
-# ----------------------------------------------------------------------
-# Step 1: 金額解析
-# ----------------------------------------------------------------------
-
-# _coerce_signed_int → cleaner_tools.coerce_signed_int 统一导入
-_coerce_signed_int = coerce_signed_int
-
-# _norm_amount_to_int は cleaner_tools._normalize_amount_text に統一
-_norm_amount_to_int = _normalize_amount_text
-
-# ----------------------------------------------------------------------
-# Step 2: abs/delta 分類
-# ----------------------------------------------------------------------
-
-DELTA_HINT_RE = re.compile(r"(?:[+\-−－]|値下げ|値引|割引|円引|OFF|オフ|減額)", re.I)
-
-def _bucket_amount(cls_norm: str, ex_text: str, amt: int) -> str:
+def _clean_shop9_text(s_price: str, s_color: str) -> str:
     """
-    返回 "abs" 或 "delta"
-    规则：
-      - 有负号/折扣词/加减符号 => delta
-      - 金额量级很大(>=ABS_LIKE_MIN)且无加减线索 => abs（即使模型标成 delta）
-      - 其余按 class；不认识则按金额量级兜底
+    合并 買取価格 + 色・詳細等，归一化后供阶段 1 匹配。
     """
-    tx = ex_text or ""
-    if amt is None:
-        return "delta"
-    if amt < 0:
-        return "delta"
-    if DELTA_HINT_RE.search(tx):
-        return "delta"
-    if abs(amt) >= ABS_LIKE_MIN:
-        return "abs"
-    if cls_norm in {"abs_price", "abs", "absolute"}:
-        return "abs"
-    if cls_norm in {"delta", "delta_price", "adjust", "adjustment"}:
-        return "delta"
-    return "delta"
+    parts = [s.strip() for s in (s_price or "", s_color or "") if s and str(s).strip()]
+    if not parts:
+        return ""
+    combined = " ".join(parts)
+    s = combined.replace("\u3000", " ").replace("\xa0", " ")
+    s = re.sub(r"\s+", " ", s).strip()
+    return normalize_text_basic(s)
+
 
 # ----------------------------------------------------------------------
-# Step 3: 颜色家族同义词 & マッチング
+# [暂未启用] _direct_abs_overrides：按「颜色别名 + 紧随金额」在色・詳細等中扫描，补充 abs。
+# 作用：当主正则未覆盖「黒 193,500円」等格式时，按别名+金额兜底。
+# 恢复时：1) 取消下方函数注释 2) 导入 SYNONYM_LOOKUP_NORM, _merge_abs_overrides
+#         3) 取消主流程中 overrides 与 _merge_abs_overrides 的调用
 # ----------------------------------------------------------------------
-# 原逻辑：FAMILY_SYNONYMS_SHOP9 = {...}; SYNONYM_LOOKUP 由 for _k,_vs 循环构建
-#   每个 key/val 映射到同族列表。现改用 cleaner_tools.SYNONYM_LOOKUP_NORM（去除空格版本）
+# def _extract_amount_after_alias(text: str, alias: str) -> Optional[int]:
+#     """在 text 中查找 'alias 193,500' / 'alias193,500円' 等，返回 alias 后紧跟的数字。"""
+#     if not text or not alias:
+#         return None
+#     pat = re.compile(rf"{re.escape(alias)}\s*(?:¥|￥)?\s*([0-9０-９][0-9０-９,，]*)")
+#     m = pat.search(str(text))
+#     if not m:
+#         return None
+#     from ..cleaner_tools import _normalize_amount_text
+#     return _normalize_amount_text(m.group(1))
+#
+# def _direct_abs_overrides_for_row(raw_color_text: str, color_to_pn: Dict[str, str]) -> Dict[str, int]:
+#     """按每个颜色的别名扫描 raw_color_text，得到 {color_norm: amount}。仅接受 >= ABS_LIKE_MIN 的金额。"""
+#     overrides: Dict[str, int] = {}
+#     if not raw_color_text:
+#         return overrides
+#     s = str(raw_color_text)
+#     for col_norm in color_to_pn.keys():
+#         aliases = {col_norm} | {str(syn).strip() for syn in SYNONYM_LOOKUP_NORM.get(col_norm, [])}
+#         for alias in aliases:
+#             if not alias:
+#                 continue
+#             val = _extract_amount_after_alias(s, alias)
+#             if val is not None and val >= ABS_LIKE_MIN:
+#                 overrides[col_norm] = int(val)
+#                 break
+#     return overrides
+# ----------------------------------------------------------------------
 
-def _build_color_aliases(available_colors: List[str]) -> Dict[str, List[str]]:
-    # 原逻辑：syns = SYNONYM_LOOKUP.get(c0, []); out[c0]=[c0]+syns
-    out = {}
-    for c in available_colors:
-        c0 = str(c).strip()
-        if not c0:
+# ----------------------------------------------------------------------
+# 正则模式（NONE_RE + DELTA_RE + ABS_RE，与 shop17/16/14/12/11 对齐）
+# ----------------------------------------------------------------------
+
+SPLIT_TOKENS_RE_shop9 = re.compile(r"[／/、，]|(?:\s*;\s*)|;|；|\n")
+
+COLOR_NONE_RE_shop9 = re.compile(
+    r"""(?P<label>[^：:\-\s/、／，,\n]+(?:\([^)]*\))?)\s*
+        (?:(?P<sep>[：:\-])\s*)?
+        (?:減額)?なし
+    """,
+    re.UNICODE | re.VERBOSE,
+)
+
+COLOR_DELTA_RE_shop9 = re.compile(
+    r"""(?P<label>[^\d：:\-\s/、／\n]+(?:\([^)]*\))?)\s*
+        (?P<sep>[：:\-])?\s*
+        (?P<sign>[+\-−－])?\s*
+        (?P<amount>\d[\d,]*)\s*(?:円)?
+    """,
+    re.UNICODE | re.VERBOSE,
+)
+
+COLOR_ABS_RE_shop9 = re.compile(
+    r"""(?P<label>[^\d：:\-\s/、／￥円\n]+(?:\([^)]*\))?)\s*[￥¥]\s*(?P<amount>\d[\d,]*)\s*(?:円)?""",
+    re.UNICODE,
+)
+
+_ALL_DELTA_RE_shop9 = re.compile(r"全色\s*(?:[+\-−－])?\s*(\d[\d,]*)\s*(?:円)?")
+
+_BAD_LABEL_WORDS_shop9 = ("利用制限", "保証", "郵送", "持ち込み", "開始", "未満", "減額", "SIM", "制限")
+
+
+def _normalize_label_shop9(lbl: str) -> str:
+    """归一化颜色标签。"""
+    if not lbl:
+        return ""
+    s = re.sub(r"[\s\u3000\xa0]+", "", str(lbl))
+    s = re.sub(r"(カラー|色)$", "", s)
+    return s.strip()
+
+
+def _is_plausible_color_label_shop9(label: str) -> bool:
+    """过滤非颜色标签。全色由前置步骤处理，此处排除。"""
+    label = _normalize_label_shop9(label)
+    if not label or label in ("全色", "ALL"):
+        return False
+    if label.startswith(("△", "▲")) or re.search(r"\d", label):
+        return False
+    if len(label) > 16 or any(w in label for w in _BAD_LABEL_WORDS_shop9):
+        return False
+    return True
+
+
+# ----------------------------------------------------------------------
+# 阶段 1：匹配（输出 MatchToken，含 pending_labels）
+# ----------------------------------------------------------------------
+
+def _match_shop9(text: str) -> List[MatchToken]:
+    """
+    阶段 1 匹配：从合并后的 買取価格+色・詳細等 文本中提取 MatchToken[]。
+    使用 NONE_RE / DELTA_RE(分支) / ABS_RE，支持 pending_labels。
+    期望 text 已由 _clean_shop9_text 预处理。
+    """
+    tokens: List[MatchToken] = []
+    if not text:
+        return tokens
+
+    s = str(text).strip()
+    if not s or s.lower() == "nan":
+        return tokens
+
+    parts = [p.strip() for p in SPLIT_TOKENS_RE_shop9.split(s) if p and p.strip()]
+    if not parts:
+        parts = [s.strip()]
+
+    pending_labels: List[str] = []
+    position = 0
+
+    for part in parts:
+        m0 = COLOR_NONE_RE_shop9.search(part)
+        if m0:
+            label_raw = _normalize_label_shop9(m0.group("label"))
+            if _is_plausible_color_label_shop9(label_raw):
+                tokens.append(MatchToken(
+                    label=label_raw,
+                    amount_int=0,
+                    format_hint=FORMAT_HINT_NONE,
+                    position=position,
+                ))
+                position += 1
+            pending_labels = []
             continue
-        c0_norm = _norm(c0)
-        syns = SYNONYM_LOOKUP_NORM.get(c0_norm, [])
-        out[c0] = list(dict.fromkeys([c0] + syns))[:20]
-    return out
 
-def _map_to_available_color(raw_color: str, available_set: set) -> Optional[str]:
-    if not raw_color:
+        has_amount_in_part = False
+        for m in COLOR_ABS_RE_shop9.finditer(part):
+            has_amount_in_part = True
+            label_raw = _normalize_label_shop9(m.group("label"))
+            if not _is_plausible_color_label_shop9(label_raw):
+                continue
+            amt = to_int_yen(m.group("amount"))
+            if amt is None:
+                continue
+            tokens.append(MatchToken(
+                label=label_raw,
+                amount_int=int(amt),
+                format_hint=FORMAT_HINT_AFTER_YEN,
+                position=position,
+            ))
+            position += 1
+        if has_amount_in_part:
+            pending_labels = []
+            continue
+
+        has_delta_in_part = False
+        for m in COLOR_DELTA_RE_shop9.finditer(part):
+            has_delta_in_part = True
+            label_raw = _normalize_label_shop9(m.group("label"))
+            if not _is_plausible_color_label_shop9(label_raw):
+                continue
+            sep = m.group("sep")
+            sign = m.group("sign")
+            amt = to_int_yen(m.group("amount"))
+            if amt is None:
+                continue
+            amt_val = int(amt)
+            if sign:
+                negative = sign in ("-", "−", "－")
+                amount_int = -amt_val if negative else amt_val
+                hint = FORMAT_HINT_SIGNED
+            elif sep and sep in ("-", "−", "－"):
+                amount_int = -amt_val
+                hint = FORMAT_HINT_SEP_MINUS
+            elif sep and sep in ("：", ":"):
+                amount_int = amt_val
+                hint = FORMAT_HINT_COLON_PREFIX
+            else:
+                amount_int = amt_val
+                hint = FORMAT_HINT_PLAIN_DIGITS
+
+            tok = MatchToken(label=label_raw, amount_int=amount_int, format_hint=hint, position=position)
+            tokens.append(tok)
+            position += 1
+            for pl in pending_labels:
+                pl_norm = _normalize_label_shop9(pl)
+                if pl_norm and _is_plausible_color_label_shop9(pl_norm):
+                    tokens.append(MatchToken(
+                        label=pl_norm,
+                        amount_int=amount_int,
+                        format_hint=hint,
+                        position=position,
+                    ))
+                    position += 1
+            pending_labels = []
+        if has_delta_in_part:
+            continue
+
+        for tok in LABEL_SPLIT_RE_shop9.split(part):
+            tok = _normalize_label_shop9(tok)
+            if tok:
+                pending_labels.append(tok)
+
+    return tokens
+
+
+def _detect_all_delta(text: str) -> Optional[int]:
+    """前置步骤：检测全色统一减额。"""
+    if not text:
         return None
-    rc = str(raw_color).strip()
-    if not rc:
+    s = str(text).strip().replace("\u3000", " ").replace("\xa0", " ")
+    s = re.sub(r"\s+", " ", s).strip()
+    s = normalize_text_basic(s)
+    if not s:
         return None
-
-    if rc.upper() == "ALL" or rc == "全色":
-        return "ALL"
-
-    if rc in available_set:
-        return rc
-
-    # 小写等价
-    rcn = _norm(rc)
-    for c in available_set:
-        if _norm(c) == rcn:
-            return c
-
-    # 同义词兜底（原逻辑：if rc in SYNONYM_LOOKUP: for syn in SYNONYM_LOOKUP[rc]: ...）
-    if rcn in SYNONYM_LOOKUP_NORM:
-        for syn_norm in SYNONYM_LOOKUP_NORM[rcn]:
-            for c in available_set:
-                if _norm(c) == syn_norm:
-                    return c
-
-    # 包含关系兜底
-    for c in available_set:
-        cn = _norm(c)
-        if rcn and (rcn in cn or cn in rcn):
-            return c
-
+    m = _ALL_DELTA_RE_shop9.search(s)
+    if m:
+        return coerce_amount_yen(m.group(0).replace("全色", "").strip()) or 0
+    if "全色" in s:
+        return 0
     return None
 
-# ----------------------------------------------------------------------
-# 标签→颜色匹配（2025-02 替换为 cleaner_tools 统一实现）
-# ----------------------------------------------------------------------
-# 原 shop9 独立实现已迁移至 cleaner_tools._label_matches_color_unified，
-# 合并 shop3/4/9/11/12/14/15/16/17 逻辑。全色/ALL 由 resolve_color_prices 的 is_all 处理。
 
 # ----------------------------------------------------------------------
-# Step 4: 正则模式定义
-# ----------------------------------------------------------------------
-# LABEL_SPLIT_RE_shop9: 从 cleaner_tools 导入
-
-ABS_PRICE_RE = re.compile(
-    r"(?P<labels>[^0-9０-９¥￥円]+?)\s*(?:¥|￥)?\s*(?P<amount>[０-９0-9][０-９0-9,，]*)\s*(?:円)?",
-    re.I,
-)
-DELTA_RE = re.compile(
-    r"(?P<labels>[^0-9０-９¥￥円]+?)\s*[：:\-]?\s*(?P<sign>[+\-−－])\s*(?:¥|￥)?\s*(?P<amount>[０-９0-9][０-９0-9,，]*)\s*(?:円)?",
-    re.I,
-)
-
-# ----------------------------------------------------------------------
-# Step 5: 正則提取関数
-# ----------------------------------------------------------------------
-
-def _extract_amount_after_alias(text: str, alias: str) -> Optional[int]:
-    """
-    在 text 中查找形如 'alias 193,500' / 'alias193,500' / 'alias 193500円' 这种片段，
-    只取 alias 后面"最近的那串数字"。
-    不吃减价形式 'alias-500円'（中间有 '-'）。
-    """
-    if not text or not alias:
-        return None
-    s = str(text)
-
-    # 允许 alias 后有若干空白，再跟可选的货币符号，再跟数字
-    pat = re.compile(
-        rf"{re.escape(alias)}\s*(?:¥|￥)?\s*([0-9０-９][0-9０-９,，]*)"
-    )
-    m = pat.search(s)
-    if not m:
-        return None
-    return _norm_amount_to_int(m.group(1))
-
-def _direct_abs_overrides_for_row(
-        raw_color_text: str,
-        color_to_pn: Dict[str, str],
-) -> Dict[str, int]:
-    """
-    针对当前行，直接在 raw_color_text 里按"每个颜色的别名 -> 紧随其后的数字"扫描，
-    得到 per-color 的绝对价覆盖表：{color_norm: amount_yen}。
-    只接受金额 >= ABS_LIKE_MIN，避免把 -500 / 500 之类 delta 当成 abs。
-    """
-    overrides: Dict[str, int] = {}
-    if not raw_color_text:
-        return overrides
-
-    s = str(raw_color_text)
-    for col_norm in color_to_pn.keys():
-        # 构建该颜色的别名集合：自身 + 同义词（原逻辑：SYNONYM_LOOKUP.get(col_norm, [])）
-        aliases = {col_norm}
-        for syn in SYNONYM_LOOKUP_NORM.get(col_norm, []):
-            aliases.add(str(syn).strip())
-        amt_for_color: Optional[int] = None
-        for alias in aliases:
-            alias = alias.strip()
-            if not alias:
-                continue
-            val = _extract_amount_after_alias(s, alias)
-            if val is not None and val >= ABS_LIKE_MIN:
-                amt_for_color = val
-                break
-        if amt_for_color is not None:
-            overrides[col_norm] = int(amt_for_color)
-
-    return overrides
-
-def _extract_specs_shop9_regex(
-    s_price: str,
-    s_color: str,
-    color_to_pn: Dict[str, str],
-) -> Tuple[Dict[str, int], Dict[str, int],
-           List[Tuple[str, int]], List[Tuple[str, int]],
-           Dict[str, str], Dict[str, str]]:
-    """
-    纯正則版：从 price/color 文本中提取。
-    返回: abs_map, delta_map, abs_specs, delta_specs,
-          color_abs_label_map, color_delta_label_map
-    """
-
-    def _is_pure_number_token(tok: str) -> bool:
-        if not tok:
-            return False
-        t = _norm(tok)
-        t = t.replace(",", "").replace("，", "")
-        return t.isdigit()
-
-    def _extract_abs_prices_regex(text: str) -> List[Tuple[str, int]]:
-        out: List[Tuple[str, int]] = []
-        if not text:
-            return out
-        s = str(text)
-        for m in ABS_PRICE_RE.finditer(s):
-            labels_part = (m.group("labels") or "").strip()
-            amt = _norm_amount_to_int(m.group("amount"))
-            if amt is None:
-                continue
-            toks = [t.strip() for t in LABEL_SPLIT_RE_shop9.split(labels_part) if t.strip()]
-            for tok in toks:
-                if _is_pure_number_token(tok):
-                    continue
-                out.append((tok, int(amt)))
-        return out
-
-    def _extract_deltas_regex(text: str) -> List[Tuple[str, int]]:
-        out: List[Tuple[str, int]] = []
-        if not text:
-            return out
-        s = str(text)
-        for m in DELTA_RE.finditer(s):
-            labels_part = m.group("labels") or ""
-            sign = m.group("sign") or "+"
-            amt = _norm_amount_to_int(m.group("amount"))
-            if amt is None:
-                continue
-            delta = -int(amt) if sign in ("-", "−", "－") else int(amt)
-            toks = [t.strip() for t in LABEL_SPLIT_RE_shop9.split(labels_part) if t.strip()]
-            for tok in toks:
-                if _is_pure_number_token(tok):
-                    continue
-                out.append((tok, delta))
-        if not out and "全色" in s:
-            out.append(("全色", 0))
-        return out
-
-    abs_map: Dict[str, int] = {}
-    delta_map: Dict[str, int] = {}
-    color_abs_label_map: Dict[str, str] = {}
-    color_delta_label_map: Dict[str, str] = {}
-
-    abs_list = _extract_abs_prices_regex(s_color) or _extract_abs_prices_regex(s_price)
-    deltas = _extract_deltas_regex(s_color) or _extract_deltas_regex(s_price)
-
-    # raw specs（提取阶段的原始标签列表）
-    abs_specs: List[Tuple[str, int]] = list(abs_list)
-    delta_specs: List[Tuple[str, int]] = list(deltas)
-
-    def _match_label_to_colnorm(tok: str) -> Optional[str]:
-        # 原逻辑：candidates = SYNONYM_LOOKUP.get(tok_norm,[])|{tok_norm}; for cand: candn=_norm(cand); if candn==cn or ...
-        if not tok:
-            return None
-        tok_norm = _norm(tok)
-        for col_norm in color_to_pn.keys():
-            if tok_norm == col_norm:
-                return col_norm
-        candidates = set(SYNONYM_LOOKUP_NORM.get(tok_norm, []))
-        candidates.add(tok_norm)
-        for cand in candidates:
-            candn = _norm(cand)  # cand 来自 SYNONYM_LOOKUP_NORM 已归一化，_norm 幂等
-            for col_norm in color_to_pn.keys():
-                cn = _norm(col_norm)
-                if candn == cn or candn in cn or cn in candn:
-                    return col_norm
-        tok_short = re.sub(r"[\s\u3000\-]+", "", tok_norm)
-        for col_norm in color_to_pn.keys():
-            cn_short = re.sub(r"[\s\u3000\-]+", "", _norm(col_norm))
-            if tok_short and (tok_short in cn_short or cn_short in tok_short):
-                return col_norm
-        return None
-
-    for label_raw, amt in abs_list:
-        toks = [t.strip() for t in LABEL_SPLIT_RE_shop9.split(label_raw) if t.strip()]
-        for tok in toks:
-            if _is_pure_number_token(tok):
-                continue
-            matched = _match_label_to_colnorm(tok)
-            if matched:
-                abs_map[matched] = int(amt)
-                color_abs_label_map[matched] = tok
-
-    for label_raw, delta in deltas:
-        if label_raw == "全色":
-            delta_map["ALL"] = int(delta)
-            continue
-        toks = [t.strip() for t in LABEL_SPLIT_RE_shop9.split(label_raw) if t.strip()]
-        for tok in toks:
-            if _is_pure_number_token(tok):
-                continue
-            matched = _match_label_to_colnorm(tok)
-            if matched:
-                delta_map[matched] = int(delta)
-                color_delta_label_map[matched] = tok
-
-    return abs_map, delta_map, abs_specs, delta_specs, color_abs_label_map, color_delta_label_map
-
-# ----------------------------------------------------------------------
-# Step 6: LLM 配置 & 核心提取函数
-# ----------------------------------------------------------------------
-
-# LLM 相関代码已提取到 shop_cleaners_split_llm/llm_shop9.py
-from ..shop_cleaners_split_llm.llm_shop9 import (
-    setup_shop9_llm_deps,
-    extract_specs_shop9_llm as _extract_specs_shop9_llm,
-)
-
-# 注入非 LLM 依赖到 LLM 模块
-setup_shop9_llm_deps(
-    build_color_aliases_fn=_build_color_aliases,
-    map_to_available_color_fn=_map_to_available_color,
-    bucket_amount_fn=_bucket_amount,
-    norm_cls_fn=_norm_cls,
-    direct_abs_overrides_fn=_direct_abs_overrides_for_row,
-)
-
-# ----------------------------------------------------------------------
-# Step 8: 清洗主函数
+# 清洗主函数
 # ----------------------------------------------------------------------
 
 def clean_shop9(
@@ -439,26 +354,60 @@ def clean_shop9(
             ctx.log_seq += 1
             continue
 
-        s_color = str(raw_color_cell) if raw_color_cell is not None else ""
         s_price = str(raw_price_cell) if raw_price_cell is not None else ""
+        s_color = str(raw_color_cell) if raw_color_cell is not None else ""
+        combined = _clean_shop9_text(s_price, s_color)
 
         base_price = extract_price_yen(s_price) or extract_price_yen(s_color)
 
-        source_text_raw_full = f"{s_price} | {s_color}" if s_price and s_color else (s_price or s_color)
+        # 前置：all_delta 检测（全色±N），优先从合并文本检测
+        agg_all_delta: Optional[int] = None
+        if combined:
+            agg_all_delta = _detect_all_delta(combined)
+        if agg_all_delta is None and s_color:
+            agg_all_delta = _detect_all_delta(s_color)  # 回退：仅色・詳細等
 
-        decomp = dispatch_extraction_to_price_decomposition(
-            EXTRACTION_MODE,
-            regex_fn=lambda: _extract_specs_shop9_regex(s_price, s_color, color_to_pn),
-            llm_fn=lambda: _extract_specs_shop9_llm(s_price, s_color, color_to_pn, row_index=i),
-            base_price=base_price,
-            source_text_raw=source_text_raw_full,
-            result_adapter=lambda r: (r[3], r[2]),
-            has_result_fn=lambda r: bool(r[0] or r[1]),
-            result_is_maps=True,
-            regex_post_hook=lambda: _direct_abs_overrides_for_row(
-                raw_color_text=s_color, color_to_pn=color_to_pn,
-            ),
-            base_price_when_none=0,
+        # 阶段 1：_match_shop9
+        tokens = _match_shop9(combined)
+
+        # expand_match_tokens + 阶段 2
+        tokens_exp = expand_match_tokens(
+            tokens,
+            color_to_pn,
+            _label_matches_color_unified,
+            enable_adaptive=True,
+            logger=ctx.logger,
+            cleaner_name=CLEANER_NAME,
+            shop_name=SHOP_NAME,
+        )
+        deltas, abs_specs = match_tokens_to_specs(
+            tokens_exp,
+            context={"base_price": base_price, "has_base_price": base_price is not None},
+            logger=ctx.logger,
+            cleaner_name=CLEANER_NAME,
+            shop_name=SHOP_NAME,
+            row_index=i,
+        )
+
+        # 若有 all_delta，前置到 delta_specs
+        if agg_all_delta is not None:
+            deltas = [("全色", agg_all_delta)] + [
+                (lb, v) for lb, v in deltas if str(lb).strip() not in ("全色", "ALL")
+            ]
+
+        # [暂未启用] _direct_abs_overrides：按「颜色别名+紧随金额」在色・詳細等中扫描，补充 abs。
+        # 若需恢复：overrides = _direct_abs_overrides_for_row(raw_color_text=s_color, color_to_pn=color_to_pn)
+        #            if overrides: abs_specs = _merge_abs_overrides(abs_specs, overrides)
+        # overrides = _direct_abs_overrides_for_row(raw_color_text=s_color, color_to_pn=color_to_pn)
+        # if overrides:
+        #     abs_specs = _merge_abs_overrides(abs_specs, overrides)
+
+        decomp = PriceDecomposition(
+            base_price=base_price or 0,
+            delta_specs=deltas,
+            abs_specs=abs_specs,
+            extraction_method="regex",
+            source_text_raw=f"{s_price} | {s_color}" if s_price and s_color else (s_price or s_color),
         )
         decomp_emit_default = base_price is not None
 

@@ -4,31 +4,19 @@ from __future__ import annotations
 shop4 清洗器 — モバイルミックス
 
   原始 DataFrame（data / data11 列）
-    │ 配置: EXTRACTION_MODE / OLLAMA_URL / OLLAMA_MODEL_ID (cleaner_tools)
-    │
-    ├─ _find_base_price()                    ← Step 1: 回溯查找基准价
-    │
-    ├─ _normalize_amount_text()              ← Step 2: 全角→半角归一化
-    │
-    ├─ _extract_specs_shop4_regex_line()      ← Step 3: 正则提取单行色差
-    │
-    ├─ dispatch_extraction_to_price_decomposition() ← Step 4: 模式调度（EXTRACTION_MODE）
-    │   │
-    │   ├─ regex 路径:
-    │   │   └─ _extract_specs_shop4_regex_block()   ← Step 5a: 正则逐行收集
-    │   │
-    │   └─ llm 路径:
-    │       ├─ _extract_specs_shop4_llm()             ← Step 5b: LLM 核心提取
-    │       └─ Guardrails (coerce + validate)        ← Step 6: 防幻觉过滤
-    │
-    ├─ _label_matches_color_unified()       ← Step 7: 标签→颜色匹配（cleaner_tools 统一）
-    │
-    └─ clean_shop4()                         ← Step 8: 主函数，生成输出行
+    - 纯正则实现（无 LLM）
+    两阶段流水线（与 shop17/16/15/14/12/11/9/7 对齐）:
+    ├─ _find_base_price()                    ← 回溯查找基准价
+    ├─ _collect_block_segments()             ← 收集 block 内行/段（按 円/ 分割）
+    ├─ 前置  all_delta 检测（全色±N）
+    ├─ 阶段 1  _match_shop4()                ← NONE_RE / DELTA_RE(分支) / ABS_RE
+    ├─ expand_match_tokens()
+    ├─ 阶段 2  match_tokens_to_specs()
+    └─ resolve_color_prices → 输出
 """
 
 import logging
 import re
-import time
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -39,16 +27,23 @@ from ..cleaner_tools import (
     resolve_color_prices,
     _parse_capacity_gb,
     _normalize_model_generic,
-    _load_iphone17_info_df_from_db,
-    _build_color_map,
     _norm_strip,
-    _normalize_amount_text,
+    normalize_text_basic,
     _label_matches_color_unified,
-    setup_color_cleaner,
-    finalize_color_cleaner,
-    dispatch_extraction_to_price_decomposition,
+    MatchToken,
+    FORMAT_HINT_SIGNED,
+    FORMAT_HINT_SEP_MINUS,
+    FORMAT_HINT_AFTER_YEN,
+    FORMAT_HINT_PLAIN_DIGITS,
+    FORMAT_HINT_COLON_PREFIX,
+    FORMAT_HINT_NONE,
+    expand_match_tokens,
+    match_tokens_to_specs,
     LABEL_SPLIT_RE_shop4 as LABEL_SPLIT_RE,
     EXTRACTION_MODE,
+    setup_color_cleaner,
+    finalize_color_cleaner,
+    coerce_amount_yen,
 )
 
 # ----------------------------------------------------------------------
@@ -74,11 +69,8 @@ _norm = _norm_strip
 # ----------------------------------------------------------------------
 # LABEL_SPLIT_RE: 从 cleaner_tools.LABEL_SPLIT_RE_shop4 导入
 
-def _split_labels(label: str) -> List[str]:
-    return [p.strip() for p in LABEL_SPLIT_RE.split(label or "") if p and p.strip()]
-
 # ----------------------------------------------------------------------
-# Step 2: 基准价回溯查找
+# 基准价回溯查找
 # ----------------------------------------------------------------------
 
 def _find_base_price(df: pd.DataFrame, idx: int) -> Optional[int]:
@@ -97,10 +89,9 @@ def _find_base_price(df: pd.DataFrame, idx: int) -> Optional[int]:
     return None
 
 # ----------------------------------------------------------------------
-# Step 3: 正则模式定义 & 单行解析（不能内移：regex_block 与 clean 共用）
+# 纯金额行判断
 # ----------------------------------------------------------------------
 
-# 纯金额行：仅含数字、逗号、円、空格，无数颜色/全色等文字
 _PURE_PRICE_CHARS = re.compile(r"[０-９0-9,，\s円+\-−－]")
 
 def _is_pure_price_only_row(df: pd.DataFrame, idx: int) -> bool:
@@ -135,107 +126,16 @@ def _is_next_model_base_price_row(df: pd.DataFrame, idx: int, n: int) -> bool:
 
 
 # ----------------------------------------------------------------------
-# Step 3b: 正则模式定义
+# block 内行/段收集（按 円/ 分割）
 # ----------------------------------------------------------------------
-
-_COLOR_DELTA_RE = re.compile(
-    r"""^\s*
-        (?P<label>全色|[\S　 ]*?[^\s　])
-        \s*
-        (?P<sign>[+\-−－])?
-        \s*
-        (?P<amount>\d[\d,]*)\s*円?
-        \s*$
-    """,
-    re.VERBOSE,
-)
-
-def _extract_specs_shop4_regex_line(line: str) -> Optional[List[Tuple[str, int]]]:
-    if not line or not isinstance(line, str):
-        return None
-    s = line.strip()
-    if s == "全色" or s == "全 色":
-        return [("全色", 0)]
-
-    m = _COLOR_DELTA_RE.match(s)
-    if not m:
-        am = re.search(r"([+\-−－])?\s*([０-９0-9][０-９0-9,，]*)\s*円?", s)
-        if not am:
-            if "全色" in s:
-                return [("全色", 0)]
-            return None
-        sign = am.group(1) or "+"
-        amt_txt = am.group(2)
-        amt = _normalize_amount_text(amt_txt)
-        if amt is None:
-            try:
-                amt = to_int_yen(amt_txt)
-            except Exception:
-                amt = None
-        if amt is None:
-            return None
-        if sign in ("-", "−", "－"):
-            amt = -int(amt)
-        else:
-            amt = int(amt)
-
-        label_part = s[:am.start()].strip()
-        if not label_part:
-            return None
-        labels = [p for p in LABEL_SPLIT_RE.split(label_part) if p]
-        return [(lbl.strip(), int(amt)) for lbl in labels]
-
-    label_raw = m.group("label").strip()
-    sign = m.group("sign") or "+"
-    amt_val = None
-    try:
-        amt_val = to_int_yen(m.group("amount"))
-    except Exception:
-        amt_val = None
-    if amt_val is None:
-        amt_val = _normalize_amount_text(m.group("amount"))
-    if amt_val is None:
-        return None
-
-    amt_val = int(amt_val)
-    if sign in ("-", "−", "－"):
-        amt_val = -amt_val
-
-    labels = [p for p in LABEL_SPLIT_RE.split(label_raw) if p]
-    if not labels:
-        return None
-    return [(lbl.strip(), int(amt_val)) for lbl in labels]
-
-# ----------------------------------------------------------------------
-# Step 4: 颜色家族同义词 & 匹配
-# ----------------------------------------------------------------------
-# Step 4b: 标签→颜色匹配（2025-02 替换为 cleaner_tools 统一实现）
-# ----------------------------------------------------------------------
-# 原 shop4 独立实现已迁移至 cleaner_tools._label_matches_color_unified，
-# 合并 shop3/4/9/11/12/14/15/16/17 逻辑，供所有清洗器共用。
-
-# ----------------------------------------------------------------------
-# Step 5a: 正则收集（逐行扫描 block）
-# ----------------------------------------------------------------------
-# 按 円/ 或 円／ 分割，支持 "ディープブルー-2,000円/コズミックオレンジ-6,500円" 这类
-# 同一行多组「颜色±金额」的格式（2025-02 修复漏解析第二项及后续项）
 _SHOP4_LINE_SPLIT_BY_YEN_SLASH = re.compile(r"円\s*[／/]\s*")
 
 
-def _extract_specs_shop4_regex_block(
-    df: pd.DataFrame, start_idx: int,
-) -> Tuple[Dict[str, int], List[Tuple[str, int]], Dict[str, str]]:
+def _collect_block_segments(df: pd.DataFrame, start_idx: int) -> List[str]:
     """
-    纯正则版：逐行扫描 block 收集颜色差额。
-    若行内含 "円/色名±金额" 或 "円／色名±金额"，先按此模式分割再逐段解析。
-    返回：(adjustments, delta_specs, color_delta_label_map)
-      - adjustments: { _norm(label) | "ALL" : delta_int }
-      - delta_specs: [(label_raw, delta)] 原始标签列表
-      - color_delta_label_map: { _norm(label) : label_raw }
+    逐行扫描 block，按 円/ 分割，收集段列表供阶段 1 匹配。
     """
-    result: Dict[str, int] = {}
-    delta_specs: List[Tuple[str, int]] = []
-    color_delta_label_map: Dict[str, str] = {}
+    segments: List[str] = []
     n = len(df)
     for j in range(start_idx, n):
         nxt_model = ""
@@ -244,7 +144,6 @@ def _extract_specs_shop4_regex_block(
             nxt_model = str(val) if val is not None else ""
         if j > start_idx and nxt_model.strip():
             break
-        # 若该行为纯金额且下一行为机型行，则属于下一 block 基准价，不纳入当前 block
         if j > start_idx and _is_next_model_base_price_row(df, j, n):
             break
 
@@ -253,36 +152,203 @@ def _extract_specs_shop4_regex_block(
             val = df["data"].iat[j]
             line = str(val) if val is not None else ""
 
-        # 按 円/ 或 円／ 分割，逐段解析（支持 "A-2000円/B-6500円" 格式）
-        segments = _SHOP4_LINE_SPLIT_BY_YEN_SLASH.split(line)
-        for seg in segments:
+        for seg in _SHOP4_LINE_SPLIT_BY_YEN_SLASH.split(line):
             seg = seg.strip()
-            if not seg:
-                continue
-            parsed = _extract_specs_shop4_regex_line(seg)
-            if not parsed:
-                continue
-            for label, delta in parsed:
-                delta_specs.append((label, int(delta)))
-                if "全色" in label:
-                    result["ALL"] = int(delta)
-                else:
-                    nk = _norm(label)
-                    result[nk] = int(delta)
-                    color_delta_label_map[nk] = label
-    return result, delta_specs, color_delta_label_map
+            if seg:
+                segments.append(seg)
+    return segments
+
 
 # ----------------------------------------------------------------------
-# Step 5b: LLM 核心提取
+# 正则模式（NONE_RE + DELTA_RE + ABS_RE，两阶段）
 # ----------------------------------------------------------------------
 
-# LLM 相关代码已提取到 shop_cleaners_split_llm/llm_shop4.py
-from ..shop_cleaners_split_llm.llm_shop4 import (
-    extract_specs_shop4_llm as _extract_specs_shop4_llm,
+def _clean_block_text(text: str) -> str:
+    """清理 block 文本。"""
+    if not text:
+        return ""
+    s = str(text).strip()
+    if not s or s.lower() == "nan":
+        return ""
+    s = s.replace("\u3000", " ").replace("\xa0", " ")
+    s = re.sub(r"\s+", " ", s).strip()
+    return normalize_text_basic(s)
+
+
+SPLIT_TOKENS_RE_shop4 = re.compile(r"[／/、，]|(?:\s*;\s*)|\n")
+
+COLOR_NONE_RE_shop4 = re.compile(
+    r"""(?P<label>[^：:\-\s/、／，,\n]+(?:\([^)]*\))?)\s*
+        (?:(?P<sep>[：:\-])\s*)?
+        (?:減額)?なし
+    """,
+    re.UNICODE | re.VERBOSE,
 )
 
+COLOR_DELTA_RE_shop4 = re.compile(
+    r"""(?P<label>[^\d：:\-\s/、／\n]+(?:\([^)]*\))?)\s*
+        (?P<sep>[：:\-])?\s*
+        (?P<sign>[+\-−－])?\s*
+        (?P<amount>\d[\d,]*)\s*(?:円)?
+    """,
+    re.UNICODE | re.VERBOSE,
+)
+
+COLOR_ABS_RE_shop4 = re.compile(
+    r"""(?P<label>[^\d：:\-\s/、／￥円\n]+(?:\([^)]*\))?)\s*[￥¥]\s*(?P<amount>\d[\d,]*)\s*(?:円)?""",
+    re.UNICODE,
+)
+
+_ALL_DELTA_RE_shop4 = re.compile(r"全色\s*(?:[+\-−－])?\s*(\d[\d,]*)\s*(?:円)?")
+
+_BAD_LABEL_WORDS_shop4 = ("利用制限", "保証", "郵送", "持ち込み", "開始", "未満", "減額", "SIM", "制限")
+
+
+def _normalize_label_shop4(lbl: str) -> str:
+    """归一化颜色标签。"""
+    if not lbl:
+        return ""
+    s = re.sub(r"[\s\u3000\xa0]+", "", str(lbl))
+    s = re.sub(r"(カラー|色)$", "", s)
+    return s.strip()
+
+
+def _is_plausible_color_label_shop4(label: str) -> bool:
+    """过滤非颜色标签。全色由前置步骤处理，此处排除。"""
+    label = _normalize_label_shop4(label)
+    if not label or label in ("全色", "ALL"):
+        return False
+    if label.startswith(("△", "▲")) or re.search(r"\d", label):
+        return False
+    if len(label) > 16 or any(w in label for w in _BAD_LABEL_WORDS_shop4):
+        return False
+    return True
+
+
 # ----------------------------------------------------------------------
-# Step 8: 清洗主函数
+# 阶段 1：匹配（输出 MatchToken，含 pending_labels）
+# ----------------------------------------------------------------------
+
+def _match_shop4(text: str) -> List[MatchToken]:
+    """
+    阶段 1 匹配：从 block 合并文本中提取 MatchToken[]。
+    使用 NONE_RE / DELTA_RE(分支) / ABS_RE，支持 pending_labels。
+    """
+    tokens: List[MatchToken] = []
+    if not text:
+        return tokens
+
+    s = _clean_block_text(text)
+    if not s:
+        return tokens
+
+    parts = [p.strip() for p in SPLIT_TOKENS_RE_shop4.split(s) if p and p.strip()]
+    if not parts:
+        parts = [s.strip()]
+
+    pending_labels: List[str] = []
+    position = 0
+
+    for part in parts:
+        m0 = COLOR_NONE_RE_shop4.search(part)
+        if m0:
+            label_raw = _normalize_label_shop4(m0.group("label"))
+            if _is_plausible_color_label_shop4(label_raw):
+                tokens.append(MatchToken(
+                    label=label_raw,
+                    amount_int=0,
+                    format_hint=FORMAT_HINT_NONE,
+                    position=position,
+                ))
+                position += 1
+            pending_labels = []
+            continue
+
+        has_amount_in_part = False
+        for m in COLOR_ABS_RE_shop4.finditer(part):
+            has_amount_in_part = True
+            label_raw = _normalize_label_shop4(m.group("label"))
+            if not _is_plausible_color_label_shop4(label_raw):
+                continue
+            amt = to_int_yen(m.group("amount"))
+            if amt is None:
+                continue
+            tokens.append(MatchToken(
+                label=label_raw,
+                amount_int=int(amt),
+                format_hint=FORMAT_HINT_AFTER_YEN,
+                position=position,
+            ))
+            position += 1
+        if has_amount_in_part:
+            pending_labels = []
+            continue
+
+        has_delta_in_part = False
+        for m in COLOR_DELTA_RE_shop4.finditer(part):
+            has_delta_in_part = True
+            label_raw = _normalize_label_shop4(m.group("label"))
+            if not _is_plausible_color_label_shop4(label_raw):
+                continue
+            sep = m.group("sep")
+            sign = m.group("sign")
+            amt = to_int_yen(m.group("amount"))
+            if amt is None:
+                continue
+            amt_val = int(amt)
+            if sign:
+                negative = sign in ("-", "−", "－")
+                amount_int = -amt_val if negative else amt_val
+                hint = FORMAT_HINT_SIGNED
+            elif sep and sep in ("-", "−", "－"):
+                amount_int = -amt_val
+                hint = FORMAT_HINT_SEP_MINUS
+            elif sep and sep in ("：", ":"):
+                amount_int = amt_val
+                hint = FORMAT_HINT_COLON_PREFIX
+            else:
+                amount_int = amt_val
+                hint = FORMAT_HINT_PLAIN_DIGITS
+
+            tok = MatchToken(label=label_raw, amount_int=amount_int, format_hint=hint, position=position)
+            tokens.append(tok)
+            position += 1
+            for pl in pending_labels:
+                pl_norm = _normalize_label_shop4(pl)
+                if pl_norm and _is_plausible_color_label_shop4(pl_norm):
+                    tokens.append(MatchToken(
+                        label=pl_norm,
+                        amount_int=amount_int,
+                        format_hint=hint,
+                        position=position,
+                    ))
+                    position += 1
+            pending_labels = []
+        if has_delta_in_part:
+            continue
+
+        for tok in LABEL_SPLIT_RE.split(part):
+            tok = _normalize_label_shop4(tok)
+            if tok:
+                pending_labels.append(tok)
+
+    return tokens
+
+
+def _detect_all_delta(text: str) -> Optional[int]:
+    """前置步骤：检测全色统一减额。"""
+    s = _clean_block_text(text)
+    if not s:
+        return None
+    m = _ALL_DELTA_RE_shop4.search(s)
+    if m:
+        return coerce_amount_yen(m.group(0).replace("全色", "").strip()) or 0
+    if "全色" in s or s.strip() in ("全色", "全 色"):
+        return 0
+    return None
+
+# ----------------------------------------------------------------------
+# 清洗主函数
 # ----------------------------------------------------------------------
 
 def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> pd.DataFrame:
@@ -329,6 +395,8 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         if base_price is None:
             continue
 
+        segments = _collect_block_segments(df, i)
+        combined_text = " / ".join(segments)
         block_lines_raw = []
         for j in range(i, block_end + 1):
             if j > i and _is_next_model_base_price_row(df, j, n):
@@ -338,14 +406,39 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
                 block_lines_raw.append(raw.strip())
         source_text_raw_full = " | ".join(block_lines_raw)
 
-        decomp = dispatch_extraction_to_price_decomposition(
-            EXTRACTION_MODE,
-            regex_fn=lambda: _extract_specs_shop4_regex_block(df, i),
-            llm_fn=lambda: _extract_specs_shop4_llm(df, i, row_index=i),
+        agg_all_delta: Optional[int] = None
+        if combined_text:
+            agg_all_delta = _detect_all_delta(combined_text)
+
+        tokens = _match_shop4(combined_text)
+        tokens_exp = expand_match_tokens(
+            tokens,
+            color_to_pn,
+            _label_matches_color_unified,
+            enable_adaptive=True,
+            logger=ctx.logger,
+            cleaner_name=CLEANER_NAME,
+            shop_name=SHOP_NAME,
+        )
+        delta_specs, abs_specs = match_tokens_to_specs(
+            tokens_exp,
+            context={"base_price": base_price, "has_base_price": True},
+            logger=ctx.logger,
+            cleaner_name=CLEANER_NAME,
+            shop_name=SHOP_NAME,
+            row_index=i,
+        )
+        if agg_all_delta is not None:
+            delta_specs = [("全色", agg_all_delta)] + [
+                (lb, v) for lb, v in delta_specs if str(lb).strip() not in ("全色", "ALL")
+            ]
+
+        decomp = PriceDecomposition(
             base_price=base_price,
+            delta_specs=delta_specs,
+            abs_specs=abs_specs,
+            extraction_method="regex",
             source_text_raw=source_text_raw_full,
-            result_adapter=lambda r: (r[1], []),
-            has_result_fn=lambda r: bool(r[0]),
         )
 
         new_rows, ctx.log_seq = resolve_color_prices(
@@ -366,3 +459,5 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         rows.extend(new_rows)
 
     return finalize_color_cleaner(ctx, rows)
+
+

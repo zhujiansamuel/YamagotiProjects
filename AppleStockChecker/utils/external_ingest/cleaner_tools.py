@@ -475,10 +475,160 @@ LABEL_SPLIT_RE_shop9 = re.compile(r"[/／、，,;；\s]+")
 LABEL_SPLIT_RE_shop11 = re.compile(r"[／/、，,・\s]+")
 LABEL_SPLIT_RE_shop12 = re.compile(r"[／/、，,・\s]+")
 LABEL_SPLIT_RE_shop14 = re.compile(r"[／/、，,;；\s]+")
-LABEL_SPLIT_RE_shop15 = re.compile(r"\s*(?:、|,|，|／|/|・|&|＆)\s*")
+# 不含半角逗号，避免 "229,000円" 中的千位分隔符被误当作标签分隔
+LABEL_SPLIT_RE_shop15 = re.compile(r"\s*(?:、|，|／|/|・|&|＆)\s*")
 LABEL_SPLIT_RE_shop16 = re.compile(r"[／/、，,]|(?:\s*;\s*)")
 LABEL_SPLIT_RE_shop16_SIMPLE = re.compile(r"[／/、，,]")
 LABEL_SPLIT_RE_shop17 = re.compile(r"[／/、]|(?:\s*;\s*)|\n")
+
+# ----------------------------------------------------------------------
+# 两阶段流水线：MatchToken / format_hint / 语义映射
+# ----------------------------------------------------------------------
+# 阶段 1 输出 MatchToken（各 shop 实现）；阶段 2 match_tokens_to_specs 统一映射。
+# 冲突去重优先级：after_yen > colon_prefix > plain_digits > signed > sep_minus > none
+
+FORMAT_HINT_SIGNED = "signed"
+FORMAT_HINT_SEP_MINUS = "sep_minus"
+FORMAT_HINT_AFTER_YEN = "after_yen"
+FORMAT_HINT_PLAIN_DIGITS = "plain_digits"
+FORMAT_HINT_COLON_PREFIX = "colon_prefix"
+FORMAT_HINT_NONE = "none"
+
+# 优先级从高到低（用于冲突去重）
+FORMAT_HINT_PRIORITY: Dict[str, int] = {
+    FORMAT_HINT_AFTER_YEN: 5,
+    FORMAT_HINT_COLON_PREFIX: 4,
+    FORMAT_HINT_PLAIN_DIGITS: 3,
+    FORMAT_HINT_SIGNED: 2,
+    FORMAT_HINT_SEP_MINUS: 1,
+    FORMAT_HINT_NONE: 0,
+}
+
+# 边界规则阈值
+BOUNDARY_DELTA_MAX = 20000   # plain_digits 且 amount < 20000 → 视为 delta
+BOUNDARY_ABS_MIN = 100000    # signed 且 amount > 100000 → 视为 abs
+
+
+@dataclass
+class MatchToken:
+    """阶段 1 匹配输出，描述金额在原文中的呈现形式。"""
+    label: str
+    amount_int: int
+    format_hint: str
+    position: int = 0
+
+
+def expand_match_tokens(
+    tokens: List[MatchToken],
+    color_map: Dict[str, Tuple[str, str]],
+    label_matcher: Callable[[str, str, str], bool],
+    *,
+    enable_adaptive: bool = True,
+    logger: Optional[logging.Logger] = None,
+    cleaner_name: str = "",
+    shop_name: str = "",
+) -> List[MatchToken]:
+    """
+    阶段 1 与阶段 2 之间的自适应分割：将复合标签展开为单标签。
+    """
+    out: List[MatchToken] = []
+    for tok in tokens:
+        if not enable_adaptive or not color_map:
+            out.append(tok)
+            continue
+        adaptive = split_composite_label_adaptive(
+            tok.label, color_map, label_matcher
+        )
+        labels = adaptive.get("labels") or []
+        if not labels:
+            labels = [tok.label]
+        for i, lbl in enumerate(labels):
+            out.append(MatchToken(
+                label=lbl,
+                amount_int=tok.amount_int,
+                format_hint=tok.format_hint,
+                position=tok.position * 1000 + i,
+            ))
+    return out
+
+
+def match_tokens_to_specs(
+    tokens: List[MatchToken],
+    *,
+    context: Optional[Dict[str, Any]] = None,
+    logger: Optional[logging.Logger] = None,
+    cleaner_name: str = "",
+    shop_name: str = "",
+    row_index: int = -1,
+) -> Tuple[List[Tuple[str, int]], List[Tuple[str, int]]]:
+    """
+    阶段 2 语义映射：format_hint + 边界规则 → (deltas, abs_specs)。
+
+    边界规则（带日志）:
+      - plain_digits 且 amount < 20000 → 视为 delta
+      - signed 且 amount > 100000 → 视为 abs
+    """
+    context = context or {}
+    deltas: List[Tuple[str, int]] = []
+    abs_specs: List[Tuple[str, int]] = []
+
+    # 按 label 去重，保留 format_hint 优先级最高的
+    by_label: Dict[str, MatchToken] = {}
+    for tok in tokens:
+        if not tok.label:
+            continue
+        existing = by_label.get(tok.label)
+        pri = FORMAT_HINT_PRIORITY.get(tok.format_hint, -1)
+        if existing is None or pri > FORMAT_HINT_PRIORITY.get(existing.format_hint, -1):
+            by_label[tok.label] = tok
+
+    for label, tok in by_label.items():
+        kind: Optional[str] = None
+        override_reason: Optional[str] = None
+
+        # 默认映射
+        if tok.format_hint == FORMAT_HINT_NONE:
+            kind = "delta"
+            value = 0
+        elif tok.format_hint in (FORMAT_HINT_SIGNED, FORMAT_HINT_SEP_MINUS):
+            kind = "delta"
+            value = tok.amount_int
+        elif tok.format_hint in (FORMAT_HINT_AFTER_YEN, FORMAT_HINT_COLON_PREFIX, FORMAT_HINT_PLAIN_DIGITS):
+            kind = "abs"
+            value = abs(tok.amount_int)
+
+        # 边界规则覆盖
+        if tok.format_hint == FORMAT_HINT_PLAIN_DIGITS and 0 < tok.amount_int < BOUNDARY_DELTA_MAX:
+            kind = "delta"
+            value = tok.amount_int  # 正数作为 delta（店铺可能写的是差额）
+            override_reason = f"plain_digits amount {tok.amount_int} < {BOUNDARY_DELTA_MAX} → delta"
+        elif tok.format_hint == FORMAT_HINT_SIGNED and abs(tok.amount_int) > BOUNDARY_ABS_MIN:
+            kind = "abs"
+            value = abs(tok.amount_int)
+            override_reason = f"signed amount {abs(tok.amount_int)} > {BOUNDARY_ABS_MIN} → abs"
+
+        if kind == "delta":
+            deltas.append((label, value))
+        elif kind == "abs":
+            abs_specs.append((label, value))
+
+        if override_reason and logger:
+            logger.info(
+                "format_hint boundary override",
+                extra={
+                    "event_type": "format_hint_boundary_override",
+                    "label": label,
+                    "format_hint": tok.format_hint,
+                    "amount_int": tok.amount_int,
+                    "override_reason": override_reason,
+                    "cleaner_name": cleaner_name,
+                    "shop_name": shop_name,
+                    "row_index": row_index,
+                },
+            )
+
+    return deltas, abs_specs
+
 
 # ----------------------------------------------------------------------
 # 自适应复合标签分割（shop17 试点）
@@ -1071,7 +1221,7 @@ def coerce_amount_yen(v) -> Optional[int]:
 def _dispatch_extraction(
     mode: str,
     regex_fn: Callable,
-    llm_fn: Callable,
+    llm_fn: Optional[Callable] = None,
     *,
     has_result_fn: Optional[Callable] = None,
 ) -> tuple:
@@ -1079,11 +1229,12 @@ def _dispatch_extraction(
     三模式（regex / llm / auto）提取调度的通用实现。
 
     合并自各 shop 原先的提取调度逻辑（regex/llm/auto if/elif/else）。
+    当 llm_fn 为 None 时，仅使用正则路径（shop15/16/17 等）。
 
     参数:
         mode: "regex" | "llm" | "auto"（通常来自 EXTRACTION_MODE）
         regex_fn: 无参调用，返回提取结果（类型由 shop 自定）
-        llm_fn: 无参调用，返回提取结果
+        llm_fn: 无参调用，返回提取结果；None 时仅用 regex
         has_result_fn: 判断 regex 结果是否"有内容"的函数。
                        默认 bool(result)。用于 auto 模式下决定是否 fallback 到 LLM。
 
@@ -1098,6 +1249,10 @@ def _dispatch_extraction(
             llm_fn=lambda: _extract_specs_llm(text, row_index=i),
         )
     """
+    # llm_fn 为 None 时，仅正则路径（shop15/16/17 已移除 LLM）
+    if llm_fn is None:
+        return regex_fn(), "regex"
+
     check = has_result_fn or bool
 
     if mode == "regex":
@@ -1372,8 +1527,8 @@ def dispatch_extraction_to_price_decomposition(
         )
     """
     if as_parse_fn:
-        if mode is None or regex_fn is None or llm_fn is None:
-            raise ValueError("as_parse_fn 模式需 mode/regex_fn/llm_fn")
+        if mode is None or regex_fn is None:
+            raise ValueError("as_parse_fn 模式需 mode/regex_fn")
         raw_result, method = _dispatch_extraction(
             mode,
             regex_fn=regex_fn,
@@ -1393,9 +1548,9 @@ def dispatch_extraction_to_price_decomposition(
             delta_specs = [("全色", agg_all_delta)]
             abs_specs = []
     else:
-        if mode is None or regex_fn is None or llm_fn is None or result_adapter is None:
+        if mode is None or regex_fn is None or result_adapter is None:
             raise ValueError(
-                "单次提取需 mode/regex_fn/llm_fn/result_adapter；Fragment 模式需 frags/combined/parse_fn"
+                "单次提取需 mode/regex_fn/result_adapter；Fragment 模式需 frags/combined/parse_fn"
             )
         raw_result, method = _dispatch_extraction(
             mode,

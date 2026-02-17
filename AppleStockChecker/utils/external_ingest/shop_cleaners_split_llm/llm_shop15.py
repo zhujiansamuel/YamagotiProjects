@@ -413,6 +413,15 @@ def extract_specs_shop15_llm(
     )
 
     if (not llm_ok) and (not specs) and regex_fn:
-        _, specs = regex_fn(price_text)
+        raw = regex_fn(price_text)
+        if len(raw) >= 3:
+            base_regex, deltas, abs_specs = raw[0], raw[1], raw[2]
+            if base_price is None and base_regex is not None:
+                base_price = base_regex
+            specs = [(l, "delta", v) for l, v in (deltas or [])] + [(l, "abs", v) for l, v in (abs_specs or [])]
+        elif len(raw) >= 2:
+            if base_price is None and raw[0] is not None:
+                base_price = raw[0]
+            specs = raw[1]  # 兼容旧格式 (base, specs)
 
     return base_price, specs

@@ -177,11 +177,11 @@ def extract_specs_shop17_llm(
     normalize_color_text_fn=None,
     pick_unopened_section_fn=None,
     is_plausible_color_label_fn=None,
-) -> List[Tuple[str, int]]:
+) -> Tuple[List[Tuple[str, int]], List[Tuple[str, int]]]:
     if not HAS_LANGEXTRACT:
-        return []
+        return ([], [])
     if not text or not str(text).strip():
-        return []
+        return ([], [])
 
     if normalize_color_text_fn and pick_unopened_section_fn:
         s = normalize_color_text_fn(pick_unopened_section_fn(str(text)))
@@ -189,7 +189,7 @@ def extract_specs_shop17_llm(
         s = str(text).strip()
 
     if re.fullmatch(r"\s*(?:なし|減額なし)\s*", s):
-        return []
+        return ([], [])
 
     try:
         result = lx.extract(
@@ -211,7 +211,7 @@ def extract_specs_shop17_llm(
             error=e, text=s,
             row_index=row_context.get("row_index") if row_context else None,
         )
-        return []
+        return ([], [])
 
     out: List[Tuple[str, int]] = []
     extractions = getattr(result, "extractions", None) or []
@@ -235,4 +235,4 @@ def extract_specs_shop17_llm(
         except Exception:
             continue
 
-    return out
+    return (out, [])  # LLM 仅提取 delta，abs 留空（与 regex 双路径一致）

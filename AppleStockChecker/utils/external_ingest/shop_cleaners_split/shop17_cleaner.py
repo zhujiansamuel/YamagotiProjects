@@ -3,7 +3,6 @@ from typing import Protocol, Dict, Callable, Optional, List, Tuple
 from ...external_ingest.cleaner_tools import to_int_yen, parse_dt_aware
 from ..cleaner_tools import (
     _parse_capacity_gb,
-    _truncate_for_log,
     _normalize_model_generic,
     normalize_text_basic,
     extract_price_yen,
@@ -13,16 +12,16 @@ from ..cleaner_tools import (
     setup_color_cleaner,
     finalize_color_cleaner,
     LABEL_SPLIT_RE_shop17 as SPLIT_TOKENS_RE_shop17,
-    OLLAMA_URL,
-    OLLAMA_MODEL_ID,
+    MatchToken,
+    FORMAT_HINT_SIGNED,
+    FORMAT_HINT_SEP_MINUS,
+    FORMAT_HINT_AFTER_YEN,
+    FORMAT_HINT_PLAIN_DIGITS,
+    FORMAT_HINT_COLON_PREFIX,
+    FORMAT_HINT_NONE,
+    expand_match_tokens,
+    match_tokens_to_specs,
     EXTRACTION_MODE,
-    dispatch_extraction_to_price_decomposition,
-    lx,
-    HAS_LANGEXTRACT,
-    log_llm_extraction_error,
-    # 自适应分割相关
-    split_composite_label_adaptive,
-    detect_missing_colors_with_price,
 )
 import os
 from functools import lru_cache
@@ -41,28 +40,21 @@ import logging
 shop17 清洗器 — ゲストモバイル
 
   原始文本（type / 新未開封品 / 色減額）
-    │ 配置: EXTRACTION_MODE / OLLAMA_URL / OLLAMA_MODEL_ID (cleaner_tools)
-    │         SHOP17_ADAPTIVE_SPLIT (环境变量，默认 true)
+    │ 两阶段流水线：Match → expand_match_tokens → match_tokens_to_specs
+    │ SHOP17_ADAPTIVE_SPLIT (环境变量，默认 true)
     │
     ├─ _normalize_model_generic() / _parse_capacity_gb()  ← Step 1: 机型・容量解析（cleaner_tools）
     │
     ├─ extract_price_yen()         ← Step 2: 基础价提取（cleaner_tools）
     │
-    ├─ dispatch_extraction_to_price_decomposition() ← Step 3: 模式调度（EXTRACTION_MODE）
-    │   │
-    │   ├─ regex 路径:
-    │   │   ├─ _pick_unopened_section()     ← 提取【未開封】段
-    │   │   ├─ _normalize_color_text_shop17()  ← 归一化
-    │   │   ├─ SPLIT_TOKENS_RE 拆分          ← 分割多条目
-    │   │   ├─ COLOR_NONE_RE / COLOR_DELTA_RE  ← なし模式・金额模式
-    │   │   └─ [NEW] split_composite_label_adaptive()  ← 自适应复合标签分割
-    │   │       • 多策略渐进式尝试（5个策略）
-    │   │       • 全匹配优先停止
-    │   │       • 检测带价格的遗漏颜色
-    │   │
-    │   └─ llm 路径:
-    │       └─ _extract_specs_shop17_llm_impl()  ← LangExtract 核心提取
+    ├─ 阶段 1: _match_shop17()               ← NONE_RE / DELTA_RE(分支) / ABS_RE
+    │   ├─ _pick_unopened_section()         ← 提取【未開封】段
+    │   ├─ _normalize_color_text_shop17()   ← 归一化
+    │   └─ 输出 MatchToken[]（format_hint: signed|sep_minus|after_yen|plain_digits|colon_prefix|none）
     │
+    ├─ expand_match_tokens()                 ← 自适应分割（阶段 1 与 2 之间）
+    │
+    └─ match_tokens_to_specs()               ← 阶段 2 语义映射 + 边界规则 → (deltas, abs_specs)
     ├─ _label_matches_color_unified()  ← Step 4: 标签→颜色匹配（cleaner_tools 统一）
     │
     └─ clean_shop17()              ← Step 5: 主函数，生成输出行
@@ -149,8 +141,9 @@ COLOR_NONE_RE_shop17 = re.compile(
 )
 
 # ── Step 7: 匹配有金额减额的颜色 ──
+# label 排除数字，避免 "ブルー229,000円" 中金额被吃进 label
 COLOR_DELTA_RE_shop17 = re.compile(
-    r"""(?P<label>[^：:\-\s/、／\n]+(?:\([^)]*\))?)\s*
+    r"""(?P<label>[^\d：:\-\s/、／\n]+(?:\([^)]*\))?)\s*
         (?P<sep>[：:\-])?\s*
         (?P<sign>[+\-−－])?\s*
         (?P<amount>\d[\d,]*)\s*(?:円)?
@@ -158,8 +151,15 @@ COLOR_DELTA_RE_shop17 = re.compile(
     re.UNICODE | re.VERBOSE,
 )
 
+# ── Step 8: 匹配绝对价（label￥amount） ──
+COLOR_ABS_RE_shop17 = re.compile(
+    r"""(?P<label>[^\d：:\-\s/、／￥円\n]+(?:\([^)]*\))?)\s*￥\s*(?P<amount>\d[\d,]*)\s*(?:円)?""",
+    re.UNICODE,
+)
+
 # ----------------------------------------------------------------------
-# 颜色匹配函数
+# 阶段 1：匹配（输出 MatchToken，不含自适应分割）
+# NONE_RE / DELTA_RE(分支→signed|sep_minus|colon_prefix|plain_digits) / ABS_RE
 # ----------------------------------------------------------------------
 # ----------------------------------------------------------------------
 # 标签→颜色匹配（2025-02 替换为 cleaner_tools 统一实现）
@@ -167,69 +167,68 @@ COLOR_DELTA_RE_shop17 = re.compile(
 # 原 shop17 独立实现已迁移至 cleaner_tools._label_matches_color_unified，
 # 合并 shop3/4/9/11/12/14/15/16/17 逻辑，供所有清洗器共用。
 
-def _extract_specs_shop17_regex(
-    text: str,
-    color_map: Optional[Dict[str, Tuple[str, str]]] = None,
-    enable_adaptive: bool = None,
-) -> List[Tuple[str, int]]:
+def _match_shop17(text: str) -> List[MatchToken]:
     """
-    正则版提取 [(label_raw, delta_int)]，支持自适应复合标签分割。
-
-    参数:
-        text: 原始色減額文本
-        color_map: 颜色映射表（可选，用于自适应分割验证）
-        enable_adaptive: 是否启用自适应分割（None 则使用全局配置）
+    阶段 1 匹配：从色減額文本中提取 MatchToken[]。
+    使用 NONE_RE / DELTA_RE / ABS_RE 三正则，按 sep/sign 分支设置 format_hint。
+    支持 pending_labels（「赤、青 -500」等多标签共用一个金额）。
     """
-    out: List[Tuple[str, int]] = []
+    tokens: List[MatchToken] = []
     if not text:
-        return out
+        return tokens
 
     s = _normalize_color_text_shop17(_pick_unopened_section(str(text)))
-
     if "色減額" in s:
         s = s.split("色減額", 1)[-1].lstrip(":：")
 
-    # 整段就是「なし/減額なし」-> 无色差额
     if re.fullmatch(r"\s*(?:なし|減額なし)\s*", s):
-        return out
+        return tokens
 
     parts = [p.strip() for p in SPLIT_TOKENS_RE_shop17.split(s) if p and p.strip()]
     if not parts:
         parts = [s.strip()]
 
-    # 决定是否启用自适应分割
-    use_adaptive = ENABLE_ADAPTIVE_SPLIT_SHOP17 if enable_adaptive is None else enable_adaptive
-
-    # 自适应分割日志数据
-    adaptive_results = []
+    pending_labels: List[str] = []
+    position = 0
 
     for part in parts:
-        # 「シルバーなし」/「クラウドホワイト：なし」
         m0 = COLOR_NONE_RE_shop17.search(part)
         if m0:
             label_raw = _normalize_label_shop17(m0.group("label"))
             if _is_plausible_color_label_shop17(label_raw):
-                # 如果启用自适应分割且有 color_map，尝试分割复合标签
-                if use_adaptive and color_map:
-                    adaptive = split_composite_label_adaptive(
-                        label_raw, color_map, _label_matches_color_unified
-                    )
-                    adaptive_results.append({
-                        "original_label": label_raw,
-                        "adaptive_result": adaptive,
-                        "delta": 0,
-                    })
-
-                    # 使用自适应分割的结果
-                    for lbl in adaptive["labels"]:
-                        out.append((lbl, 0))
-                else:
-                    # 标准模式
-                    out.append((label_raw, 0))
+                tokens.append(MatchToken(
+                    label=label_raw,
+                    amount_int=0,
+                    format_hint=FORMAT_HINT_NONE,
+                    position=position,
+                ))
+                position += 1
+            pending_labels = []
             continue
 
-        # 「ブルー-1000」「スカイブルー: -3,000」 等
+        has_amount_in_part = False
+        for m in COLOR_ABS_RE_shop17.finditer(part):
+            has_amount_in_part = True
+            label_raw = _normalize_label_shop17(m.group("label"))
+            if not _is_plausible_color_label_shop17(label_raw):
+                continue
+            amt = to_int_yen(m.group("amount"))
+            if amt is None:
+                continue
+            tokens.append(MatchToken(
+                label=label_raw,
+                amount_int=int(amt),
+                format_hint=FORMAT_HINT_AFTER_YEN,
+                position=position,
+            ))
+            position += 1
+        if has_amount_in_part:
+            pending_labels = []
+            continue
+
+        has_delta_in_part = False
         for m in COLOR_DELTA_RE_shop17.finditer(part):
+            has_delta_in_part = True
             label_raw = _normalize_label_shop17(m.group("label"))
             if not _is_plausible_color_label_shop17(label_raw):
                 continue
@@ -238,91 +237,49 @@ def _extract_specs_shop17_regex(
             amt = to_int_yen(m.group("amount"))
             if amt is None:
                 continue
+            amt_val = int(amt)
             if sign:
                 negative = sign in ("-", "−", "－")
+                amount_int = -amt_val if negative else amt_val
+                hint = FORMAT_HINT_SIGNED
+            elif sep and sep in ("-", "−", "－"):
+                amount_int = -amt_val
+                hint = FORMAT_HINT_SEP_MINUS
+            elif sep and sep in ("：", ":"):
+                amount_int = amt_val
+                hint = FORMAT_HINT_COLON_PREFIX
             else:
-                negative = sep in ("-", "−", "－") if sep else False
-            delta = -int(amt) if negative else int(amt)
+                amount_int = amt_val
+                hint = FORMAT_HINT_PLAIN_DIGITS
+            tokens.append(MatchToken(
+                label=label_raw,
+                amount_int=amount_int,
+                format_hint=hint,
+                position=position,
+            ))
+            position += 1
+            for pl in pending_labels:
+                pl_norm = _normalize_label_shop17(pl)
+                if pl_norm and _is_plausible_color_label_shop17(pl_norm):
+                    tokens.append(MatchToken(
+                        label=pl_norm,
+                        amount_int=amount_int,
+                        format_hint=hint,
+                        position=position,
+                    ))
+                    position += 1
+            pending_labels = []
+        if has_delta_in_part:
+            continue
 
-            # 如果启用自适应分割且有 color_map，尝试分割复合标签
-            if use_adaptive and color_map:
-                adaptive = split_composite_label_adaptive(
-                    label_raw, color_map, _label_matches_color_unified
-                )
-                adaptive_results.append({
-                    "original_label": label_raw,
-                    "adaptive_result": adaptive,
-                    "delta": delta,
-                })
+        # 仅标签无金额：挂起等待下一 part
+        for tok in SPLIT_TOKENS_RE_shop17.split(part):
+            tok = _normalize_label_shop17(tok)
+            if tok:
+                pending_labels.append(tok)
 
-                # 记录日志
-                logger.debug(
-                    "shop17 adaptive label split",
-                    extra={
-                        "event_type": "composite_label_split",
-                        "original_label": label_raw,
-                        "strategy_used": adaptive["strategy_used"],
-                        "split_labels": adaptive["labels"],
-                        "matched_color_count": adaptive["matched_color_count"],
-                        "total_colors_in_catalog": adaptive["total_colors_in_catalog"],
-                        "is_full_match": adaptive["is_full_match"],
-                        "invalid_parts": adaptive["invalid_parts"],
-                    }
-                )
+    return tokens
 
-                # 全匹配成功日志
-                if adaptive["is_full_match"]:
-                    logger.info(
-                        "Full color match achieved",
-                        extra={
-                            "event_type": "composite_label_full_match",
-                            "strategy_used": adaptive["strategy_used"],
-                            "matched_colors": adaptive["matched_color_count"],
-                            "original_label": label_raw,
-                        }
-                    )
-
-                # 记录遗漏颜色
-                for missing_color in adaptive["missing_colors"]:
-                    if missing_color["should_extract"]:  # 有价格信息的
-                        logger.warning(
-                            "Color mentioned in text but not extracted",
-                            extra={
-                                "event_type": "no_match",
-                                "label_raw": missing_color["found_synonym"],
-                                "label_type": "missing_with_price",
-                                "color_norm": missing_color["color_norm"],
-                                "color_raw": missing_color["color_raw"],
-                                "part_number": missing_color["part_number"],
-                                "price_pattern": missing_color["price_pattern"],
-                                "context": missing_color["context"],
-                            }
-                        )
-                    else:  # 无价格信息的
-                        logger.info(
-                            "Color mentioned in text (no price info)",
-                            extra={
-                                "event_type": "no_match",
-                                "label_raw": missing_color["found_synonym"],
-                                "label_type": "missing_no_price",
-                                "color_norm": missing_color["color_norm"],
-                                "context": missing_color["context"],
-                            }
-                        )
-
-                # 使用自适应分割的结果
-                for lbl in adaptive["labels"]:
-                    out.append((lbl, delta))
-            else:
-                # 标准模式
-                out.append((label_raw, delta))
-
-    return out
-
-# LLM 提取 — 已提取到 shop_cleaners_split_llm/llm_shop17.py
-from ..shop_cleaners_split_llm.llm_shop17 import (
-    extract_specs_shop17_llm as _extract_specs_shop17_llm_impl,
-)
 
 # ----------------------------------------------------------------------
 # 清洗主函数
@@ -362,40 +319,32 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
         raw_color = row.get("色減額")
         raw_color_s = "" if raw_color is None else str(raw_color)
 
-        row_context = {
-            "row_index": int(idx),
-            "model_text": model_text,
-            "model_norm": model_norm,
-            "capacity_gb": cap_gb,
-            "base_price": base_price,
-        }
-
-        decomp = dispatch_extraction_to_price_decomposition(
-            EXTRACTION_MODE,
-            regex_fn=lambda: _extract_specs_shop17_regex(
-                raw_color_s,
-                color_map=color_map,
-                enable_adaptive=ENABLE_ADAPTIVE_SPLIT_SHOP17,
-            ),
-            llm_fn=lambda: _extract_specs_shop17_llm_impl(
-                raw_color_s, shop_name=SHOP_NAME, cleaner_name=CLEANER_NAME,
-                row_context=row_context,
-                normalize_color_text_fn=_normalize_color_text_shop17,
-                pick_unopened_section_fn=_pick_unopened_section,
-                is_plausible_color_label_fn=_is_plausible_color_label_shop17,
-            ),
-            base_price=base_price,
-            source_text_raw=raw_color_s,
-            result_adapter=lambda r: (r, []),
+        tokens = _match_shop17(raw_color_s)
+        tokens = expand_match_tokens(
+            tokens,
+            color_map,
+            _label_matches_color_unified,
+            enable_adaptive=ENABLE_ADAPTIVE_SPLIT_SHOP17,
+            logger=ctx.logger,
+            cleaner_name=CLEANER_NAME,
+            shop_name=SHOP_NAME,
         )
-        if not decomp.delta_specs:
-            decomp = PriceDecomposition(
-                base_price=decomp.base_price,
-                delta_specs=[],
-                abs_specs=[],
-                extraction_method="none",
-                source_text_raw=decomp.source_text_raw,
-            )
+        deltas, abs_specs = match_tokens_to_specs(
+            tokens,
+            context={"base_price": base_price, "has_base_price": True},
+            logger=ctx.logger,
+            cleaner_name=CLEANER_NAME,
+            shop_name=SHOP_NAME,
+            row_index=int(idx),
+        )
+
+        decomp = PriceDecomposition(
+            base_price=base_price,
+            delta_specs=deltas,
+            abs_specs=abs_specs,
+            extraction_method="regex",
+            source_text_raw=raw_color_s,
+        )
 
         rec_at = parse_dt_aware(row.get("time-scraped"))
 
