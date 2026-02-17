@@ -311,7 +311,7 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
             delta_specs=deltas,
             abs_specs=abs_specs,
             extraction_method="regex",
-            source_text_raw=price_text,
+            source_text_raw=price_raw,
         )
 
         if decomp.base_price is None and not decomp.abs_specs:
