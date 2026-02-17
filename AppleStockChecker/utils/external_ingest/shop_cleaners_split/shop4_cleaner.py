@@ -44,6 +44,8 @@ from ..cleaner_tools import (
     setup_color_cleaner,
     finalize_color_cleaner,
     coerce_amount_yen,
+    detect_all_delta_unified,
+    match_tokens_generic,
 )
 
 # ----------------------------------------------------------------------
@@ -163,7 +165,7 @@ def _collect_block_segments(df: pd.DataFrame, start_idx: int) -> List[str]:
 # 正则模式（NONE_RE + DELTA_RE + ABS_RE，两阶段）
 # ----------------------------------------------------------------------
 
-def _clean_block_text(text: str) -> str:
+def _clean_color_text_shop4(text: str) -> str:
     """清理 block 文本。"""
     if not text:
         return ""
@@ -226,128 +228,6 @@ def _is_plausible_color_label_shop4(label: str) -> bool:
 
 
 # ----------------------------------------------------------------------
-# 阶段 1：匹配（输出 MatchToken，含 pending_labels）
-# ----------------------------------------------------------------------
-
-def _match_shop4(text: str) -> List[MatchToken]:
-    """
-    阶段 1 匹配：从 block 合并文本中提取 MatchToken[]。
-    使用 NONE_RE / DELTA_RE(分支) / ABS_RE，支持 pending_labels。
-    """
-    tokens: List[MatchToken] = []
-    if not text:
-        return tokens
-
-    s = _clean_block_text(text)
-    if not s:
-        return tokens
-
-    parts = [p.strip() for p in SPLIT_TOKENS_RE_shop4.split(s) if p and p.strip()]
-    if not parts:
-        parts = [s.strip()]
-
-    pending_labels: List[str] = []
-    position = 0
-
-    for part in parts:
-        m0 = COLOR_NONE_RE_shop4.search(part)
-        if m0:
-            label_raw = _normalize_label_shop4(m0.group("label"))
-            if _is_plausible_color_label_shop4(label_raw):
-                tokens.append(MatchToken(
-                    label=label_raw,
-                    amount_int=0,
-                    format_hint=FORMAT_HINT_NONE,
-                    position=position,
-                ))
-                position += 1
-            pending_labels = []
-            continue
-
-        has_amount_in_part = False
-        for m in COLOR_ABS_RE_shop4.finditer(part):
-            has_amount_in_part = True
-            label_raw = _normalize_label_shop4(m.group("label"))
-            if not _is_plausible_color_label_shop4(label_raw):
-                continue
-            amt = to_int_yen(m.group("amount"))
-            if amt is None:
-                continue
-            tokens.append(MatchToken(
-                label=label_raw,
-                amount_int=int(amt),
-                format_hint=FORMAT_HINT_AFTER_YEN,
-                position=position,
-            ))
-            position += 1
-        if has_amount_in_part:
-            pending_labels = []
-            continue
-
-        has_delta_in_part = False
-        for m in COLOR_DELTA_RE_shop4.finditer(part):
-            has_delta_in_part = True
-            label_raw = _normalize_label_shop4(m.group("label"))
-            if not _is_plausible_color_label_shop4(label_raw):
-                continue
-            sep = m.group("sep")
-            sign = m.group("sign")
-            amt = to_int_yen(m.group("amount"))
-            if amt is None:
-                continue
-            amt_val = int(amt)
-            if sign:
-                negative = sign in ("-", "−", "－")
-                amount_int = -amt_val if negative else amt_val
-                hint = FORMAT_HINT_SIGNED
-            elif sep and sep in ("-", "−", "－"):
-                amount_int = -amt_val
-                hint = FORMAT_HINT_SEP_MINUS
-            elif sep and sep in ("：", ":"):
-                amount_int = amt_val
-                hint = FORMAT_HINT_COLON_PREFIX
-            else:
-                amount_int = amt_val
-                hint = FORMAT_HINT_PLAIN_DIGITS
-
-            tok = MatchToken(label=label_raw, amount_int=amount_int, format_hint=hint, position=position)
-            tokens.append(tok)
-            position += 1
-            for pl in pending_labels:
-                pl_norm = _normalize_label_shop4(pl)
-                if pl_norm and _is_plausible_color_label_shop4(pl_norm):
-                    tokens.append(MatchToken(
-                        label=pl_norm,
-                        amount_int=amount_int,
-                        format_hint=hint,
-                        position=position,
-                    ))
-                    position += 1
-            pending_labels = []
-        if has_delta_in_part:
-            continue
-
-        for tok in LABEL_SPLIT_RE.split(part):
-            tok = _normalize_label_shop4(tok)
-            if tok:
-                pending_labels.append(tok)
-
-    return tokens
-
-
-def _detect_all_delta(text: str) -> Optional[int]:
-    """前置步骤：检测全色统一减额。"""
-    s = _clean_block_text(text)
-    if not s:
-        return None
-    m = _ALL_DELTA_RE_shop4.search(s)
-    if m:
-        return coerce_amount_yen(m.group(0).replace("全色", "").strip()) or 0
-    if "全色" in s or s.strip() in ("全色", "全 色"):
-        return 0
-    return None
-
-# ----------------------------------------------------------------------
 # 清洗主函数
 # ----------------------------------------------------------------------
 
@@ -408,9 +288,18 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
 
         agg_all_delta: Optional[int] = None
         if combined_text:
-            agg_all_delta = _detect_all_delta(combined_text)
+            agg_all_delta = detect_all_delta_unified(combined_text, _ALL_DELTA_RE_shop4)
 
-        tokens = _match_shop4(combined_text)
+        tokens = match_tokens_generic(
+            combined_text,
+            split_re=SPLIT_TOKENS_RE_shop4,
+            none_re=COLOR_NONE_RE_shop4,
+            abs_re=COLOR_ABS_RE_shop4,
+            delta_re=COLOR_DELTA_RE_shop4,
+            normalize_label_func=_normalize_label_shop4,
+            is_plausible_label_func=_is_plausible_color_label_shop4,
+            preprocessor=_clean_color_text_shop4,
+        )
         tokens_exp = expand_match_tokens(
             tokens,
             color_to_pn,

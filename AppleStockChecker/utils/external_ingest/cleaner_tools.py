@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Pattern
 import logging
 import os
 import time
@@ -2651,3 +2651,188 @@ def finalize_color_cleaner(
                          input_rows=ctx.input_rows, output_records=len(out),
                          start_time=ctx.start_time, log_seq=ctx.log_seq)
     return out
+
+
+# ======================================================================
+# 4. 通用两阶段清洗 Pipeline 组件
+# ======================================================================
+
+def detect_all_delta_unified(text: str, regex: Pattern) -> Optional[int]:
+    """
+    通用全色减额检测。
+    归一化文本 -> 正则匹配 -> 提取金额。
+    """
+    s = normalize_text_basic(text)
+    if not s:
+        return None
+    m = regex.search(s)
+    if m:
+        return coerce_amount_yen(m.group(0).replace("全色", "").strip()) or 0
+    if "全色" in s:
+        return 0
+    return None
+
+
+def clean_text_generic(text: str) -> str:
+    """
+    通用文本预处理：
+    - safe_to_text
+    - 基础归一化 (全角转半角, 合并空格)
+    注意：默认不移除换行（remove_newlines=False），保留结构供 split 使用。
+    """
+    if not text:
+        return ""
+    s = safe_to_text(text)
+    if not s or s.lower() == "nan":
+        return ""
+    # 调用基础归一化，保留换行
+    return normalize_text_basic(s, remove_newlines=False, collapse_spaces=False)
+
+
+def match_tokens_generic(
+    text: str,
+    split_re: Pattern,
+    none_re: Pattern,
+    abs_re: Pattern,
+    delta_re: Pattern,
+    normalize_label_func: Callable[[str], str],
+    is_plausible_label_func: Callable[[str], bool],
+    delta_re_loose: Optional[Pattern] = None,
+    preprocessor: Callable[[str], str] = clean_text_generic,
+) -> List[MatchToken]:
+    """
+    通用阶段 1 匹配器：
+    1. 预处理文本
+    2. 按 split_re 分割
+    3. 对每个 part 依次尝试匹配 NONE / ABS / DELTA
+    4. 处理 pending_labels
+    """
+    tokens: List[MatchToken] = []
+    if not text:
+        return tokens
+
+    s = preprocessor(text)
+    if not s:
+        return tokens
+
+    # split
+    parts = [p.strip() for p in split_re.split(s) if p and p.strip()]
+    if not parts:
+        parts = [s.strip()]
+
+    pending_labels: List[str] = []
+    position = 0
+
+    def _try_delta_patterns(part: str, patterns: List[Pattern]) -> bool:
+        nonlocal position
+        for pat in patterns:
+            for m in pat.finditer(part):
+                label_raw = normalize_label_func(m.group("label"))
+                if not is_plausible_label_func(label_raw):
+                    continue
+                
+                # 提取金额相关
+                sep = m.group("sep") if "sep" in m.groupdict() else None
+                sign = m.group("sign") if "sign" in m.groupdict() else None
+                amt = to_int_yen(m.group("amount"))
+                if amt is None:
+                    continue
+                
+                amt_val = int(amt)
+                
+                # 格式判定
+                if sign:
+                    negative = sign in ("-", "−", "－")
+                    amount_int = -amt_val if negative else amt_val
+                    hint = FORMAT_HINT_SIGNED
+                elif sep and sep in ("-", "−", "－"):
+                    amount_int = -amt_val
+                    hint = FORMAT_HINT_SEP_MINUS
+                elif sep and sep in ("：", ":"):
+                    amount_int = amt_val
+                    hint = FORMAT_HINT_COLON_PREFIX
+                else:
+                    amount_int = amt_val
+                    hint = FORMAT_HINT_PLAIN_DIGITS
+
+                # 添加当前 label
+                tokens.append(MatchToken(
+                    label=label_raw,
+                    amount_int=amount_int,
+                    format_hint=hint,
+                    position=position,
+                ))
+                position += 1
+                
+                # 处理 pending labels
+                for pl in pending_labels:
+                    pl_norm = normalize_label_func(pl)
+                    if pl_norm and is_plausible_label_func(pl_norm):
+                        tokens.append(MatchToken(
+                            label=pl_norm,
+                            amount_int=amount_int,
+                            format_hint=hint,
+                            position=position,
+                        ))
+                        position += 1
+                pending_labels.clear()
+                return True
+        return False
+
+    delta_patterns = [delta_re]
+    if delta_re_loose:
+        delta_patterns.append(delta_re_loose)
+
+    for part in parts:
+        # 1. NONE
+        m0 = none_re.search(part)
+        if m0:
+            label_raw = normalize_label_func(m0.group("label"))
+            if is_plausible_label_func(label_raw):
+                tokens.append(MatchToken(
+                    label=label_raw,
+                    amount_int=0,
+                    format_hint=FORMAT_HINT_NONE,
+                    position=position,
+                ))
+                position += 1
+            pending_labels.clear()
+            continue
+
+        # 2. ABS
+        has_amount_in_part = False
+        for m in abs_re.finditer(part):
+            has_amount_in_part = True
+            label_raw = normalize_label_func(m.group("label"))
+            if not is_plausible_label_func(label_raw):
+                continue
+            amt = to_int_yen(m.group("amount"))
+            if amt is None:
+                continue
+            tokens.append(MatchToken(
+                label=label_raw,
+                amount_int=int(amt),
+                format_hint=FORMAT_HINT_AFTER_YEN,
+                position=position,
+            ))
+            position += 1
+        
+        if has_amount_in_part:
+            pending_labels.clear()
+            continue
+
+        # 3. DELTA
+        if _try_delta_patterns(part, delta_patterns):
+            continue
+
+        # 4. Pending Label (如果本 part 既没匹配到任何价格模式，则视为 label 候选)
+        sub_parts = [t.strip() for t in split_re.split(part) if t and t.strip()]
+        if not sub_parts:
+            sub_parts = [part.strip()]
+            
+        for tok in sub_parts:
+            tok_norm = normalize_label_func(tok)
+            if tok_norm:
+                pending_labels.append(tok)
+
+    return tokens

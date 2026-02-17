@@ -5,7 +5,7 @@ shop9 清洗器 — アキモバ
 
   原始文本（買取価格 + 色・詳細等）
     两阶段流水线（与 shop17/16/15/14/12/11 对齐）:
-    ├─ _clean_shop9_text()                 ← 合并 買取価格 + 色・詳細等，归一化
+    ├─ _clean_color_text_shop9()                 ← 合并 買取価格 + 色・詳細等，归一化
     ├─ 前置  all_delta 检测（全色±N）
     ├─ 阶段 1  _match_shop9()              ← NONE_RE / DELTA_RE(分支) / ABS_RE
     ├─ expand_match_tokens()
@@ -48,6 +48,8 @@ from ..cleaner_tools import (
     setup_color_cleaner,
     finalize_color_cleaner,
     coerce_amount_yen,
+    detect_all_delta_unified,
+    match_tokens_generic,
 )
 
 # ----------------------------------------------------------------------
@@ -76,7 +78,7 @@ COL_TIME = "time-scraped"
 _norm = _norm_strip
 
 
-def _clean_shop9_text(s_price: str, s_color: str) -> str:
+def _clean_color_text_shop9(s_price: str, s_color: str) -> str:
     """
     合并 買取価格 + 色・詳細等，归一化后供阶段 1 匹配。
     """
@@ -179,134 +181,6 @@ def _is_plausible_color_label_shop9(label: str) -> bool:
 
 
 # ----------------------------------------------------------------------
-# 阶段 1：匹配（输出 MatchToken，含 pending_labels）
-# ----------------------------------------------------------------------
-
-def _match_shop9(text: str) -> List[MatchToken]:
-    """
-    阶段 1 匹配：从合并后的 買取価格+色・詳細等 文本中提取 MatchToken[]。
-    使用 NONE_RE / DELTA_RE(分支) / ABS_RE，支持 pending_labels。
-    期望 text 已由 _clean_shop9_text 预处理。
-    """
-    tokens: List[MatchToken] = []
-    if not text:
-        return tokens
-
-    s = str(text).strip()
-    if not s or s.lower() == "nan":
-        return tokens
-
-    parts = [p.strip() for p in SPLIT_TOKENS_RE_shop9.split(s) if p and p.strip()]
-    if not parts:
-        parts = [s.strip()]
-
-    pending_labels: List[str] = []
-    position = 0
-
-    for part in parts:
-        m0 = COLOR_NONE_RE_shop9.search(part)
-        if m0:
-            label_raw = _normalize_label_shop9(m0.group("label"))
-            if _is_plausible_color_label_shop9(label_raw):
-                tokens.append(MatchToken(
-                    label=label_raw,
-                    amount_int=0,
-                    format_hint=FORMAT_HINT_NONE,
-                    position=position,
-                ))
-                position += 1
-            pending_labels = []
-            continue
-
-        has_amount_in_part = False
-        for m in COLOR_ABS_RE_shop9.finditer(part):
-            has_amount_in_part = True
-            label_raw = _normalize_label_shop9(m.group("label"))
-            if not _is_plausible_color_label_shop9(label_raw):
-                continue
-            amt = to_int_yen(m.group("amount"))
-            if amt is None:
-                continue
-            tokens.append(MatchToken(
-                label=label_raw,
-                amount_int=int(amt),
-                format_hint=FORMAT_HINT_AFTER_YEN,
-                position=position,
-            ))
-            position += 1
-        if has_amount_in_part:
-            pending_labels = []
-            continue
-
-        has_delta_in_part = False
-        for m in COLOR_DELTA_RE_shop9.finditer(part):
-            has_delta_in_part = True
-            label_raw = _normalize_label_shop9(m.group("label"))
-            if not _is_plausible_color_label_shop9(label_raw):
-                continue
-            sep = m.group("sep")
-            sign = m.group("sign")
-            amt = to_int_yen(m.group("amount"))
-            if amt is None:
-                continue
-            amt_val = int(amt)
-            if sign:
-                negative = sign in ("-", "−", "－")
-                amount_int = -amt_val if negative else amt_val
-                hint = FORMAT_HINT_SIGNED
-            elif sep and sep in ("-", "−", "－"):
-                amount_int = -amt_val
-                hint = FORMAT_HINT_SEP_MINUS
-            elif sep and sep in ("：", ":"):
-                amount_int = amt_val
-                hint = FORMAT_HINT_COLON_PREFIX
-            else:
-                amount_int = amt_val
-                hint = FORMAT_HINT_PLAIN_DIGITS
-
-            tok = MatchToken(label=label_raw, amount_int=amount_int, format_hint=hint, position=position)
-            tokens.append(tok)
-            position += 1
-            for pl in pending_labels:
-                pl_norm = _normalize_label_shop9(pl)
-                if pl_norm and _is_plausible_color_label_shop9(pl_norm):
-                    tokens.append(MatchToken(
-                        label=pl_norm,
-                        amount_int=amount_int,
-                        format_hint=hint,
-                        position=position,
-                    ))
-                    position += 1
-            pending_labels = []
-        if has_delta_in_part:
-            continue
-
-        for tok in LABEL_SPLIT_RE_shop9.split(part):
-            tok = _normalize_label_shop9(tok)
-            if tok:
-                pending_labels.append(tok)
-
-    return tokens
-
-
-def _detect_all_delta(text: str) -> Optional[int]:
-    """前置步骤：检测全色统一减额。"""
-    if not text:
-        return None
-    s = str(text).strip().replace("\u3000", " ").replace("\xa0", " ")
-    s = re.sub(r"\s+", " ", s).strip()
-    s = normalize_text_basic(s)
-    if not s:
-        return None
-    m = _ALL_DELTA_RE_shop9.search(s)
-    if m:
-        return coerce_amount_yen(m.group(0).replace("全色", "").strip()) or 0
-    if "全色" in s:
-        return 0
-    return None
-
-
-# ----------------------------------------------------------------------
 # 清洗主函数
 # ----------------------------------------------------------------------
 
@@ -356,19 +230,28 @@ def clean_shop9(
 
         s_price = str(raw_price_cell) if raw_price_cell is not None else ""
         s_color = str(raw_color_cell) if raw_color_cell is not None else ""
-        combined = _clean_shop9_text(s_price, s_color)
+        combined = _clean_color_text_shop9(s_price, s_color)
 
         base_price = extract_price_yen(s_price) or extract_price_yen(s_color)
 
         # 前置：all_delta 检测（全色±N），优先从合并文本检测
         agg_all_delta: Optional[int] = None
         if combined:
-            agg_all_delta = _detect_all_delta(combined)
+            agg_all_delta = detect_all_delta_unified(combined, _ALL_DELTA_RE_shop9)
         if agg_all_delta is None and s_color:
-            agg_all_delta = _detect_all_delta(s_color)  # 回退：仅色・詳細等
+            agg_all_delta = detect_all_delta_unified(s_color, _ALL_DELTA_RE_shop9)  # 回退：仅色・詳細等
 
         # 阶段 1：_match_shop9
-        tokens = _match_shop9(combined)
+        tokens = match_tokens_generic(
+            combined,
+            split_re=SPLIT_TOKENS_RE_shop9,
+            none_re=COLOR_NONE_RE_shop9,
+            abs_re=COLOR_ABS_RE_shop9,
+            delta_re=COLOR_DELTA_RE_shop9,
+            normalize_label_func=_normalize_label_shop9,
+            is_plausible_label_func=_is_plausible_color_label_shop9,
+            preprocessor=lambda x: x,  # Already cleaned by _clean_color_text_shop9
+        )
 
         # expand_match_tokens + 阶段 2
         tokens_exp = expand_match_tokens(
