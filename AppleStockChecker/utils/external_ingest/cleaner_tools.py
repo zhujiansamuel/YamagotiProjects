@@ -481,6 +481,252 @@ LABEL_SPLIT_RE_shop16_SIMPLE = re.compile(r"[／/、，,]")
 LABEL_SPLIT_RE_shop17 = re.compile(r"[／/、]|(?:\s*;\s*)|\n")
 
 # ----------------------------------------------------------------------
+# 自适应复合标签分割（shop17 试点）
+# ----------------------------------------------------------------------
+# 渐进式分割策略：从严格到宽松逐个尝试，使用"全匹配优先停止"策略
+
+LABEL_SPLIT_STRATEGIES = [
+    {
+        "name": "standard",  # 标准分割（shop2/4/7/11/12 通用）
+        "regex": re.compile(r"[／/、，,・\s]+"),
+        "description": "斜杠、顿号、逗号、中点、空格"
+    },
+    {
+        "name": "with_semicolon",  # 包含分号（shop3/9/14）
+        "regex": re.compile(r"[／/、，,・\s;；]+"),
+        "description": "标准 + 分号"
+    },
+    {
+        "name": "with_ampersand",  # 包含 & 符号（shop15）
+        "regex": re.compile(r"[／/、，,・\s&＆]+"),
+        "description": "标准 + & 符号"
+    },
+    {
+        "name": "with_pipe",  # 包含竖线
+        "regex": re.compile(r"[／/、，,・\s|｜]+"),
+        "description": "标准 + 竖线"
+    },
+    {
+        "name": "aggressive",  # 激进模式（所有常见分隔符）
+        "regex": re.compile(r"[／/、，,・\s;；&＆|｜]+"),
+        "description": "所有常见分隔符"
+    },
+]
+
+
+def validate_split_labels(
+    labels: List[str],
+    color_map: Dict[str, Tuple[str, str]],
+    label_matcher: Callable[[str, str, str], bool],
+) -> Tuple[List[str], List[str], Set[str]]:
+    """
+    验证分割后的标签是否为有效颜色。
+
+    参数:
+        labels: 待验证的标签列表
+        color_map: {color_norm: (part_number, color_raw)} 颜色映射表
+        label_matcher: 颜色匹配函数 (label_raw, color_raw, color_norm) -> bool
+
+    返回:
+        (valid_labels, invalid_labels, matched_colors_set)
+    """
+    valid = []
+    invalid = []
+    matched_colors = set()
+
+    for label in labels:
+        label_cleaned = label.strip()
+        if not label_cleaned:
+            continue
+
+        # 尝试匹配任意数据库中的颜色
+        matched = False
+        for color_norm, (pn, color_raw) in color_map.items():
+            if label_matcher(label_cleaned, color_raw, color_norm):
+                valid.append(label_cleaned)
+                matched_colors.add(color_norm)
+                matched = True
+                break
+
+        if not matched:
+            invalid.append(label_cleaned)
+
+    return valid, invalid, matched_colors
+
+
+def detect_missing_colors_with_price(
+    extracted_labels: List[str],
+    original_text: str,
+    color_map: Dict[str, Tuple[str, str]],
+    label_matcher: Callable[[str, str, str], bool],
+) -> List[Dict]:
+    """
+    检测原文中可能存在但未被提取的颜色。
+    如果颜色后面跟着价格/减价信息，会标记为"应提取"。
+
+    返回:
+        [
+            {
+                "color_norm": ...,
+                "color_raw": ...,
+                "found_synonym": ...,
+                "has_price_info": bool,
+                "price_pattern": str,
+                "should_extract": bool,
+            },
+            ...
+        ]
+    """
+    # 价格模式：查找颜色后面的 +/-数字
+    price_pattern = re.compile(r"([+\-＋－])[\s]*(\d+)")
+
+    missing = []
+    text_lower = original_text.lower()
+
+    for color_norm, (pn, color_raw) in color_map.items():
+        # 检查该颜色是否已被提取
+        already_extracted = any(
+            label_matcher(label, color_raw, color_norm)
+            for label in extracted_labels
+        )
+
+        if already_extracted:
+            continue
+
+        # 检查原文中是否包含该颜色的任何同义词
+        synonyms = SYNONYM_LOOKUP_NORM.get(color_norm, [])
+        found_synonym = None
+        found_position = -1
+
+        # 1. 检查 color_raw 原文
+        if color_raw in original_text:
+            found_synonym = color_raw
+            found_position = original_text.index(color_raw)
+        elif color_raw.lower() in text_lower:
+            found_synonym = color_raw
+            found_position = text_lower.index(color_raw.lower())
+        # 2. 检查同义词
+        elif synonyms:
+            for syn in synonyms:
+                if syn in original_text:
+                    found_synonym = syn
+                    found_position = original_text.index(syn)
+                    break
+                elif syn.lower() in text_lower:
+                    found_synonym = syn
+                    found_position = text_lower.index(syn.lower())
+                    break
+
+        if found_synonym and found_position >= 0:
+            # 检查颜色后面是否有价格信息
+            text_after = original_text[found_position:found_position + 50]  # 取后面50字符
+            price_match = price_pattern.search(text_after)
+
+            has_price = price_match is not None
+            price_str = price_match.group(0) if has_price else None
+
+            missing.append({
+                "color_norm": color_norm,
+                "color_raw": color_raw,
+                "part_number": pn,
+                "found_synonym": found_synonym,
+                "has_price_info": has_price,
+                "price_pattern": price_str,
+                "should_extract": has_price,  # 有价格信息则应该提取
+                "context": text_after[:30],   # 上下文（用于日志）
+            })
+
+    return missing
+
+
+def split_composite_label_adaptive(
+    label_text: str,
+    color_map: Dict[str, Tuple[str, str]],
+    label_matcher: Callable[[str, str, str], bool],
+) -> Dict:
+    """
+    自适应分割复合标签，使用"全匹配优先停止"策略。
+
+    停止条件：
+    1. 如果某个策略匹配到了该机型的所有颜色，立即停止并返回
+    2. 否则尝试完所有策略后，返回匹配颜色最多的结果
+
+    返回:
+        {
+            "strategy_used": str,           # 使用的策略名称
+            "labels": List[str],            # 有效标签列表
+            "matched_color_count": int,     # 匹配到的颜色数量
+            "total_colors_in_catalog": int, # 该机型总颜色数
+            "is_full_match": bool,          # 是否全匹配
+            "invalid_parts": List[str],     # 无效部分
+            "missing_colors": List[Dict],   # 潜在未提取的颜色
+        }
+    """
+    total_colors = len(color_map)
+    best_result = {
+        "strategy_used": "none",
+        "labels": [],
+        "matched_color_count": 0,
+        "total_colors_in_catalog": total_colors,
+        "is_full_match": False,
+        "invalid_parts": [],
+        "missing_colors": [],
+    }
+
+    # 尝试各种分割策略
+    for strategy in LABEL_SPLIT_STRATEGIES:
+        # 1. 分割
+        parts = [
+            p.strip()
+            for p in strategy["regex"].split(label_text)
+            if p.strip()
+        ]
+
+        if not parts:
+            continue
+
+        # 2. 验证并收集匹配的颜色
+        valid_labels, invalid_parts, matched_colors = validate_split_labels(
+            parts, color_map, label_matcher
+        )
+
+        matched_count = len(matched_colors)
+
+        # 3. 如果匹配到所有颜色，立即返回（提前终止）
+        if matched_count == total_colors:
+            return {
+                "strategy_used": strategy["name"],
+                "labels": valid_labels,
+                "matched_color_count": matched_count,
+                "total_colors_in_catalog": total_colors,
+                "is_full_match": True,
+                "invalid_parts": invalid_parts,
+                "missing_colors": [],  # 全匹配时无遗漏颜色
+            }
+
+        # 4. 如果这个策略更好（匹配更多颜色），更新最佳结果
+        if matched_count > best_result["matched_color_count"]:
+            best_result = {
+                "strategy_used": strategy["name"],
+                "labels": valid_labels,
+                "matched_color_count": matched_count,
+                "total_colors_in_catalog": total_colors,
+                "is_full_match": False,
+                "invalid_parts": invalid_parts,
+                "missing_colors": [],
+            }
+
+    # 5. 检测潜在遗漏的颜色（仅当非全匹配时）
+    best_result["missing_colors"] = detect_missing_colors_with_price(
+        best_result["labels"],
+        label_text,
+        color_map,
+        label_matcher,
+    )
+
+    return best_result
+
+# ----------------------------------------------------------------------
 # 统一标签→颜色匹配函数（2025-02 替换各 shop 独立实现）
 # ----------------------------------------------------------------------
 # 合并 shop3/4/9/11/12/14/15/16/17 的 _label_matches_color 逻辑：

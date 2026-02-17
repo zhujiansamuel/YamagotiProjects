@@ -20,6 +20,9 @@ from ..cleaner_tools import (
     lx,
     HAS_LANGEXTRACT,
     log_llm_extraction_error,
+    # 自适应分割相关
+    split_composite_label_adaptive,
+    detect_missing_colors_with_price,
 )
 import os
 from functools import lru_cache
@@ -39,6 +42,7 @@ shop17 清洗器 — ゲストモバイル
 
   原始文本（type / 新未開封品 / 色減額）
     │ 配置: EXTRACTION_MODE / OLLAMA_URL / OLLAMA_MODEL_ID (cleaner_tools)
+    │         SHOP17_ADAPTIVE_SPLIT (环境变量，默认 true)
     │
     ├─ _normalize_model_generic() / _parse_capacity_gb()  ← Step 1: 机型・容量解析（cleaner_tools）
     │
@@ -50,7 +54,11 @@ shop17 清洗器 — ゲストモバイル
     │   │   ├─ _pick_unopened_section()     ← 提取【未開封】段
     │   │   ├─ _normalize_color_text_shop17()  ← 归一化
     │   │   ├─ SPLIT_TOKENS_RE 拆分          ← 分割多条目
-    │   │   └─ COLOR_NONE_RE / COLOR_DELTA_RE  ← なし模式・金额模式
+    │   │   ├─ COLOR_NONE_RE / COLOR_DELTA_RE  ← なし模式・金额模式
+    │   │   └─ [NEW] split_composite_label_adaptive()  ← 自适应复合标签分割
+    │   │       • 多策略渐进式尝试（5个策略）
+    │   │       • 全匹配优先停止
+    │   │       • 检测带价格的遗漏颜色
     │   │
     │   └─ llm 路径:
     │       └─ _extract_specs_shop17_llm_impl()  ← LangExtract 核心提取
@@ -58,6 +66,12 @@ shop17 清洗器 — ゲストモバイル
     ├─ _label_matches_color_unified()  ← Step 4: 标签→颜色匹配（cleaner_tools 统一）
     │
     └─ clean_shop17()              ← Step 5: 主函数，生成输出行
+
+  自适应分割 (shop17 试点功能):
+    - 环境变量: SHOP17_ADAPTIVE_SPLIT=true/false
+    - 默认启用，支持复合标签如 "青/オレンジ-2000"
+    - 日志事件: composite_label_split, composite_label_full_match, no_match
+    - 详见: docs/composite_label_split_proposal.md
 """
 
 # 初始化 logger
@@ -68,6 +82,9 @@ SHOP_NAME = "ゲストモバイル"
 
 # DEBUG 功能现在由 logging 级别控制（在 settings.py 的 LOGGING 配置中）
 # 控制台显示 INFO 级别（简洁），文件记录 DEBUG 级别（详细）
+
+# 自适应分割开关（shop17 试点）
+ENABLE_ADAPTIVE_SPLIT_SHOP17 = os.getenv("SHOP17_ADAPTIVE_SPLIT", "true").lower() == "true"
 
 # ----------------------------------------------------------------------
 # 正则表达式与辅助函数（按处理流程排列）
@@ -150,9 +167,18 @@ COLOR_DELTA_RE_shop17 = re.compile(
 # 原 shop17 独立实现已迁移至 cleaner_tools._label_matches_color_unified，
 # 合并 shop3/4/9/11/12/14/15/16/17 逻辑，供所有清洗器共用。
 
-def _extract_specs_shop17_regex(text: str) -> List[Tuple[str, int]]:
+def _extract_specs_shop17_regex(
+    text: str,
+    color_map: Optional[Dict[str, Tuple[str, str]]] = None,
+    enable_adaptive: bool = None,
+) -> List[Tuple[str, int]]:
     """
-    正则版提取 [(label_raw, delta_int)]，作为 LLM 的 fallback，也可以单独使用。
+    正则版提取 [(label_raw, delta_int)]，支持自适应复合标签分割。
+
+    参数:
+        text: 原始色減額文本
+        color_map: 颜色映射表（可选，用于自适应分割验证）
+        enable_adaptive: 是否启用自适应分割（None 则使用全局配置）
     """
     out: List[Tuple[str, int]] = []
     if not text:
@@ -171,19 +197,41 @@ def _extract_specs_shop17_regex(text: str) -> List[Tuple[str, int]]:
     if not parts:
         parts = [s.strip()]
 
+    # 决定是否启用自适应分割
+    use_adaptive = ENABLE_ADAPTIVE_SPLIT_SHOP17 if enable_adaptive is None else enable_adaptive
+
+    # 自适应分割日志数据
+    adaptive_results = []
+
     for part in parts:
         # 「シルバーなし」/「クラウドホワイト：なし」
         m0 = COLOR_NONE_RE_shop17.search(part)
         if m0:
-            label = _normalize_label_shop17(m0.group("label"))
-            if _is_plausible_color_label_shop17(label):
-                out.append((label, 0))
+            label_raw = _normalize_label_shop17(m0.group("label"))
+            if _is_plausible_color_label_shop17(label_raw):
+                # 如果启用自适应分割且有 color_map，尝试分割复合标签
+                if use_adaptive and color_map:
+                    adaptive = split_composite_label_adaptive(
+                        label_raw, color_map, _label_matches_color_unified
+                    )
+                    adaptive_results.append({
+                        "original_label": label_raw,
+                        "adaptive_result": adaptive,
+                        "delta": 0,
+                    })
+
+                    # 使用自适应分割的结果
+                    for lbl in adaptive["labels"]:
+                        out.append((lbl, 0))
+                else:
+                    # 标准模式
+                    out.append((label_raw, 0))
             continue
 
         # 「ブルー-1000」「スカイブルー: -3,000」 等
         for m in COLOR_DELTA_RE_shop17.finditer(part):
-            label = _normalize_label_shop17(m.group("label"))
-            if not _is_plausible_color_label_shop17(label):
+            label_raw = _normalize_label_shop17(m.group("label"))
+            if not _is_plausible_color_label_shop17(label_raw):
                 continue
             sep = m.group("sep")
             sign = m.group("sign")
@@ -195,7 +243,79 @@ def _extract_specs_shop17_regex(text: str) -> List[Tuple[str, int]]:
             else:
                 negative = sep in ("-", "−", "－") if sep else False
             delta = -int(amt) if negative else int(amt)
-            out.append((label, delta))
+
+            # 如果启用自适应分割且有 color_map，尝试分割复合标签
+            if use_adaptive and color_map:
+                adaptive = split_composite_label_adaptive(
+                    label_raw, color_map, _label_matches_color_unified
+                )
+                adaptive_results.append({
+                    "original_label": label_raw,
+                    "adaptive_result": adaptive,
+                    "delta": delta,
+                })
+
+                # 记录日志
+                logger.debug(
+                    "shop17 adaptive label split",
+                    extra={
+                        "event_type": "composite_label_split",
+                        "original_label": label_raw,
+                        "strategy_used": adaptive["strategy_used"],
+                        "split_labels": adaptive["labels"],
+                        "matched_color_count": adaptive["matched_color_count"],
+                        "total_colors_in_catalog": adaptive["total_colors_in_catalog"],
+                        "is_full_match": adaptive["is_full_match"],
+                        "invalid_parts": adaptive["invalid_parts"],
+                    }
+                )
+
+                # 全匹配成功日志
+                if adaptive["is_full_match"]:
+                    logger.info(
+                        "Full color match achieved",
+                        extra={
+                            "event_type": "composite_label_full_match",
+                            "strategy_used": adaptive["strategy_used"],
+                            "matched_colors": adaptive["matched_color_count"],
+                            "original_label": label_raw,
+                        }
+                    )
+
+                # 记录遗漏颜色
+                for missing_color in adaptive["missing_colors"]:
+                    if missing_color["should_extract"]:  # 有价格信息的
+                        logger.warning(
+                            "Color mentioned in text but not extracted",
+                            extra={
+                                "event_type": "no_match",
+                                "label_raw": missing_color["found_synonym"],
+                                "label_type": "missing_with_price",
+                                "color_norm": missing_color["color_norm"],
+                                "color_raw": missing_color["color_raw"],
+                                "part_number": missing_color["part_number"],
+                                "price_pattern": missing_color["price_pattern"],
+                                "context": missing_color["context"],
+                            }
+                        )
+                    else:  # 无价格信息的
+                        logger.info(
+                            "Color mentioned in text (no price info)",
+                            extra={
+                                "event_type": "no_match",
+                                "label_raw": missing_color["found_synonym"],
+                                "label_type": "missing_no_price",
+                                "color_norm": missing_color["color_norm"],
+                                "context": missing_color["context"],
+                            }
+                        )
+
+                # 使用自适应分割的结果
+                for lbl in adaptive["labels"]:
+                    out.append((lbl, delta))
+            else:
+                # 标准模式
+                out.append((label_raw, delta))
 
     return out
 
@@ -252,7 +372,11 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
 
         decomp = dispatch_extraction_to_price_decomposition(
             EXTRACTION_MODE,
-            regex_fn=lambda: _extract_specs_shop17_regex(raw_color_s),
+            regex_fn=lambda: _extract_specs_shop17_regex(
+                raw_color_s,
+                color_map=color_map,
+                enable_adaptive=ENABLE_ADAPTIVE_SPLIT_SHOP17,
+            ),
             llm_fn=lambda: _extract_specs_shop17_llm_impl(
                 raw_color_s, shop_name=SHOP_NAME, cleaner_name=CLEANER_NAME,
                 row_context=row_context,
