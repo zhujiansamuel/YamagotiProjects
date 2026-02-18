@@ -2,7 +2,7 @@
 """
 多 shop 清洗模拟验证脚本
 
-从 shop-data/{shopN} 随机抽取 5 个 Excel 文件，模拟清洗流程，检查重构是否有问题。
+从 shop-data/{shopN} 随机抽取 Excel 文件，模拟清洗流程，检查重构是否有问题。
 支持: shop2, shop3, shop4, shop8, shop9, shop10, shop12, shop13, shop14, shop15, shop16, shop17
 
 验证内容：
@@ -13,8 +13,8 @@
 
 用法：
     python scripts/verify_shops_sample.py [shop2 shop3 ...]
-    python scripts/verify_shops_sample.py   # 默认验证所有
-    python scripts/verify_shops_sample.py --sample 50   # 每 shop 抽样 50 个文件（默认 5）
+    python scripts/verify_shops_sample.py   # 默认验证所有，每 shop 抽样 10 个
+    python scripts/verify_shops_sample.py --sample 50   # 指定抽样数量
 
 需在项目根目录、Django 虚拟环境激活后运行。
 """
@@ -61,6 +61,11 @@ from AppleStockChecker.utils.external_ingest.shop_cleaners_split import (
 OUTPUT_COLS = ["part_number", "shop_name", "price_new", "recorded_at"]
 PRICE_MIN, PRICE_MAX = 30_000, 500_000  # 日元合理区间（新品买取）
 
+
+def _indent(text: str, spaces: int) -> str:
+    """给多行文本每行前加缩进"""
+    return "\n".join(" " * spaces + line for line in (text or "").splitlines())
+
 SHOP_CONFIG: List[Tuple[str, Callable, List[str]]] = [
     ("shop2", shop2_cleaner.clean_shop2, ["data2-1", "data2-2", "data3", "data5", "time-scraped"]),
     ("shop3", shop3_cleaner.clean_shop3, ["title", "data5", "time-scraped"]),
@@ -78,30 +83,38 @@ SHOP_CONFIG: List[Tuple[str, Callable, List[str]]] = [
 
 
 def validate_output_structure(out: pd.DataFrame) -> Dict[str, any]:
-    """校验输出结构化数据及颜色减价信息合理性。"""
+    """校验输出结构化数据及颜色减价信息合理性。有问题时返回 raw_snippet 供调试。"""
     issues: List[str] = []
+    raw_snippets: List[str] = []
     if out is None or not isinstance(out, pd.DataFrame):
-        return {"ok": False, "issues": ["输出非 DataFrame"]}
+        return {"ok": False, "issues": ["输出非 DataFrame"], "raw_snippet": None}
     if out.empty:
-        return {"ok": True, "issues": [], "notes": ["无输出行（可能无匹配数据）"]}
+        return {"ok": True, "issues": [], "notes": ["无输出行（可能无匹配数据）"], "raw_snippet": None}
 
     # 1. 列结构
     missing = [c for c in OUTPUT_COLS if c not in out.columns]
     if missing:
         issues.append(f"缺失列: {missing}")
-        return {"ok": False, "issues": issues}
+        raw_snippets.append(f"实际列: {list(out.columns)}")
+        return {"ok": False, "issues": issues, "raw_snippet": "\n".join(raw_snippets)}
 
     # 2. 关键字段非空
     if out["part_number"].isna().any() or (out["part_number"].astype(str).str.strip() == "").any():
+        bad_idx = out["part_number"].isna() | (out["part_number"].astype(str).str.strip() == "")
         issues.append("part_number 存在空值")
+        raw_snippets.append("[part_number 空值行]\n" + out.loc[bad_idx, OUTPUT_COLS].head(10).to_string())
     if out["price_new"].isna().any():
+        bad_idx = out["price_new"].isna()
         issues.append("price_new 存在空值")
+        raw_snippets.append("[price_new 空值行]\n" + out.loc[bad_idx, OUTPUT_COLS].head(10).to_string())
 
     # 3. price_new 合理区间（正数且在 PRICE_MIN~PRICE_MAX）
     prices = pd.to_numeric(out["price_new"], errors="coerce")
-    bad = prices[(prices <= 0) | (prices < PRICE_MIN) | (prices > PRICE_MAX)]
+    bad_mask = (prices <= 0) | (prices < PRICE_MIN) | (prices > PRICE_MAX)
+    bad = prices[bad_mask]
     if len(bad) > 0:
         issues.append(f"price_new 不合理: {len(bad)} 条超出 [{PRICE_MIN},{PRICE_MAX}] 或≤0")
+        raw_snippets.append("[异常 price_new 行]\n" + out.loc[bad.index, OUTPUT_COLS].to_string())
 
     # 4. 颜色减价体现：同文件内不同 part_number 应有价格 spread（非全同），表示颜色差价被正确解析
     notes = []
@@ -113,10 +126,11 @@ def validate_output_structure(out: pd.DataFrame) -> Dict[str, any]:
     if len(out) >= 3:
         notes.append(f"输出 {len(out)} 个 part_number（多颜色展开）")
 
-    return {"ok": len(issues) == 0, "issues": issues, "notes": notes}
+    raw_snippet = "\n---\n".join(raw_snippets) if raw_snippets else None
+    return {"ok": len(issues) == 0, "issues": issues, "notes": notes, "raw_snippet": raw_snippet}
 
 
-def verify_shop(shop_id: str, cleaner_fn: Callable, required_cols: List[str], sample_count: int = 5) -> dict:
+def verify_shop(shop_id: str, cleaner_fn: Callable, required_cols: List[str], sample_count: int = 10) -> dict:
     shop_dir = BASE_DIR / "shop-data" / shop_id
     if not shop_dir.exists():
         return {"shop": shop_id, "error": f"目录不存在 {shop_dir}", "results": []}
@@ -157,11 +171,17 @@ def verify_shop(shop_id: str, cleaner_fn: Callable, required_cols: List[str], sa
             result["structure_ok"] = val.get("ok", False)
             result["structure_issues"] = val.get("issues", [])
             result["structure_notes"] = val.get("notes", [])
+            result["raw_snippet"] = val.get("raw_snippet")  # 有问题的样本保留原始文本
         except Exception as e:
             result["error"] = str(e)
             import traceback
 
             result["traceback"] = traceback.format_exc()
+            # 异常时保留输入原始文本便于调试
+            try:
+                result["raw_snippet"] = f"[输入前5行]\n{df.head(5).to_string()}\n\n[异常]\n{result['traceback'][-500:]}"
+            except NameError:
+                result["raw_snippet"] = result["traceback"][-800:]
         results.append(result)
 
     all_ok = (
@@ -173,8 +193,8 @@ def verify_shop(shop_id: str, cleaner_fn: Callable, required_cols: List[str], sa
 
 
 def main():
-    # 解析 --sample N 参数
-    sample_count = 5
+    # 解析 --sample N 参数，默认 10 防止输出过大
+    sample_count = 10
     args = [s.strip() for s in sys.argv[1:]] if len(sys.argv) > 1 else []
     if "--sample" in args:
         idx = args.index("--sample")
@@ -208,6 +228,8 @@ def main():
         for r in report["results"]:
             if r["error"]:
                 print(f"  {r['file']}: 错误 {r['error'][:55]}...")
+                if r.get("raw_snippet"):
+                    print(f"    原始文本:\n{_indent(r['raw_snippet'], 4)}")
             else:
                 status = "OK" if r["cols_ok"] and r["output_cols_ok"] and r.get("structure_ok", True) else "WARN"
                 extra = ""
@@ -216,6 +238,8 @@ def main():
                 if r.get("structure_notes"):
                     extra = extra + " | " + ", ".join(r["structure_notes"][:2])
                 print(f"  {r['file']}: in={r['input_rows']} out={r['output_rows']} {status}{extra}")
+                if status == "WARN" and r.get("raw_snippet"):
+                    print(f"    原始文本:\n{_indent(r['raw_snippet'], 4)}")
         print(f"  结论: {'通过' if report.get('all_ok') else '有问题'}")
 
     print("\n" + "=" * 70)
