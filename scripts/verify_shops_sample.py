@@ -14,6 +14,7 @@
 用法：
     python scripts/verify_shops_sample.py [shop2 shop3 ...]
     python scripts/verify_shops_sample.py   # 默认验证所有
+    python scripts/verify_shops_sample.py --sample 50   # 每 shop 抽样 50 个文件（默认 5）
 
 需在项目根目录、Django 虚拟环境激活后运行。
 """
@@ -172,20 +173,32 @@ def verify_shop(shop_id: str, cleaner_fn: Callable, required_cols: List[str], sa
 
 
 def main():
-    shops_arg = [s.strip() for s in sys.argv[1:]] if len(sys.argv) > 1 else None
+    # 解析 --sample N 参数
+    sample_count = 5
+    args = [s.strip() for s in sys.argv[1:]] if len(sys.argv) > 1 else []
+    if "--sample" in args:
+        idx = args.index("--sample")
+        if idx + 1 < len(args):
+            try:
+                sample_count = int(args[idx + 1])
+                args = args[:idx] + args[idx + 2 :]
+            except ValueError:
+                pass
+    shops_arg = [s for s in args if s and not s.startswith("-")] or None
+
     if shops_arg:
         configs = [(sid, fn, cols) for sid, fn, cols in SHOP_CONFIG if sid in shops_arg]
     else:
         configs = SHOP_CONFIG
 
     print("=" * 70)
-    print("多 Shop 清洗模拟验证（含结构及颜色减价校验）")
+    print(f"多 Shop 清洗模拟验证（含结构及颜色减价校验）— 每 shop 抽样 {sample_count} 个文件")
     print("=" * 70)
 
     all_reports = []
     for shop_id, cleaner_fn, required_cols in configs:
         print(f"\n--- {shop_id} ---")
-        report = verify_shop(shop_id, cleaner_fn, required_cols)
+        report = verify_shop(shop_id, cleaner_fn, required_cols, sample_count=sample_count)
         all_reports.append(report)
 
         if report.get("error") and "results" not in report:
