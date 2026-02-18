@@ -69,6 +69,7 @@ htmlcov/
 /.tmp_csv_uploads/
 
 # Project specific
+shop-data/
 logs/
 simplepro.lic
 caddy-reload/

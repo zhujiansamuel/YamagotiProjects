@@ -81,6 +81,11 @@ def get_cleaner(name: str) -> Cleaner:
 
 
 def run_cleaner(shop_key: str, df):
-    return CLEANERS[shop_key](df)
+    from AppleStockChecker.utils.external_ingest.cleaner_tools import dedupe_output_keep_latest
+
+    out = CLEANERS[shop_key](df)
+    if isinstance(out, pd.DataFrame) and not out.empty:
+        out = dedupe_output_keep_latest(out)
+    return out
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 from typing import Protocol, Dict, Callable, Optional, List, Tuple
 from ...external_ingest.cleaner_tools import to_int_yen, parse_dt_aware
 from ..cleaner_tools import (
+    normalize_text_stage0,
     _parse_capacity_gb,
     _normalize_model_generic,
     normalize_text_basic,
@@ -104,6 +105,16 @@ def _clean_color_text_shop17(s: str) -> str:
         str(s), remove_newlines=False, collapse_spaces=False
     )
 
+
+def _preprocess_color_text_shop17(raw: str) -> str:
+    """提取【未開封】段 + 归一化 + 色減額 切分，供 match_tokens_generic preprocessor 使用。"""
+    s = _clean_color_text_shop17(_pick_unopened_section(raw))
+    if "色減額" in s:
+        s = s.split("色減額", 1)[-1].lstrip(":：")
+    if re.fullmatch(r"\s*(?:なし|減額なし)\s*", s or ""):
+        return ""
+    return s
+
 # ── Step 3: 归一化颜色标签（清除空白） ──
 def _normalize_label_shop17(lbl: str) -> str:
     return re.sub(r"[\s\u3000\xa0]+", "", lbl or "")
@@ -203,28 +214,21 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
         base_price = int(base_price)
 
         raw_color = row.get("色減額")
-        raw_color_s = "" if raw_color is None else str(raw_color)
+        raw_color_shop17 = normalize_text_stage0("" if raw_color is None else str(raw_color))
 
-        # 1. All Delta (on raw text, consistent with original logic which didn't use _pick_unopened_section)
-        agg_all_delta = detect_all_delta_unified(raw_color_s, _ALL_DELTA_RE_shop17)
+        # 1. All Delta (on raw text)
+        agg_all_delta = detect_all_delta_unified(raw_color_shop17, _ALL_DELTA_RE_shop17)
 
-        # 2. Match Tokens
-        # Preprocessing specific to shop17
-        s_processed = _clean_color_text_shop17(_pick_unopened_section(raw_color_s))
-        if "色減額" in s_processed:
-            s_processed = s_processed.split("色減額", 1)[-1].lstrip(":：")
-        if re.fullmatch(r"\s*(?:なし|減額なし)\s*", s_processed):
-            s_processed = ""
-
+        # 2. Match Tokens（统一流程：raw + preprocessor）
         tokens = match_tokens_generic(
-            s_processed,
+            raw_color_shop17,
             split_re=SPLIT_TOKENS_RE_shop17,
             none_re=COLOR_NONE_RE_shop17,
             abs_re=COLOR_ABS_RE_shop17,
             delta_re=COLOR_DELTA_RE_shop17,
             normalize_label_func=_normalize_label_shop17,
             is_plausible_label_func=_is_plausible_color_label_shop17,
-            preprocessor=lambda x: x,
+            preprocessor=_preprocess_color_text_shop17,
         )
         
         tokens = expand_match_tokens(
@@ -255,7 +259,7 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
             delta_specs=deltas,
             abs_specs=abs_specs,
             extraction_method="regex",
-            source_text_raw=raw_color_s,
+            source_text_raw=raw_color_shop17,
         )
 
         rec_at = parse_dt_aware(row.get("time-scraped"))
@@ -268,6 +272,7 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
             cleaner_name=CLEANER_NAME,
             recorded_at=rec_at,
             emit_default_rows=True,
+            skip_non_positive=True,
             logger=ctx.logger,
             log_seq_start=ctx.log_seq,
             row_index=int(idx),

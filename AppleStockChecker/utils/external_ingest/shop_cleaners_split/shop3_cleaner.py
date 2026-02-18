@@ -24,6 +24,7 @@ import pandas as pd
 
 from ...external_ingest.cleaner_tools import to_int_yen, parse_dt_aware
 from ..cleaner_tools import (
+    normalize_text_stage0,
     _parse_capacity_gb,
     _normalize_model_generic,
     _norm_strip,
@@ -93,19 +94,9 @@ COLOR_NONE_RE_shop3 = re.compile(
     re.UNICODE | re.VERBOSE,
 )
 
-# 买取一丁目格式：标签 + sign + 金额（与 DELTA_PATTERN_STRICT/LOOSE 对齐）
+# 买取一丁目格式：标签 + sign + 金额
 COLOR_DELTA_RE_shop3 = re.compile(
     r"""(?P<label>[^+\-−－\d¥￥円\/、，\n]+(?:\([^)]*\))?)\s*
-        (?P<sep>[：:\-])?\s*
-        (?P<sign>[+\-−－])?\s*
-        (?P<amount>\d[\d,]*)\s*(?:円)?
-    """,
-    re.UNICODE | re.VERBOSE,
-)
-
-# 宽松 fallback：允许日文等字符
-COLOR_DELTA_RE_shop3_LOOSE = re.compile(
-    r"""(?P<label>[\u3000\u30A0-\u30FF\u4E00-\u9FFF\w\-\s\/、，,・]+?)\s*
         (?P<sep>[：:\-])?\s*
         (?P<sign>[+\-−－])?\s*
         (?P<amount>\d[\d,]*)\s*(?:円)?
@@ -183,7 +174,7 @@ def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         t = recorded_at.iat[i]
         model_text = str(src["title"].iat[i])
 
-        rem_text = str(remark.iat[i]) if remark is not None else ""
+        raw_rem_shop3 = normalize_text_stage0(str(remark.iat[i]) if remark is not None else "")
 
         if not m or pd.isna(c) or p0 is None:
             continue
@@ -194,22 +185,21 @@ def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
             continue
 
         base_price_val = int(p0)
-        source_text_raw_full = rem_text
+        source_text_raw_full = raw_rem_shop3
 
         delta_specs: List[Tuple[str, int]] = []
         abs_specs: List[Tuple[str, int]] = []
 
-        if rem_text:
-            agg_all_delta = detect_all_delta_unified(rem_text, _ALL_DELTA_RE_shop3)
+        if raw_rem_shop3:
+            agg_all_delta = detect_all_delta_unified(raw_rem_shop3, _ALL_DELTA_RE_shop3)
             tokens = match_tokens_generic(
-                rem_text,
+                raw_rem_shop3,
                 split_re=SPLIT_TOKENS_RE_shop3,
                 none_re=COLOR_NONE_RE_shop3,
                 abs_re=COLOR_ABS_RE_shop3,
                 delta_re=COLOR_DELTA_RE_shop3,
                 normalize_label_func=_normalize_label_shop3,
                 is_plausible_label_func=_is_plausible_color_label_shop3,
-                delta_re_loose=COLOR_DELTA_RE_shop3_LOOSE,
                 preprocessor=_clean_color_text_shop3,
             )
             tokens_exp = expand_match_tokens(
@@ -248,6 +238,7 @@ def clean_shop3(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
             shop_name=SHOP_NAME,
             cleaner_name=CLEANER_NAME,
             recorded_at=t,
+            skip_non_positive=True,
             logger=ctx.logger,
             log_seq_start=ctx.log_seq,
             row_index=i,

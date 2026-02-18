@@ -23,6 +23,7 @@ import pandas as pd
 
 from ...external_ingest.cleaner_tools import to_int_yen, parse_dt_aware
 from ..cleaner_tools import (
+    normalize_text_stage0,
     PriceDecomposition,
     resolve_color_prices,
     _parse_capacity_gb,
@@ -276,7 +277,7 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
             continue
 
         segments = _collect_block_segments(df, i)
-        combined_text = " / ".join(segments)
+        raw_combined_shop4 = normalize_text_stage0(" / ".join(segments))
         block_lines_raw = []
         for j in range(i, block_end + 1):
             if j > i and _is_next_model_base_price_row(df, j, n):
@@ -287,11 +288,11 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         source_text_raw_full = " | ".join(block_lines_raw)
 
         agg_all_delta: Optional[int] = None
-        if combined_text:
-            agg_all_delta = detect_all_delta_unified(combined_text, _ALL_DELTA_RE_shop4)
+        if raw_combined_shop4:
+            agg_all_delta = detect_all_delta_unified(raw_combined_shop4, _ALL_DELTA_RE_shop4)
 
         tokens = match_tokens_generic(
-            combined_text,
+            raw_combined_shop4,
             split_re=SPLIT_TOKENS_RE_shop4,
             none_re=COLOR_NONE_RE_shop4,
             abs_re=COLOR_ABS_RE_shop4,
@@ -338,6 +339,7 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
             cleaner_name=CLEANER_NAME,
             recorded_at=rec_at,
             emit_default_rows=True,
+            skip_non_positive=True,
             logger=ctx.logger,
             log_seq_start=ctx.log_seq,
             row_index=i,

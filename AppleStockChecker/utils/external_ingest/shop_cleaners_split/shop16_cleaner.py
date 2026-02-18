@@ -32,6 +32,7 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 from ...external_ingest.cleaner_tools import to_int_yen, parse_dt_aware
 from ..cleaner_tools import (
+    normalize_text_stage0,
     _parse_capacity_gb,
     _normalize_model_generic,
     _norm_strip,
@@ -164,6 +165,13 @@ def _clean_color_text_shop16(s: object) -> str:
     return s
 
 
+def _preprocess_color_text_shop16(text: str) -> str:
+    """归一化 + 去掉行首基准价，供 match_tokens_generic preprocessor 使用。"""
+    s = _clean_color_text_shop16(text)
+    m0 = FIRST_YEN_RE.search(s)
+    return s[m0.end():].strip() if m0 else s
+
+
 def _extract_base_price(text: str) -> Optional[int]:
     if not text:
         return None
@@ -257,30 +265,25 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
         if not color_map:
             continue
 
-        price_raw = "" if price_cell is None else str(price_cell)
+        raw_price_shop16 = normalize_text_stage0("" if price_cell is None else str(price_cell))
         
-        # Pre-process for base price and matching
-        price_text_norm = _clean_color_text_shop16(price_raw)
-        
-        # 1. Base Price
+        # 1. Base Price（需先归一化再提取）
+        price_text_norm = _clean_color_text_shop16(raw_price_shop16)
         base_price = _extract_base_price(price_text_norm)
         
         # 2. All Delta
-        agg_all_delta = detect_all_delta_unified(price_raw, _ALL_DELTA_RE_shop16)
+        agg_all_delta = detect_all_delta_unified(raw_price_shop16, _ALL_DELTA_RE_shop16)
         
-        # 3. Match Tokens (strip base price first)
-        m0 = FIRST_YEN_RE.search(price_text_norm)
-        tail = price_text_norm[m0.end():].strip() if m0 else price_text_norm
-        
+        # 3. Match Tokens（统一流程：raw + preprocessor）
         tokens = match_tokens_generic(
-            tail,
+            raw_price_shop16,
             split_re=SPLIT_TOKENS_RE,
             none_re=COLOR_NONE_RE_shop16,
             abs_re=COLOR_ABS_RE_shop16,
             delta_re=COLOR_DELTA_RE_shop16,
             normalize_label_func=_normalize_label_shop16,
             is_plausible_label_func=_is_plausible_color_label_shop16,
-            preprocessor=lambda x: x,  # Already normalized and stripped
+            preprocessor=_preprocess_color_text_shop16,
         )
         
         tokens = expand_match_tokens(
@@ -311,7 +314,7 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
             delta_specs=deltas,
             abs_specs=abs_specs,
             extraction_method="regex",
-            source_text_raw=price_raw,
+            source_text_raw=raw_price_shop16,
         )
 
         if decomp.base_price is None and not decomp.abs_specs:
@@ -327,6 +330,7 @@ def clean_shop16(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
             cleaner_name=CLEANER_NAME,
             recorded_at=rec_at,
             emit_default_rows=emit_default,
+            skip_non_positive=True,
             logger=ctx.logger,
             log_seq_start=ctx.log_seq,
             row_index=int(idx),

@@ -25,6 +25,10 @@ import pandas as pd
 
 from ...external_ingest.cleaner_tools import to_int_yen, parse_dt_aware
 from ..cleaner_tools import (
+    normalize_text_stage0,
+    detect_all_delta_unified,
+    match_tokens_generic,
+    normalize_text_basic,
     _parse_capacity_gb,
     _normalize_model_generic,
     _norm_strip,
@@ -184,7 +188,7 @@ def _clean_color_text_shop14(x) -> str:
         return ""
     s = s.lstrip("\ufeff").replace("\u3000", " ").replace("\xa0", " ")
     s = re.sub(r"\s+", " ", s).strip()
-    return s
+    return normalize_text_basic(s, remove_newlines=False, collapse_spaces=False)
 
 
 # ---------------------------------------------------------------------------
@@ -231,31 +235,31 @@ def clean_shop14(df: "pd.DataFrame", debug: bool = True) -> "pd.DataFrame":
 
         rec_at = parse_dt_aware(row.get("time-scraped"))
 
-        frags: Dict[str, str] = {}
+        raw_frags_shop14: Dict[str, str] = {}
         for logical in ("减价条件", "减价条件2", "23432"):
             actual = remark_cols_map.get(logical)
             raw_val = row.get(actual) if actual else None
-            frags[logical] = _clean_color_text_shop14(raw_val)
+            raw_frags_shop14[logical] = normalize_text_stage0(str(raw_val or ""))
 
-        combined = " ".join([v for v in frags.values() if v]).strip()
+        raw_combined_shop14 = " ".join([v for v in raw_frags_shop14.values() if v.strip()]).strip()
 
         # 前置：all_delta 检测（全色±N），任一 frag 或 combined 有则采用（后者覆盖）
         agg_all_delta: Optional[int] = None
-        for frag in frags.values():
-            if not frag:
+        for frag in raw_frags_shop14.values():
+            if not frag.strip():
                 continue
             ad = detect_all_delta_unified(frag, _ALL_DELTA_RE_shop14)
             if ad is not None:
                 agg_all_delta = ad
-        if combined:
-            ad2 = detect_all_delta_unified(combined, _ALL_DELTA_RE_shop14)
+        if raw_combined_shop14:
+            ad2 = detect_all_delta_unified(raw_combined_shop14, _ALL_DELTA_RE_shop14)
             if ad2 is not None:
                 agg_all_delta = ad2
 
         # 阶段 1：对每个 frag 跑 _match_shop14，合并 tokens
         all_tokens: List[MatchToken] = []
-        for frag in frags.values():
-            if frag:
+        for frag in raw_frags_shop14.values():
+            if frag.strip():
                 all_tokens.extend(match_tokens_generic(
                     frag,
                     split_re=SPLIT_TOKENS_RE_shop14,
@@ -264,18 +268,18 @@ def clean_shop14(df: "pd.DataFrame", debug: bool = True) -> "pd.DataFrame":
                     delta_re=COLOR_DELTA_RE_shop14,
                     normalize_label_func=_clean_label_shop14,
                     is_plausible_label_func=_is_plausible_color_label_shop14,
-                    preprocessor=lambda x: x,  # Already cleaned by _clean_color_text_shop14
+                    preprocessor=_clean_color_text_shop14,
                 ))
-        if not all_tokens and combined:
+        if not all_tokens and raw_combined_shop14:
             all_tokens = match_tokens_generic(
-                combined,
+                raw_combined_shop14,
                 split_re=SPLIT_TOKENS_RE_shop14,
                 none_re=COLOR_NONE_RE_shop14,
                 abs_re=COLOR_ABS_RE_shop14,
                 delta_re=COLOR_DELTA_RE_shop14,
                 normalize_label_func=_clean_label_shop14,
                 is_plausible_label_func=_is_plausible_color_label_shop14,
-                preprocessor=lambda x: x,
+                preprocessor=_clean_color_text_shop14,
             )
 
         # expand + 阶段 2
@@ -308,7 +312,7 @@ def clean_shop14(df: "pd.DataFrame", debug: bool = True) -> "pd.DataFrame":
             delta_specs=deltas,
             abs_specs=abs_specs,
             extraction_method="regex",
-            source_text_raw=combined,
+            source_text_raw=raw_combined_shop14,
         )
 
         new_rows, ctx.log_seq = resolve_color_prices(
@@ -319,6 +323,7 @@ def clean_shop14(df: "pd.DataFrame", debug: bool = True) -> "pd.DataFrame":
             cleaner_name=CLEANER_NAME,
             recorded_at=rec_at,
             emit_default_rows=True,
+            skip_non_positive=True,
             logger=ctx.logger,
             log_seq_start=ctx.log_seq,
             row_index=int(idx),

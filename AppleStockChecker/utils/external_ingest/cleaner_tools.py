@@ -8,9 +8,11 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Pattern
 import logging
 import os
-import time
-import pandas as pd
 import re
+import time
+import unicodedata
+
+import pandas as pd
 
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime, parse_date
@@ -955,6 +957,37 @@ def _label_matches_color_unified(label_raw: str, color_raw: str, color_norm: str
     return False
 
 
+# 阶段0：公用转换（各 shop 在取到原始文本后立即调用）
+# 减号类 emoji → 标准减号；其他 emoji Unicode 块
+_MINUS_EMOJI_PAT = re.compile(r"[\u2796]")  # HEAVY MINUS SIGN
+_OTHER_EMOJI_PAT = re.compile(
+    r"[\u2600-\u26FF\u2700-\u27BF"  # Misc Symbols, Dingbats
+    r"\U0001F300-\U0001F6FF\U0001F900-\U0001F9FF"  # Pictographs, Supplemental
+    r"\u2300-\u23FF\u2B50\uFE00-\uFE0F\u200D\u200C]"
+)
+
+
+def normalize_text_stage0(text: str) -> str:
+    """
+    阶段0 公用转换：Unicode 归一化、HTML 清理、emoji 清理、去控制字符。
+    各 shop 在取到原始文本后立即调用，再传入全色检测与阶段1。
+    """
+    if text is None or not isinstance(text, str):
+        return "" if text is None else str(text)
+    s = str(text)
+    # 1. 去控制字符（保留 \\t \\n \\r）
+    s = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u0080-\u009f]", "", s)
+    # 2. Unicode NFKC 归一化
+    s = unicodedata.normalize("NFKC", s)
+    # 3. HTML 标签清理
+    s = re.sub(r"<[^>]+>", "", s)
+    # 4. Emoji：减号类 → 标准减号
+    s = _MINUS_EMOJI_PAT.sub("-", s)
+    # 5. 其他 emoji → 删除
+    s = _OTHER_EMOJI_PAT.sub("", s)
+    return s
+
+
 # 全角→半角 完整变换表（数字、标点、货币、日文符号）
 _FZ_TO_HZ_TRANS = str.maketrans({
     # 数字
@@ -1818,7 +1851,7 @@ def resolve_color_prices(
         cleaner_name: 清洗器名（用于日志）
         recorded_at: 记录时间
         emit_default_rows: 未匹配颜色是否生成行（False → 仅输出有明确定价的颜色）
-        skip_non_positive: 最终价格 <= 0 时跳过该颜色（True → 不生成行，仅 warning 日志）
+        skip_non_positive: 最终价格 <= 0 时使用基准价替代（True → 该颜色用 base_price，仅 warning 日志）
         logger: 日志器（None 则跳过所有日志）
         log_seq_start: 日志序号起始值
         row_index: 行号（用于日志）
@@ -2028,25 +2061,63 @@ def resolve_color_prices(
         if not emit_default_rows and effective_source == "default_zero":
             continue
 
-        # skip_non_positive → 价格 <= 0 跳过（shop2 等需要）
-        if skip_non_positive and final_price is not None and int(final_price) <= 0:
+        # skip_non_positive 且 base_price 为空时，无法替代 ≤0 价格，则跳过
+        if (
+            skip_non_positive
+            and final_price is not None
+            and int(final_price) <= 0
+            and base_price is None
+        ):
             if logger:
                 _seq += 1
                 logger.warning(
-                    "Skipping item: price <= 0",
+                    "Skipping item: price <= 0 and base_price is None",
                     extra={
                         **_log_ctx,
                         "event_type": "output_record",
                         "log_seq": _seq,
                         "part_number": pn,
                         "color_norm": col_norm,
-                        "base_price": base_price,
                         "spec_value": spec_value,
                         "final_price": int(final_price),
-                        "skip_reason": "price <= 0",
+                        "skip_reason": "price <= 0, no base_price to substitute",
                     },
                 )
             continue
+
+        # 价格合理性校验：超出范围时用 base_price 替代，记 warning
+        price_override_reason: Optional[str] = None
+        original_final_price = int(final_price) if final_price is not None else None
+        if final_price is not None and base_price is not None:
+            fp = int(final_price)
+            bp = int(base_price)
+            if skip_non_positive and fp <= 0:
+                final_price = base_price
+                price_override_reason = "price <= 0"
+            elif fp > int(bp * 1.5):
+                final_price = base_price
+                price_override_reason = "price > 1.5x base"
+            elif fp < int(bp * 0.5):
+                final_price = base_price
+                price_override_reason = "price < 0.5x base"
+
+        if price_override_reason and logger:
+            _seq += 1
+            logger.warning(
+                f"Price override: {price_override_reason}, using base_price",
+                extra={
+                    **_log_ctx,
+                    "event_type": "output_record",
+                    "log_seq": _seq,
+                    "part_number": pn,
+                    "color_norm": col_norm,
+                    "base_price": base_price,
+                    "spec_value": spec_value,
+                    "original_final_price": original_final_price,
+                    "final_price": int(final_price),
+                    "override_reason": price_override_reason,
+                },
+            )
 
         output_rows.append({
             "part_number": pn,
@@ -2208,6 +2279,20 @@ def assemble_output_df(
         if coerce_price:
             out["price_new"] = pd.to_numeric(out["price_new"], errors="coerce").astype("Int64")
     return out
+
+
+def dedupe_output_keep_latest(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    按 (part_number, shop_name) 去重，保留 recorded_at（time-scraped）最新的一行。
+    供 run_cleaner 统一调用，对所有 shop 输出生效。
+    """
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        return df
+    if "part_number" not in df.columns or "recorded_at" not in df.columns:
+        return df
+    subset = ["part_number", "shop_name"] if "shop_name" in df.columns else ["part_number"]
+    df_sorted = df.sort_values("recorded_at", ascending=True, na_position="last")
+    return df_sorted.drop_duplicates(subset=subset, keep="last").reset_index(drop=True)
 
 
 # ======================================================================
@@ -2463,6 +2548,7 @@ def clean_with_model_capacity_matching(
     model_normalizer_fn: Optional[Callable] = None,
     price_extractor_fn: Optional[Callable] = None,
     pn_extractor_fn: Optional[Callable] = None,
+    model_cap_color_extractor_fn: Optional[Callable[[str], Optional[Tuple[str, int, str]]]] = None,
     row_filter_fn: Optional[Callable] = None,
     add_model_norm: bool = False,
     coerce_price: bool = False,
@@ -2483,7 +2569,11 @@ def clean_with_model_capacity_matching(
     price_extractor_fn : 价格解析函数（默认 extract_price_yen）
     pn_extractor_fn : 可选的 part_number 直接提取函数
         签名: (row_text) -> Optional[str]
-        若提供且返回非 None，跳过 model/capacity 匹配
+        若提供且返回非 None，输出 1 行
+    model_cap_color_extractor_fn : 可选的 (model, cap, color) 提取函数
+        签名: (model_col_text) -> Optional[(model_norm, cap_gb, color_raw)]
+        若提供且返回非 None 且 color_map 匹配成功，输出 1 行（不展开全色）
+        优先级高于 pn_extractor_fn
     row_filter_fn : 可选的行级过滤（接收 row Series/dict，返回 True 保留）
     add_model_norm : 传递给 _load_iphone17_info_df_from_db
     coerce_price : assemble_output_df 的参数
@@ -2515,6 +2605,10 @@ def clean_with_model_capacity_matching(
         .apply(list).to_dict()
     )
 
+    color_map: Optional[Dict] = None
+    if model_cap_color_extractor_fn:
+        color_map = _build_color_map(info_df)
+
     model_norm_series = df[model_col].map(model_norm_fn)
     cap_gb_series = df[model_col].map(_parse_capacity_gb)
     price_series = df[price_col].map(price_ext)
@@ -2525,27 +2619,52 @@ def clean_with_model_capacity_matching(
         if row_filter_fn and not row_filter_fn(df.iloc[i]):
             continue
 
-        # 若提供了 pn_extractor_fn，优先使用直接提取
-        if pn_extractor_fn:
-            pn_direct = pn_extractor_fn(str(df[model_col].iat[i]))
-            if pn_direct:
-                p = price_series.iat[i]
-                t = recorded_at_series.iat[i]
-                if p is not None:
-                    rows.append({
-                        "part_number": str(pn_direct),
-                        "shop_name": shop_name,
-                        "price_new": int(p) if p is not None else None,
-                        "recorded_at": t,
-                    })
-                continue
-
-        m = model_norm_series.iat[i]
-        c = cap_gb_series.iat[i]
         p = price_series.iat[i]
         t = recorded_at_series.iat[i]
+        if p is None:
+            continue
 
-        if not m or pd.isna(c) or p is None:
+        text = str(df[model_col].iat[i])
+
+        # 1. [NEW] model_cap_color_extractor_fn: (model, cap, color) -> 1 PN
+        if model_cap_color_extractor_fn and color_map:
+            extracted = model_cap_color_extractor_fn(text)
+            if extracted:
+                m, c, color_raw = extracted
+                key = (m, int(c))
+                cmap_for_key = color_map.get(key)
+                matched = False
+                if cmap_for_key:
+                    for color_norm, (pn, cr) in cmap_for_key.items():
+                        if _label_matches_color_unified(color_raw, cr, color_norm):
+                            rows.append({
+                                "part_number": str(pn),
+                                "shop_name": shop_name,
+                                "price_new": int(p),
+                                "recorded_at": t,
+                            })
+                            matched = True
+                            break
+                if matched:
+                    continue
+
+        # 2. pn_extractor_fn
+        if pn_extractor_fn:
+            pn_direct = pn_extractor_fn(text)
+            if pn_direct:
+                rows.append({
+                    "part_number": str(pn_direct),
+                    "shop_name": shop_name,
+                    "price_new": int(p),
+                    "recorded_at": t,
+                })
+                continue
+
+        # 3. 原有逻辑: (m, c) -> groups.get -> 全色展开
+        m = model_norm_series.iat[i]
+        c = cap_gb_series.iat[i]
+
+        if not m or pd.isna(c):
             continue
 
         pn_list = groups.get((m, int(c)), [])
@@ -2689,6 +2808,23 @@ def clean_text_generic(text: str) -> str:
     return normalize_text_basic(s, remove_newlines=False, collapse_spaces=False)
 
 
+# 通用 DELTA LOOSE fallback：STRICT 未匹配时使用，允许日文/汉字/连字符等（与 shop2/3 原 LOOSE 一致）
+DELTA_RE_LOOSE_GENERIC = re.compile(
+    r"""(?P<label>[\u3000\u30A0-\u30FF\u4E00-\u9FFF\w\-\s\/、，,・]+?)\s*
+        (?P<sep>[：:\-])?\s*
+        (?P<sign>[+\-−－])?\s*
+        (?P<amount>\d[\d,]*)\s*(?:円)?
+    """,
+    re.UNICODE | re.VERBOSE,
+)
+
+# 通用 ABS LOOSE fallback：STRICT 未匹配时使用，label 允许日文/汉字/连字符等（与 DELTA 分开，便于独立修改）
+ABS_RE_LOOSE_GENERIC = re.compile(
+    r"""(?P<label>[\u3000\u30A0-\u30FF\u4E00-\u9FFF\w\-\s\/、，,・]+?)\s*[￥¥]\s*(?P<amount>\d[\d,]*)\s*(?:円)?""",
+    re.UNICODE | re.VERBOSE,
+)
+
+
 def match_tokens_generic(
     text: str,
     split_re: Pattern,
@@ -2698,14 +2834,22 @@ def match_tokens_generic(
     normalize_label_func: Callable[[str], str],
     is_plausible_label_func: Callable[[str], bool],
     delta_re_loose: Optional[Pattern] = None,
+    use_delta_loose_fallback: bool = True,
+    abs_re_loose: Optional[Pattern] = None,
+    use_abs_loose_fallback: bool = True,
     preprocessor: Callable[[str], str] = clean_text_generic,
 ) -> List[MatchToken]:
     """
     通用阶段 1 匹配器：
     1. 预处理文本
     2. 按 split_re 分割
-    3. 对每个 part 依次尝试匹配 NONE / ABS / DELTA
+    3. 对每个 part 依次尝试匹配 NONE / ABS / DELTA（均为 STRICT 优先，LOOSE 兜底）
     4. 处理 pending_labels
+
+    delta_re_loose: 自定义 DELTA LOOSE 模式；为 None 且 use_delta_loose_fallback=True 时使用 DELTA_RE_LOOSE_GENERIC
+    use_delta_loose_fallback: 是否启用 DELTA LOOSE fallback（默认 True）
+    abs_re_loose: 自定义 ABS LOOSE 模式；为 None 且 use_abs_loose_fallback=True 时使用 ABS_RE_LOOSE_GENERIC
+    use_abs_loose_fallback: 是否启用 ABS LOOSE fallback（默认 True）
     """
     tokens: List[MatchToken] = []
     if not text:
@@ -2780,8 +2924,37 @@ def match_tokens_generic(
         return False
 
     delta_patterns = [delta_re]
-    if delta_re_loose:
+    if delta_re_loose is not None:
         delta_patterns.append(delta_re_loose)
+    elif use_delta_loose_fallback:
+        delta_patterns.append(DELTA_RE_LOOSE_GENERIC)
+
+    abs_patterns: List[Pattern] = [abs_re]
+    if abs_re_loose is not None:
+        abs_patterns.append(abs_re_loose)
+    elif use_abs_loose_fallback:
+        abs_patterns.append(ABS_RE_LOOSE_GENERIC)
+
+    def _try_abs_patterns(part: str) -> bool:
+        nonlocal position
+        for pat in abs_patterns:
+            for m in pat.finditer(part):
+                label_raw = normalize_label_func(m.group("label"))
+                if not is_plausible_label_func(label_raw):
+                    continue
+                amt = to_int_yen(m.group("amount"))
+                if amt is None:
+                    continue
+                tokens.append(MatchToken(
+                    label=label_raw,
+                    amount_int=int(amt),
+                    format_hint=FORMAT_HINT_AFTER_YEN,
+                    position=position,
+                ))
+                position += 1
+                pending_labels.clear()
+                return True
+        return False
 
     for part in parts:
         # 1. NONE
@@ -2799,26 +2972,8 @@ def match_tokens_generic(
             pending_labels.clear()
             continue
 
-        # 2. ABS
-        has_amount_in_part = False
-        for m in abs_re.finditer(part):
-            has_amount_in_part = True
-            label_raw = normalize_label_func(m.group("label"))
-            if not is_plausible_label_func(label_raw):
-                continue
-            amt = to_int_yen(m.group("amount"))
-            if amt is None:
-                continue
-            tokens.append(MatchToken(
-                label=label_raw,
-                amount_int=int(amt),
-                format_hint=FORMAT_HINT_AFTER_YEN,
-                position=position,
-            ))
-            position += 1
-        
-        if has_amount_in_part:
-            pending_labels.clear()
+        # 2. ABS（STRICT 优先，LOOSE 兜底）
+        if _try_abs_patterns(part):
             continue
 
         # 3. DELTA

@@ -5,7 +5,7 @@ shop12 清洗器 — トゥインクル
 
   原始文本（備考1 + 買取価格）
     两阶段流水线（与 shop17/16/15/14 对齐）:
-    ├─ _normalize_remark_text()                 ← Step 1: 去除開封行，预处理備考1
+    ├─ _clean_color_text_1_shop12()            ← Step 1: 去除開封行，预处理備考1
     ├─ 前置  all_delta 检测（全色±N）
     ├─ 阶段 1  _match_shop12()                  ← NONE_RE / DELTA_RE(分支) / ABS_RE
     ├─ expand_match_tokens()
@@ -22,6 +22,8 @@ import pandas as pd
 
 from ...external_ingest.cleaner_tools import to_int_yen, parse_dt_aware
 from ..cleaner_tools import (
+    normalize_text_stage0,
+    normalize_text_basic,
     extract_price_yen,
     _parse_capacity_gb,
     _normalize_model_generic,
@@ -61,9 +63,9 @@ SHOP_NAME = "トゥインクル"
 # Step 1: 備考1 文本预处理
 # ----------------------------------------------------------------------
 
-def _normalize_remark_text(remark_raw: str) -> str:
+def _clean_color_text_1_shop12(remark_raw: str) -> str:
     """
-    備考1 预处理：
+    備考1 预处理（Step 1）：
     - 把与"開封/開封品/※開封/開封済"粘在同一行的内容拆行；
     - 去掉所有"開封"行，只保留可用于新品价规则的行。
     """
@@ -92,7 +94,7 @@ def _clean_color_text_shop12(text: str) -> str:
         return ""
     s = s.replace("\u3000", " ").replace("\xa0", " ")
     s = re.sub(r"\s+", " ", s).strip()
-    return s
+    return normalize_text_basic(s, remove_newlines=False, collapse_spaces=False)
 
 
 # ----------------------------------------------------------------------
@@ -196,16 +198,16 @@ def clean_shop12(df: pd.DataFrame, debug: bool = False) -> pd.DataFrame:
             continue
 
         remark_raw = row.get("備考1") or ""
-        remark_text = _normalize_remark_text(str(remark_raw))
+        raw_remark_shop12 = _clean_color_text_1_shop12(normalize_text_stage0(str(remark_raw)))
 
         # 前置：all_delta 检测（全色±N）
         agg_all_delta: Optional[int] = None
-        if remark_text:
-            agg_all_delta = detect_all_delta_unified(remark_text, _ALL_DELTA_RE_shop12)
+        if raw_remark_shop12:
+            agg_all_delta = detect_all_delta_unified(raw_remark_shop12, _ALL_DELTA_RE_shop12)
 
         # 阶段 1：_match_shop12
         tokens = match_tokens_generic(
-            remark_text,
+            raw_remark_shop12,
             split_re=SPLIT_TOKENS_RE_shop12,
             none_re=COLOR_NONE_RE_shop12,
             abs_re=COLOR_ABS_RE_shop12,
@@ -255,6 +257,7 @@ def clean_shop12(df: pd.DataFrame, debug: bool = False) -> pd.DataFrame:
             shop_name=SHOP_NAME,
             cleaner_name=CLEANER_NAME,
             recorded_at=rec_at,
+            skip_non_positive=True,
             logger=ctx.logger,
             log_seq_start=ctx.log_seq,
             row_index=int(idx),

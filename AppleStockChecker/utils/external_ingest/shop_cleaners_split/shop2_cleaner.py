@@ -24,6 +24,7 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 from ...external_ingest.cleaner_tools import to_int_yen, parse_dt_aware
 from ..cleaner_tools import (
+    normalize_text_stage0,
     extract_price_yen,
     _parse_capacity_gb,
     _normalize_model_generic,
@@ -114,15 +115,6 @@ COLOR_NONE_RE_shop2 = re.compile(
 
 COLOR_DELTA_RE_shop2 = re.compile(
     r"""(?P<label>[^+\-−－\d¥￥円\/、，\n]+(?:\([^)]*\))?)\s*
-        (?P<sep>[：:\-])?\s*
-        (?P<sign>[+\-−－])?\s*
-        (?P<amount>\d[\d,]*)\s*(?:円)?
-    """,
-    re.UNICODE | re.VERBOSE,
-)
-
-COLOR_DELTA_RE_shop2_LOOSE = re.compile(
-    r"""(?P<label>[\u3000\u30A0-\u30FF\u4E00-\u9FFF\w\-\s\/、，,・]+?)\s*
         (?P<sep>[：:\-])?\s*
         (?P<sign>[+\-−－])?\s*
         (?P<amount>\d[\d,]*)\s*(?:円)?
@@ -240,23 +232,22 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
                          data3_raw=_truncate_for_log(str(raw_price), 100))
             continue
 
-        raw_rule_s = safe_to_text(raw_rule)
+        raw_rule_shop2 = normalize_text_stage0(safe_to_text(raw_rule))
         base_price_val = int(base_price)
 
         delta_specs: List[Tuple[str, int]] = []
         abs_specs: List[Tuple[str, int]] = []
 
-        if raw_rule_s:
-            agg_all_delta = detect_all_delta_unified(raw_rule_s, _ALL_DELTA_RE_shop2)
+        if raw_rule_shop2:
+            agg_all_delta = detect_all_delta_unified(raw_rule_shop2, _ALL_DELTA_RE_shop2)
             tokens = match_tokens_generic(
-                raw_rule_s,
+                raw_rule_shop2,
                 split_re=SPLIT_TOKENS_RE_shop2,
                 none_re=COLOR_NONE_RE_shop2,
                 abs_re=COLOR_ABS_RE_shop2,
                 delta_re=COLOR_DELTA_RE_shop2,
                 normalize_label_func=_normalize_label_shop2,
                 is_plausible_label_func=_is_plausible_color_label_shop2,
-                delta_re_loose=COLOR_DELTA_RE_shop2_LOOSE,
                 preprocessor=_clean_color_text_shop2,
             )
             cmap_filtered = {cn: (pn, cr) for cn, (pn, cr) in cmap.items() if pn}
@@ -289,7 +280,7 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
             delta_specs=delta_specs,
             abs_specs=abs_specs,
             extraction_method=extraction_method,
-            source_text_raw=raw_rule_s,
+            source_text_raw=raw_rule_shop2,
         )
 
         cmap_filtered = {cn: (pn, cr) for cn, (pn, cr) in cmap.items() if pn}

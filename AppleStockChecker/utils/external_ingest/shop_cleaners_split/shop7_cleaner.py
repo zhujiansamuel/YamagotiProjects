@@ -6,6 +6,7 @@ import pandas as pd
 
 from ...external_ingest.cleaner_tools import to_int_yen, parse_dt_aware
 from ..cleaner_tools import (
+    normalize_text_stage0,
     _parse_capacity_gb,
     _normalize_model_generic,
     _norm_strip,
@@ -206,19 +207,19 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         abs_specs: List[Tuple[str, int]] = []
         j = i + 1
         if j < n:
-            nxt_data2 = safe_to_text(df["data2"].iat[j]).strip()
+            raw_nxt_shop7 = normalize_text_stage0(safe_to_text(df["data2"].iat[j]) or "").strip()
             nxt_price_cell = safe_to_text(df["data3"].iat[j]).strip()
             nxt_price_val = extract_price_yen(nxt_price_cell) if nxt_price_cell else None
-            is_color_line = bool(nxt_data2) and (nxt_price_val is None)
+            is_color_line = bool(raw_nxt_shop7) and (nxt_price_val is None)
 
             if is_color_line:
-                source_text_raw_full = nxt_data2
+                source_text_raw_full = raw_nxt_shop7
                 agg_all_delta: Optional[int] = None
-                if nxt_data2:
-                    agg_all_delta = detect_all_delta_unified(nxt_data2, _ALL_DELTA_RE_shop7)
+                if raw_nxt_shop7:
+                    agg_all_delta = detect_all_delta_unified(raw_nxt_shop7, _ALL_DELTA_RE_shop7)
                 
                 tokens = match_tokens_generic(
-                    nxt_data2,
+                    raw_nxt_shop7,
                     split_re=SPLIT_TOKENS_RE_shop7,
                     none_re=COLOR_NONE_RE_shop7,
                     abs_re=COLOR_ABS_RE_shop7,
@@ -263,6 +264,7 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
             decomp, color_map, _label_matches_color_unified,
             shop_name=SHOP_NAME, cleaner_name=CLEANER_NAME,
             recorded_at=rec_at,
+            skip_non_positive=True,
             logger=ctx.logger, log_seq_start=ctx.log_seq,
             row_index=i, model_text=model_text,
             model_norm=model_norm, capacity_gb=cap_gb,

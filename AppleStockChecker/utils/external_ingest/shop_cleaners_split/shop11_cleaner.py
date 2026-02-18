@@ -22,6 +22,7 @@ import pandas as pd
 
 from ...external_ingest.cleaner_tools import to_int_yen, parse_dt_aware
 from ..cleaner_tools import (
+    normalize_text_stage0,
     extract_price_yen,
     _parse_capacity_gb,
     _normalize_model_generic,
@@ -188,16 +189,16 @@ def clean_shop11(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) ->
 
         rec_at = parse_dt_aware(time_raw)
 
-        caution_raw_s = str(caution_raw or "")
+        raw_caution_shop11 = normalize_text_stage0(str(caution_raw or ""))
 
         # 前置：all_delta 检测（全色±N）
         agg_all_delta: Optional[int] = None
-        if caution_raw_s:
-            agg_all_delta = detect_all_delta_unified(caution_raw_s, _ALL_DELTA_RE_shop11)
+        if raw_caution_shop11:
+            agg_all_delta = detect_all_delta_unified(raw_caution_shop11, _ALL_DELTA_RE_shop11)
 
         # 阶段 1：_match_shop11（内部会 _clean_color_text_shop11）
         tokens = match_tokens_generic(
-            caution_raw_s,
+            raw_caution_shop11,
             split_re=SPLIT_TOKENS_RE_shop11,
             none_re=COLOR_NONE_RE_shop11,
             abs_re=COLOR_ABS_RE_shop11,
@@ -247,6 +248,7 @@ def clean_shop11(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) ->
             shop_name=SHOP_NAME,
             cleaner_name=CLEANER_NAME,
             recorded_at=rec_at,
+            skip_non_positive=True,
             logger=ctx.logger,
             log_seq_start=ctx.log_seq,
             row_index=int(i),

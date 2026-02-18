@@ -25,6 +25,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 from ...external_ingest.cleaner_tools import to_int_yen, parse_dt_aware
 from ..cleaner_tools import (
+    normalize_text_stage0,
     extract_price_yen,
     _parse_capacity_gb,
     _normalize_model_generic,
@@ -85,8 +86,17 @@ def _clean_color_text_shop9(s_price: str, s_color: str) -> str:
     parts = [s.strip() for s in (s_price or "", s_color or "") if s and str(s).strip()]
     if not parts:
         return ""
-    combined = " ".join(parts)
-    s = combined.replace("\u3000", " ").replace("\xa0", " ")
+    return _clean_color_text_shop9_single(" ".join(parts))
+
+
+def _clean_color_text_shop9_single(text: str) -> str:
+    """单参数归一化，供 match_tokens_generic preprocessor 使用。"""
+    if not text:
+        return ""
+    s = str(text).strip()
+    if not s or s.lower() == "nan":
+        return ""
+    s = s.replace("\u3000", " ").replace("\xa0", " ")
     s = re.sub(r"\s+", " ", s).strip()
     return normalize_text_basic(s)
 
@@ -228,29 +238,31 @@ def clean_shop9(
             ctx.log_seq += 1
             continue
 
-        s_price = str(raw_price_cell) if raw_price_cell is not None else ""
-        s_color = str(raw_color_cell) if raw_color_cell is not None else ""
-        combined = _clean_color_text_shop9(s_price, s_color)
+        raw_price_shop9 = normalize_text_stage0(str(raw_price_cell) if raw_price_cell is not None else "")
+        raw_color_shop9 = normalize_text_stage0(str(raw_color_cell) if raw_color_cell is not None else "")
+        raw_combined_shop9 = " ".join(
+            [s.strip() for s in (raw_price_shop9, raw_color_shop9) if s and str(s).strip()]
+        )
 
-        base_price = extract_price_yen(s_price) or extract_price_yen(s_color)
+        base_price = extract_price_yen(raw_price_shop9) or extract_price_yen(raw_color_shop9)
 
         # 前置：all_delta 检测（全色±N），优先从合并文本检测
         agg_all_delta: Optional[int] = None
-        if combined:
-            agg_all_delta = detect_all_delta_unified(combined, _ALL_DELTA_RE_shop9)
-        if agg_all_delta is None and s_color:
-            agg_all_delta = detect_all_delta_unified(s_color, _ALL_DELTA_RE_shop9)  # 回退：仅色・詳細等
+        if raw_combined_shop9:
+            agg_all_delta = detect_all_delta_unified(raw_combined_shop9, _ALL_DELTA_RE_shop9)
+        if agg_all_delta is None and raw_color_shop9:
+            agg_all_delta = detect_all_delta_unified(raw_color_shop9, _ALL_DELTA_RE_shop9)  # 回退：仅色・詳細等
 
-        # 阶段 1：_match_shop9
+        # 阶段 1：统一流程 raw + preprocessor
         tokens = match_tokens_generic(
-            combined,
+            raw_combined_shop9,
             split_re=SPLIT_TOKENS_RE_shop9,
             none_re=COLOR_NONE_RE_shop9,
             abs_re=COLOR_ABS_RE_shop9,
             delta_re=COLOR_DELTA_RE_shop9,
             normalize_label_func=_normalize_label_shop9,
             is_plausible_label_func=_is_plausible_color_label_shop9,
-            preprocessor=lambda x: x,  # Already cleaned by _clean_color_text_shop9
+            preprocessor=_clean_color_text_shop9_single,
         )
 
         # expand_match_tokens + 阶段 2
@@ -279,9 +291,9 @@ def clean_shop9(
             ]
 
         # [暂未启用] _direct_abs_overrides：按「颜色别名+紧随金额」在色・詳細等中扫描，补充 abs。
-        # 若需恢复：overrides = _direct_abs_overrides_for_row(raw_color_text=s_color, color_to_pn=color_to_pn)
+        # 若需恢复：overrides = _direct_abs_overrides_for_row(raw_color_text=raw_color_shop9, color_to_pn=color_to_pn)
         #            if overrides: abs_specs = _merge_abs_overrides(abs_specs, overrides)
-        # overrides = _direct_abs_overrides_for_row(raw_color_text=s_color, color_to_pn=color_to_pn)
+        # overrides = _direct_abs_overrides_for_row(raw_color_text=raw_color_shop9, color_to_pn=color_to_pn)
         # if overrides:
         #     abs_specs = _merge_abs_overrides(abs_specs, overrides)
 
@@ -290,7 +302,7 @@ def clean_shop9(
             delta_specs=deltas,
             abs_specs=abs_specs,
             extraction_method="regex",
-            source_text_raw=f"{s_price} | {s_color}" if s_price and s_color else (s_price or s_color),
+            source_text_raw=f"{raw_price_shop9} | {raw_color_shop9}" if raw_price_shop9 and raw_color_shop9 else (raw_price_shop9 or raw_color_shop9),
         )
         decomp_emit_default = base_price is not None
 
@@ -302,6 +314,7 @@ def clean_shop9(
             cleaner_name=CLEANER_NAME,
             recorded_at=t,
             emit_default_rows=decomp_emit_default,
+            skip_non_positive=True,
             logger=ctx.logger,
             log_seq_start=ctx.log_seq,
             row_index=i,
