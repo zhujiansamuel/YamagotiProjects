@@ -15,11 +15,14 @@
     python scripts/verify_shops_sample.py [shop2 shop3 ...]
     python scripts/verify_shops_sample.py   # 默认验证所有，每 shop 抽样 10 个
     python scripts/verify_shops_sample.py --sample 50   # 指定抽样数量
+    python scripts/verify_shops_sample.py --file xxx-shop13.xlsx   # 调试指定文件（自动推断 shop）
+    python scripts/verify_shops_sample.py --seed 0   # 固定随机种子便于复现
 
 需在项目根目录、Django 虚拟环境激活后运行。
 """
 
 import os
+import re
 import sys
 import random
 import logging
@@ -130,7 +133,13 @@ def validate_output_structure(out: pd.DataFrame) -> Dict[str, any]:
     return {"ok": len(issues) == 0, "issues": issues, "notes": notes, "raw_snippet": raw_snippet}
 
 
-def verify_shop(shop_id: str, cleaner_fn: Callable, required_cols: List[str], sample_count: int = 10) -> dict:
+def verify_shop(
+    shop_id: str,
+    cleaner_fn: Callable,
+    required_cols: List[str],
+    sample_count: int = 10,
+    target_files: Optional[List[str]] = None,
+) -> dict:
     shop_dir = BASE_DIR / "shop-data" / shop_id
     if not shop_dir.exists():
         return {"shop": shop_id, "error": f"目录不存在 {shop_dir}", "results": []}
@@ -139,7 +148,12 @@ def verify_shop(shop_id: str, cleaner_fn: Callable, required_cols: List[str], sa
     if not files:
         return {"shop": shop_id, "error": "无 xlsx 文件", "results": []}
 
-    selected = random.sample(files, min(sample_count, len(files)))
+    if target_files:
+        selected = [shop_dir / f for f in target_files if (shop_dir / f).exists()]
+        if not selected:
+            selected = random.sample(files, min(1, len(files)))
+    else:
+        selected = random.sample(files, min(sample_count, len(files)))
     results = []
 
     for fpath in selected:
@@ -171,7 +185,22 @@ def verify_shop(shop_id: str, cleaner_fn: Callable, required_cols: List[str], sa
             result["structure_ok"] = val.get("ok", False)
             result["structure_issues"] = val.get("issues", [])
             result["structure_notes"] = val.get("notes", [])
-            result["raw_snippet"] = val.get("raw_snippet")  # 有问题的样本保留原始文本
+            result["raw_snippet"] = val.get("raw_snippet")
+            # 有问题的样本：补充输入 Excel 原始数据，便于追溯问题来源
+            if not val.get("ok") and val.get("raw_snippet"):
+                price_cols = [c for c in df.columns if "価格" in str(c) or "price" in str(c).lower() or "買取" in str(c)]
+                show_cols = list(dict.fromkeys(required_cols + price_cols))  # 去重保序
+                show_cols = [c for c in show_cols if c in df.columns]
+                if not show_cols:
+                    show_cols = list(df.columns)[:10]
+                input_preview = df[show_cols].head(30).to_string()
+                has_out_cols = isinstance(out, pd.DataFrame) and not out.empty and all(c in out.columns for c in OUTPUT_COLS)
+                full_output = out[OUTPUT_COLS].to_string() if has_out_cols else "(输出列不完整或为空)"
+                result["raw_snippet"] = (
+                    f"[输入 Excel 原始数据 - 前30行，含价格相关列]\n{input_preview}\n\n"
+                    f"[清洗后完整输出]\n{full_output}\n\n"
+                    f"[异常详情]\n{result['raw_snippet']}"
+                )
         except Exception as e:
             result["error"] = str(e)
             import traceback
@@ -193,9 +222,18 @@ def verify_shop(shop_id: str, cleaner_fn: Callable, required_cols: List[str], sa
 
 
 def main():
-    # 解析 --sample N 参数，默认 10 防止输出过大
+    # 解析 --sample N、--seed N 参数
     sample_count = 10
     args = [s.strip() for s in sys.argv[1:]] if len(sys.argv) > 1 else []
+    target_files: Optional[List[str]] = None
+    if "--seed" in args:
+        idx = args.index("--seed")
+        if idx + 1 < len(args):
+            try:
+                random.seed(int(args[idx + 1]))
+                args = args[:idx] + args[idx + 2 :]
+            except ValueError:
+                pass
     if "--sample" in args:
         idx = args.index("--sample")
         if idx + 1 < len(args):
@@ -204,12 +242,23 @@ def main():
                 args = args[:idx] + args[idx + 2 :]
             except ValueError:
                 pass
+    if "--file" in args:
+        idx = args.index("--file")
+        if idx + 1 < len(args):
+            target_files = [args[idx + 1]]
+            args = args[:idx] + args[idx + 2 :]
     shops_arg = [s for s in args if s and not s.startswith("-")] or None
 
     if shops_arg:
         configs = [(sid, fn, cols) for sid, fn, cols in SHOP_CONFIG if sid in shops_arg]
     else:
         configs = SHOP_CONFIG
+    # --file 时从文件名推断 shop，仅验证该 shop
+    if target_files:
+        m = re.search(r"-?(shop\d+)\.xlsx", target_files[0], re.I)
+        file_shop = m.group(1).lower() if m else None
+        if file_shop and file_shop in _SHOP_IDS:
+            configs = [(sid, fn, cols) for sid, fn, cols in configs if sid == file_shop]
 
     print("=" * 70)
     print(f"多 Shop 清洗模拟验证（含结构及颜色减价校验）— 每 shop 抽样 {sample_count} 个文件")
@@ -218,7 +267,11 @@ def main():
     all_reports = []
     for shop_id, cleaner_fn, required_cols in configs:
         print(f"\n--- {shop_id} ---")
-        report = verify_shop(shop_id, cleaner_fn, required_cols, sample_count=sample_count)
+        report = verify_shop(
+            shop_id, cleaner_fn, required_cols,
+            sample_count=sample_count,
+            target_files=target_files,
+        )
         all_reports.append(report)
 
         if report.get("error") and "results" not in report:

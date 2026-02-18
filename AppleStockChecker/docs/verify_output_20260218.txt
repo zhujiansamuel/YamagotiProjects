@@ -1,0 +1,251 @@
+======================================================================
+多 Shop 清洗模拟验证（含结构及颜色减价校验）— 每 shop 抽样 10 个文件
+======================================================================
+
+--- shop2 ---
+WARNING 2026-02-18 20:45:06,786 Label not matched (delta): 青橙
+  00036142274-2025-11-19-shop2.xlsx: in=89 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037462125-2025-12-29-shop2.xlsx: in=89 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037215350-2025-12-21-shop2.xlsx: in=89 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00035652560-2025-11-05-shop2.xlsx: in=89 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00038892650-2026-02-12-shop2.xlsx: in=89 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036906020-2025-12-11-shop2.xlsx: in=89 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036035305-2025-11-16-shop2.xlsx: in=89 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037688812-2026-01-05-shop2.xlsx: in=89 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037743268-2026-01-06-shop2.xlsx: in=89 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037938663-2026-01-12-shop2.xlsx: in=89 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  结论: 通过
+
+--- shop3 ---
+  00035571164-2025-11-03-shop3.xlsx: in=24 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037587183-2026-01-02-shop3.xlsx: in=24 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036483304-2025-11-29-shop3.xlsx: in=24 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037620612-2026-01-03-shop3.xlsx: in=24 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037205991-2025-12-21-shop3.xlsx: in=24 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037604955-2026-01-02-shop3.xlsx: in=24 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037367957-2025-12-26-shop3.xlsx: in=24 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037123178-2025-12-18-shop3.xlsx: in=24 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036479834-2025-11-29-shop3.xlsx: in=24 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00038843859-2026-02-11-shop3.xlsx: in=24 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  结论: 通过
+
+--- shop4 ---
+  00038799744-2026-02-09-shop4.xlsx: in=48 out=31 OK | 存在多档价格，颜色减价信息有体现, 输出 31 个 part_number（多颜色展开）
+  00037503771-2025-12-30-shop4.xlsx: in=38 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00035687715-2025-11-06-shop4.xlsx: in=60 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036335158-2025-11-25-shop4.xlsx: in=56 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036831206-2025-12-09-shop4.xlsx: in=56 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036567340-2025-12-02-shop4.xlsx: in=56 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00035993660-2025-11-15-shop4.xlsx: in=60 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036514635-2025-11-30-shop4.xlsx: in=56 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036780310-2025-12-08-shop4.xlsx: in=56 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036572602-2025-12-02-shop4.xlsx: in=56 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  结论: 通过
+
+--- shop8 ---
+  00037183753-2025-12-20-shop8.xlsx: in=107 out=107 OK | 存在多档价格，颜色减价信息有体现, 输出 107 个 part_number（多颜色展开）
+  00037608531-2026-01-02-shop8.xlsx: in=107 out=107 OK | 存在多档价格，颜色减价信息有体现, 输出 107 个 part_number（多颜色展开）
+  00037748212-2026-01-06-shop8.xlsx: in=107 out=107 OK | 存在多档价格，颜色减价信息有体现, 输出 107 个 part_number（多颜色展开）
+  00035728218-2025-11-07-shop8.xlsx: in=107 out=107 OK | 存在多档价格，颜色减价信息有体现, 输出 107 个 part_number（多颜色展开）
+  00037199316-2025-12-20-shop8.xlsx: in=107 out=107 OK | 存在多档价格，颜色减价信息有体现, 输出 107 个 part_number（多颜色展开）
+  00037728733-2026-01-06-shop8.xlsx: in=107 out=107 OK | 存在多档价格，颜色减价信息有体现, 输出 107 个 part_number（多颜色展开）
+  00037359894-2025-12-25-shop8.xlsx: in=107 out=107 OK | 存在多档价格，颜色减价信息有体现, 输出 107 个 part_number（多颜色展开）
+  00035961645-2025-11-14-shop8.xlsx: in=107 out=107 OK | 存在多档价格，颜色减价信息有体现, 输出 107 个 part_number（多颜色展开）
+  00035700345-2025-11-06-shop8.xlsx: in=107 out=107 OK | 存在多档价格，颜色减价信息有体现, 输出 107 个 part_number（多颜色展开）
+  00036006358-2025-11-15-shop8.xlsx: in=107 out=107 OK | 存在多档价格，颜色减价信息有体现, 输出 107 个 part_number（多颜色展开）
+  结论: 通过
+
+--- shop9 ---
+  00036528360-2025-11-30-shop9.xlsx: in=13 out=30 OK | 存在多档价格，颜色减价信息有体现, 输出 30 个 part_number（多颜色展开）
+  00037871120-2026-01-10-shop9.xlsx: in=9 out=26 OK | 存在多档价格，颜色减价信息有体现, 输出 26 个 part_number（多颜色展开）
+  00035988624-2025-11-14-shop9.xlsx: in=10 out=30 OK | 存在多档价格，颜色减价信息有体现, 输出 30 个 part_number（多颜色展开）
+  00035631759-2025-11-04-shop9.xlsx: in=10 out=30 OK | 存在多档价格，颜色减价信息有体现, 输出 30 个 part_number（多颜色展开）
+  00038454539-2026-01-30-shop9.xlsx: in=9 out=26 OK | 存在多档价格，颜色减价信息有体现, 输出 26 个 part_number（多颜色展开）
+  00036750615-2025-12-07-shop9.xlsx: in=9 out=26 OK | 存在多档价格，颜色减价信息有体现, 输出 26 个 part_number（多颜色展开）
+  00036956962-2025-12-13-shop9.xlsx: in=9 out=26 OK | 存在多档价格，颜色减价信息有体现, 输出 26 个 part_number（多颜色展开）
+  00037473486-2025-12-29-shop9.xlsx: in=9 out=26 OK | 存在多档价格，颜色减价信息有体现, 输出 26 个 part_number（多颜色展开）
+  00036817391-2025-12-09-shop9.xlsx: in=1 out=0 WARN | 无输出行（可能无匹配数据）
+  00036654319-2025-12-04-shop9.xlsx: in=9 out=26 OK | 存在多档价格，颜色减价信息有体现, 输出 26 个 part_number（多颜色展开）
+  结论: 通过
+
+--- shop10 ---
+/app/AppleStockChecker/utils/external_ingest/shop_cleaners_split/shop10_cleaner.py:52: UserWarning: This pattern is interpreted as a regular expression, and has match groups. To actually get the groups, use str.extract.
+  mask = s_data2.str.contains(_COLOR_DISCOUNT_PAT, na=False) | s_price.str.contains(_COLOR_DISCOUNT_PAT, na=False)
+/app/AppleStockChecker/utils/external_ingest/shop_cleaners_split/shop10_cleaner.py:52: UserWarning: This pattern is interpreted as a regular expression, and has match groups. To actually get the groups, use str.extract.
+  mask = s_data2.str.contains(_COLOR_DISCOUNT_PAT, na=False) | s_price.str.contains(_COLOR_DISCOUNT_PAT, na=False)
+/app/AppleStockChecker/utils/external_ingest/shop_cleaners_split/shop10_cleaner.py:52: UserWarning: This pattern is interpreted as a regular expression, and has match groups. To actually get the groups, use str.extract.
+  mask = s_data2.str.contains(_COLOR_DISCOUNT_PAT, na=False) | s_price.str.contains(_COLOR_DISCOUNT_PAT, na=False)
+/app/AppleStockChecker/utils/external_ingest/shop_cleaners_split/shop10_cleaner.py:52: UserWarning: This pattern is interpreted as a regular expression, and has match groups. To actually get the groups, use str.extract.
+  mask = s_data2.str.contains(_COLOR_DISCOUNT_PAT, na=False) | s_price.str.contains(_COLOR_DISCOUNT_PAT, na=False)
+/app/AppleStockChecker/utils/external_ingest/shop_cleaners_split/shop10_cleaner.py:52: UserWarning: This pattern is interpreted as a regular expression, and has match groups. To actually get the groups, use str.extract.
+  mask = s_data2.str.contains(_COLOR_DISCOUNT_PAT, na=False) | s_price.str.contains(_COLOR_DISCOUNT_PAT, na=False)
+/app/AppleStockChecker/utils/external_ingest/shop_cleaners_split/shop10_cleaner.py:52: UserWarning: This pattern is interpreted as a regular expression, and has match groups. To actually get the groups, use str.extract.
+  mask = s_data2.str.contains(_COLOR_DISCOUNT_PAT, na=False) | s_price.str.contains(_COLOR_DISCOUNT_PAT, na=False)
+/app/AppleStockChecker/utils/external_ingest/shop_cleaners_split/shop10_cleaner.py:52: UserWarning: This pattern is interpreted as a regular expression, and has match groups. To actually get the groups, use str.extract.
+  mask = s_data2.str.contains(_COLOR_DISCOUNT_PAT, na=False) | s_price.str.contains(_COLOR_DISCOUNT_PAT, na=False)
+/app/AppleStockChecker/utils/external_ingest/shop_cleaners_split/shop10_cleaner.py:52: UserWarning: This pattern is interpreted as a regular expression, and has match groups. To actually get the groups, use str.extract.
+  mask = s_data2.str.contains(_COLOR_DISCOUNT_PAT, na=False) | s_price.str.contains(_COLOR_DISCOUNT_PAT, na=False)
+/app/AppleStockChecker/utils/external_ingest/shop_cleaners_split/shop10_cleaner.py:52: UserWarning: This pattern is interpreted as a regular expression, and has match groups. To actually get the groups, use str.extract.
+  mask = s_data2.str.contains(_COLOR_DISCOUNT_PAT, na=False) | s_price.str.contains(_COLOR_DISCOUNT_PAT, na=False)
+/app/AppleStockChecker/utils/external_ingest/shop_cleaners_split/shop10_cleaner.py:52: UserWarning: This pattern is interpreted as a regular expression, and has match groups. To actually get the groups, use str.extract.
+  mask = s_data2.str.contains(_COLOR_DISCOUNT_PAT, na=False) | s_price.str.contains(_COLOR_DISCOUNT_PAT, na=False)
+  00038410725-2026-01-28-shop10.xlsx: in=72 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037562626-2026-01-01-shop10.xlsx: in=74 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00038557193-2026-02-02-shop10.xlsx: in=72 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037175197-2025-12-20-shop10.xlsx: in=74 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036101489-2025-11-18-shop10.xlsx: in=74 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00035775982-2025-11-08-shop10.xlsx: in=74 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00038565122-2026-02-02-shop10.xlsx: in=72 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037915360-2026-01-12-shop10.xlsx: in=74 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00035957127-2025-11-14-shop10.xlsx: in=74 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036063761-2025-11-17-shop10.xlsx: in=74 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  结论: 通过
+
+--- shop12 ---
+  00038738091-2026-02-07-shop12.xlsx: in=0 out=0 WARN | 无输出行（可能无匹配数据）
+  00037475560-2025-12-29-shop12.xlsx: in=35 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00035784287-2025-11-09-shop12.xlsx: in=35 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036323981-2025-11-24-shop12.xlsx: in=35 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036273837-2025-11-23-shop12.xlsx: in=35 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036782023-2025-12-08-shop12.xlsx: in=35 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037826934-2026-01-09-shop12.xlsx: in=35 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037585454-2026-01-02-shop12.xlsx: in=35 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037653114-2026-01-03-shop12.xlsx: in=35 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037463805-2025-12-29-shop12.xlsx: in=35 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  结论: 通过
+
+--- shop13 ---
+  00037651275-2026-01-03-shop13.xlsx: in=312 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037227260-2025-12-21-shop13.xlsx: in=312 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037833087-2026-01-09-shop13.xlsx: in=342 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00038619505-2026-02-04-shop13.xlsx: in=342 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036645756-2025-12-04-shop13.xlsx: in=312 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00038735423-2026-02-07-shop13.xlsx: in=342 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037551037-2026-01-01-shop13.xlsx: in=312 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036917705-2025-12-12-shop13.xlsx: in=312 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037267039-2025-12-23-shop13.xlsx: in=312 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00038158163-2026-01-20-shop13.xlsx: in=342 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  结论: 通过
+
+--- shop14 ---
+WARNING 2026-02-18 20:45:09,256 Price override: price < 0.5x base, using base_price
+  00036582730-2025-12-02-shop14.xlsx: in=24 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00035891805-2025-11-12-shop14.xlsx: in=24 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037052192-2025-12-16-shop14.xlsx: in=24 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037615175-2026-01-02-shop14.xlsx: in=24 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037352746-2025-12-25-shop14.xlsx: in=24 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00038188415-2026-01-21-shop14.xlsx: in=24 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037367317-2025-12-26-shop14.xlsx: in=24 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036077444-2025-11-17-shop14.xlsx: in=24 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037322818-2025-12-24-shop14.xlsx: in=24 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037021830-2025-12-15-shop14.xlsx: in=24 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  结论: 通过
+
+--- shop15 ---
+  00035677489-2025-11-06-shop15.xlsx: in=12 out=11 OK | 存在多档价格，颜色减价信息有体现, 输出 11 个 part_number（多颜色展开）
+  00036679667-2025-12-05-shop15.xlsx: in=12 out=5 OK | 存在多档价格，颜色减价信息有体现, 输出 5 个 part_number（多颜色展开）
+  00036374733-2025-11-26-shop15.xlsx: in=12 out=5 OK | 存在多档价格，颜色减价信息有体现, 输出 5 个 part_number（多颜色展开）
+  00037850581-2026-01-09-shop15.xlsx: in=12 out=0 WARN | 无输出行（可能无匹配数据）
+  00037229073-2025-12-21-shop15.xlsx: in=12 out=5 OK | 存在多档价格，颜色减价信息有体现, 输出 5 个 part_number（多颜色展开）
+  00036614804-2025-12-03-shop15.xlsx: in=12 out=5 OK | 存在多档价格，颜色减价信息有体现, 输出 5 个 part_number（多颜色展开）
+  00036482765-2025-11-29-shop15.xlsx: in=12 out=5 OK | 存在多档价格，颜色减价信息有体现, 输出 5 个 part_number（多颜色展开）
+  00036040373-2025-11-16-shop15.xlsx: in=12 out=6 OK | 存在多档价格，颜色减价信息有体现, 输出 6 个 part_number（多颜色展开）
+  00037236154-2025-12-22-shop15.xlsx: in=12 out=5 OK | 存在多档价格，颜色减价信息有体现, 输出 5 个 part_number（多颜色展开）
+  00038790479-2026-02-09-shop15.xlsx: in=12 out=0 WARN | 无输出行（可能无匹配数据）
+  结论: 通过
+
+--- shop16 ---
+  00037048113-2025-12-16-shop16.xlsx: in=228 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00035700329-2025-11-06-shop16.xlsx: in=228 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00035680032-2025-11-06-shop16.xlsx: in=228 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036479829-2025-11-29-shop16.xlsx: in=228 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036659568-2025-12-04-shop16.xlsx: in=228 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036500795-2025-11-29-shop16.xlsx: in=228 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037146622-2025-12-19-shop16.xlsx: in=228 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036873332-2025-12-10-shop16.xlsx: in=228 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036895029-2025-12-11-shop16.xlsx: in=228 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036782228-2025-12-08-shop16.xlsx: in=228 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  结论: 通过
+
+--- shop17 ---
+WARNING 2026-02-18 20:45:10,095 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,095 Label not matched (delta): なし
+WARNING 2026-02-18 20:45:10,096 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,096 Label not matched (delta): なし
+WARNING 2026-02-18 20:45:10,096 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,097 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,097 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,130 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,131 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,131 Label not matched (delta): なし
+WARNING 2026-02-18 20:45:10,131 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,132 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,132 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,166 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,166 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,166 Label not matched (delta): なし
+WARNING 2026-02-18 20:45:10,167 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,168 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,168 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,200 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,200 Label not matched (delta): なし
+WARNING 2026-02-18 20:45:10,200 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,200 Label not matched (delta): なし
+WARNING 2026-02-18 20:45:10,201 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,201 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,202 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,235 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,235 Label not matched (delta): なし
+WARNING 2026-02-18 20:45:10,235 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,236 Label not matched (delta): なし
+WARNING 2026-02-18 20:45:10,236 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,237 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,237 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,271 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,271 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,271 Label not matched (delta): なし
+WARNING 2026-02-18 20:45:10,272 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,273 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,273 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,307 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,307 Label not matched (delta): なし
+WARNING 2026-02-18 20:45:10,307 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,307 Label not matched (delta): なし
+WARNING 2026-02-18 20:45:10,308 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,309 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,309 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,342 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,342 Label not matched (delta): なし
+WARNING 2026-02-18 20:45:10,343 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,343 Label not matched (delta): なし
+WARNING 2026-02-18 20:45:10,343 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,344 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,345 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,378 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,378 Label not matched (delta): なし
+WARNING 2026-02-18 20:45:10,378 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,378 Label not matched (delta): なし
+WARNING 2026-02-18 20:45:10,379 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,380 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,380 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,413 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,414 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,414 Label not matched (delta): なし
+WARNING 2026-02-18 20:45:10,415 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,415 Label not matched (delta): -
+WARNING 2026-02-18 20:45:10,416 Label not matched (delta): -
+  00036247233-2025-11-22-shop17.xlsx: in=133 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037820911-2026-01-09-shop17.xlsx: in=133 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037771727-2026-01-07-shop17.xlsx: in=133 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00035916132-2025-11-12-shop17.xlsx: in=120 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036567335-2025-12-02-shop17.xlsx: in=133 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00037326607-2025-12-24-shop17.xlsx: in=133 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036255049-2025-11-22-shop17.xlsx: in=133 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00038624630-2026-02-04-shop17.xlsx: in=133 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036661776-2025-12-04-shop17.xlsx: in=133 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  00036777921-2025-12-08-shop17.xlsx: in=133 out=43 OK | 存在多档价格，颜色减价信息有体现, 输出 43 个 part_number（多颜色展开）
+  结论: 通过
+
+======================================================================
+汇总: 12/12 shop 验证通过
+======================================================================
