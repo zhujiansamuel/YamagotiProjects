@@ -839,9 +839,47 @@ LOGGING = {
             'level': os.getenv('SHOP_CLEANERS_LOG_LEVEL', 'DEBUG'),
             'propagate': False,
         },
+        # 默认通用 logger
+        'cleaner_tools': {
+            'handlers': ['console', 'shop_cleaners_file_json'],
+            'level': os.getenv('SHOP_CLEANERS_LOG_LEVEL', 'DEBUG'),
+            'propagate': False,
+        },
     },
     'root': {
         'handlers': ['console'],
         'level': 'INFO',
     },
 }
+
+# 动态为每个店铺生成独立的日志隔离配置
+# 这里的 shop_code 对应 setup_color_cleaner(..., cleaner_name=CLEANER_NAME) 中的名字
+for _shop_code in set(WEB_SCRAPER_SOURCE_MAP.values()):
+    _handler_name = f'handler_{_shop_code}_file_json'
+    
+    # 1. 动态添加 Handler
+    LOGGING['handlers'][_handler_name] = {
+        'class': 'logging.handlers.TimedRotatingFileHandler',
+        'filename': str(SHOP_CLEANERS_LOG_DIR / f'{_shop_code}.log'),
+        'when': 'midnight',
+        'interval': 1,
+        'backupCount': 14,
+        'encoding': 'utf-8',
+        'formatter': 'json',
+        'level': 'DEBUG',
+        'filters': ['debug_and_warning'],
+    }
+    
+    # 2. 动态添加特定的 Logger (覆盖 cleaner_tools.shopXX 和包路径命名)
+    # cleaner_tools.shopXX 是 setup_color_cleaner 使用的
+    LOGGING['loggers'][f'cleaner_tools.{_shop_code}'] = {
+        'handlers': ['console', _handler_name],
+        'level': os.getenv('SHOP_CLEANERS_LOG_LEVEL', 'DEBUG'),
+        'propagate': False,
+    }
+    # 兼容某些 shop 内部使用 getLogger(__name__) 的情况
+    LOGGING['loggers'][f'AppleStockChecker.utils.external_ingest.shop_cleaners_split.{_shop_code}_cleaner'] = {
+        'handlers': ['console', _handler_name],
+        'level': os.getenv('SHOP_CLEANERS_LOG_LEVEL', 'DEBUG'),
+        'propagate': False,
+    }

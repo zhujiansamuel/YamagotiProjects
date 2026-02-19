@@ -93,7 +93,7 @@ def _clean_color_text_shop7(text: str) -> str:
     return normalize_text_basic(s)
 
 
-SPLIT_TOKENS_RE_shop7 = re.compile(r"[／/、，]|(?:\s*;\s*)|\n")
+SPLIT_TOKENS_RE_shop7 = re.compile(r"[／/、，,]|(?:\s*;\s*)|\n")
 
 COLOR_NONE_RE_shop7 = re.compile(
     r"""(?P<label>[^：:\-\s/、／，,\n]+(?:\([^)]*\))?)\s*
@@ -175,7 +175,7 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
 
     for i in range(n):
         base_price = price_series.iat[i]
-        if base_price is None:
+        if pd.isna(base_price):
             continue
         base_price = int(base_price)
 

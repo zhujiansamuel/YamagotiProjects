@@ -78,6 +78,12 @@ COL_TIME = "time-scraped"
 
 _norm = _norm_strip
 
+# 修饰词前缀：strip 后使 "未開 橙227,000" → "橙227,000"，供 DELTA 正确匹配
+_SHOP9_MODIFIER_PREFIX_RE = re.compile(
+    r"(?:未開|未開封|新品|新品未使用)\s*",
+    re.UNICODE,
+)
+
 
 def _clean_color_text_shop9(s_price: str, s_color: str) -> str:
     """
@@ -96,6 +102,7 @@ def _clean_color_text_shop9_single(text: str) -> str:
     s = str(text).strip()
     if not s or s.lower() == "nan":
         return ""
+    s = _SHOP9_MODIFIER_PREFIX_RE.sub("", s).strip()
     s = s.replace("\u3000", " ").replace("\xa0", " ")
     s = re.sub(r"\s+", " ", s).strip()
     return normalize_text_basic(s)

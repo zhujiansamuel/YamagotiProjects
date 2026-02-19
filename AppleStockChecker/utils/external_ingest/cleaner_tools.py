@@ -2615,16 +2615,22 @@ def clean_with_model_capacity_matching(
     recorded_at_series = df[ts_col].map(parse_dt_aware)
 
     rows: List[dict] = []
+    _log_seq = 1
     for i in range(len(df)):
         if row_filter_fn and not row_filter_fn(df.iloc[i]):
             continue
 
         p = price_series.iat[i]
         t = recorded_at_series.iat[i]
+        m_norm = model_norm_series.iat[i]
+        c_gb = cap_gb_series.iat[i]
+
         if p is None:
             continue
 
         text = str(df[model_col].iat[i])
+        _rows_start_idx = len(rows)
+        _method = "none"
 
         # 1. [NEW] model_cap_color_extractor_fn: (model, cap, color) -> 1 PN
         if model_cap_color_extractor_fn and color_map:
@@ -2646,6 +2652,26 @@ def clean_with_model_capacity_matching(
                             matched = True
                             break
                 if matched:
+                    _method = "model_cap_color"
+                    # 这里记录日志并跳过后续匹配
+                    _logger.debug(
+                        f"Row {i} summary",
+                        extra={
+                            "event_type": "row_processing_summary",
+                            "log_seq": _log_seq,
+                            "shop_name": shop_name,
+                            "cleaner_name": cleaner_name,
+                            "row_index": i,
+                            "model_text": _truncate_for_log(text, 100),
+                            "model_norm": m,
+                            "capacity_gb": int(c),
+                            "base_price": int(p),
+                            "source_text_raw_full": text,
+                            "extraction_method": _method,
+                            "output_records_count": 1,
+                        }
+                    )
+                    _log_seq += 1
                     continue
 
         # 2. pn_extractor_fn
@@ -2658,16 +2684,32 @@ def clean_with_model_capacity_matching(
                     "price_new": int(p),
                     "recorded_at": t,
                 })
+                _method = "pn_direct"
+                _logger.debug(
+                    f"Row {i} summary",
+                    extra={
+                        "event_type": "row_processing_summary",
+                        "log_seq": _log_seq,
+                        "shop_name": shop_name,
+                        "cleaner_name": cleaner_name,
+                        "row_index": i,
+                        "model_text": _truncate_for_log(text, 100),
+                        "model_norm": m_norm,
+                        "capacity_gb": int(c_gb) if not pd.isna(c_gb) else None,
+                        "base_price": int(p),
+                        "source_text_raw_full": text,
+                        "extraction_method": _method,
+                        "output_records_count": 1,
+                    }
+                )
+                _log_seq += 1
                 continue
 
         # 3. 原有逻辑: (m, c) -> groups.get -> 全色展开
-        m = model_norm_series.iat[i]
-        c = cap_gb_series.iat[i]
-
-        if not m or pd.isna(c):
+        if not m_norm or pd.isna(c_gb):
             continue
 
-        pn_list = groups.get((m, int(c)), [])
+        pn_list = groups.get((m_norm, int(c_gb)), [])
         if not pn_list:
             continue
 
@@ -2678,6 +2720,27 @@ def clean_with_model_capacity_matching(
                 "price_new": int(p),
                 "recorded_at": t,
             })
+            _method = "model_cap_expansion"
+
+        # 记录行处理概览 (针对方法 3)
+        _logger.debug(
+            f"Row {i} summary",
+            extra={
+                "event_type": "row_processing_summary",
+                "log_seq": _log_seq,
+                "shop_name": shop_name,
+                "cleaner_name": cleaner_name,
+                "row_index": i,
+                "model_text": _truncate_for_log(text, 100),
+                "model_norm": m_norm,
+                "capacity_gb": int(c_gb) if not pd.isna(c_gb) else None,
+                "base_price": int(p),
+                "source_text_raw_full": text,
+                "extraction_method": _method,
+                "output_records_count": len(rows) - _rows_start_idx,
+            }
+        )
+        _log_seq += 1
 
     out = assemble_output_df(rows, coerce_price=coerce_price)
     log_cleaner_complete(_logger, cleaner_name=cleaner_name, shop_name=shop_name,
@@ -2870,6 +2933,7 @@ def match_tokens_generic(
     def _try_delta_patterns(part: str, patterns: List[Pattern]) -> bool:
         nonlocal position
         for pat in patterns:
+            found_any = False
             for m in pat.finditer(part):
                 label_raw = normalize_label_func(m.group("label"))
                 if not is_plausible_label_func(label_raw):
@@ -2908,7 +2972,7 @@ def match_tokens_generic(
                 ))
                 position += 1
                 
-                # 处理 pending labels
+                # 处理 pending labels（仅首个 match 时应用，后续 match 时 pending 已清空）
                 for pl in pending_labels:
                     pl_norm = normalize_label_func(pl)
                     if pl_norm and is_plausible_label_func(pl_norm):
@@ -2920,6 +2984,8 @@ def match_tokens_generic(
                         ))
                         position += 1
                 pending_labels.clear()
+                found_any = True
+            if found_any:
                 return True
         return False
 
@@ -2938,6 +3004,7 @@ def match_tokens_generic(
     def _try_abs_patterns(part: str) -> bool:
         nonlocal position
         for pat in abs_patterns:
+            found_any = False
             for m in pat.finditer(part):
                 label_raw = normalize_label_func(m.group("label"))
                 if not is_plausible_label_func(label_raw):
@@ -2953,6 +3020,8 @@ def match_tokens_generic(
                 ))
                 position += 1
                 pending_labels.clear()
+                found_any = True
+            if found_any:
                 return True
         return False
 

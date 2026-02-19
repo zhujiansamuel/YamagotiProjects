@@ -103,7 +103,7 @@ def _clean_color_text_shop2(text: str) -> str:
 # 正则模式（NONE_RE + DELTA_RE + ABS_RE）
 # ----------------------------------------------------------------------
 
-SPLIT_TOKENS_RE_shop2 = re.compile(r"[／/、，,・]|(?:\s*[;；]\s*)|\n")
+SPLIT_TOKENS_RE_shop2 = re.compile(r"[／/、，,・\s]|(?:\s*[;；]\s*)|\n")
 
 COLOR_NONE_RE_shop2 = re.compile(
     r"""(?P<label>[^：:\-\s/、／，,\n]+(?:\([^)]*\))?)\s*
