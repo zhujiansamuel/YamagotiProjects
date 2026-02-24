@@ -70,20 +70,31 @@ CLEANERS = {
 
 
 def has_cleaner(name: str) -> bool:
-    return name in CLEANERS
+    if not name:
+        return False
+    return name.replace("-", "_") in CLEANERS
 
 def get_cleaner(name: str) -> Cleaner:
     """真正取出 cleaner 的函数，后续如果需要用得到"""
-    if name not in CLEANERS:
-        raise KeyError(f"未注册的清洗器: {name}")
-    return CLEANERS[name]
+    if not name:
+        raise KeyError("未指定清洗器名称")
+    normalized_name = name.replace("-", "_")
+    if normalized_name not in CLEANERS:
+        raise KeyError(f"未注册的清洗器: {name} (规范化名: {normalized_name})")
+    return CLEANERS[normalized_name]
 
 
 
 def run_cleaner(shop_key: str, df):
     from AppleStockChecker.utils.external_ingest.cleaner_tools import dedupe_output_keep_latest
 
-    out = CLEANERS[shop_key](df)
+    if not shop_key:
+        raise KeyError("未指定清洗器名称")
+    normalized_key = shop_key.replace("-", "_")
+    if normalized_key not in CLEANERS:
+        raise KeyError(f"未注册的清洗器: {shop_key} (规范化名: {normalized_key})")
+
+    out = CLEANERS[normalized_key](df)
     if isinstance(out, pd.DataFrame) and not out.empty:
         out = dedupe_output_keep_latest(out)
     return out

@@ -64,6 +64,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from AppleStockChecker.utils.external_ingest.registry import get_cleaner
+from AppleStockChecker.utils.webscraper_tasks.shop_queue_mapping import get_shop_queue, normalize_source_name
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
 from dotenv import load_dotenv
@@ -181,14 +182,10 @@ def _resolve_source(request) -> str | None:
     source_name = request.query_params.get("source")
     if not source_name and isinstance(request.data, dict):
         source_name = request.data.get("source")
-    if source_name:
-        return source_name
-    # 映射
-    sitemap_name = (request.data.get("sitemap_name") or request.data.get("sitemap") or "") if isinstance(
-        request.data, dict) else ""
-    custom_id = (request.data.get("custom_id") or "") if isinstance(request.data, dict) else ""
-    mp = getattr(settings, "WEB_SCRAPER_SOURCE_MAP", {})
-    return mp.get(sitemap_name) or mp.get(custom_id)
+    res = source_name or mp.get(sitemap_name) or mp.get(custom_id)
+    if res:
+        return normalize_source_name(res)
+    return None
 
 
 def _as_bool(v, default=False):
@@ -1031,6 +1028,9 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
         for f in files:
             fname = getattr(f, "name", "")
             source_name = _extract_source_name(fname)
+            if source_name:
+                source_name = normalize_source_name(source_name)
+
             if not source_name:
                 return Response(
                     {"detail": f"无法从文件名提取清洗器名，或不支持的后缀：{fname}（仅支持 xlsx/xlsm/xls/ods/xlsb/csv）"},
@@ -1046,7 +1046,7 @@ class PurchasingShopPriceRecordViewSet(viewsets.ModelViewSet):
 
             # 动态队列路由：如果启用 route_by_shop，则路由到 shop_<source_name> 队列
             if route_by_shop:
-                queue_name = f"shop_{source_name}"
+                queue_name = get_shop_queue(source_name)
                 t = task_process_xlsx.apply_async(
                     kwargs={
                         "file_bytes": content,

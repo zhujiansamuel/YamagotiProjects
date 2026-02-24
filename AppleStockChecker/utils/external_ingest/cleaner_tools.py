@@ -1894,7 +1894,7 @@ def resolve_color_prices(
                 "capacity_gb": capacity_gb,
                 "base_price": base_price,
                 "source_text_raw": _truncate_for_log(source_text_raw_full, 200),
-                "source_text_raw_full": source_text_raw_full,
+                "source_text_raw_full": (source_text_raw_full or "None"),
                 "source_text_normalized": _truncate_for_log(
                     normalize_text_basic(source_text_raw_full) if source_text_raw_full else "", 200
                 ),
@@ -1921,7 +1921,7 @@ def resolve_color_prices(
         "model_norm": model_norm,
         "capacity_gb": capacity_gb,
         "base_price": base_price,
-        "source_text_raw_full": source_text_raw_full,
+        "source_text_raw_full": (source_text_raw_full or "None"),
         "labels_and_deltas": [
             {"label": lb, "delta": d} for lb, d in delta_specs
         ],
@@ -2177,7 +2177,7 @@ def resolve_color_prices(
                 "model_norm": model_norm,
                 "capacity_gb": capacity_gb,
                 "base_price": base_price,
-                "source_text_raw_full": source_text_raw_full,
+                "source_text_raw_full": (source_text_raw_full or "None"),
                 "abs_applied_details": [
                     {
                         "pn": r["part_number"],
@@ -2666,7 +2666,7 @@ def clean_with_model_capacity_matching(
                             "model_norm": m,
                             "capacity_gb": int(c),
                             "base_price": int(p),
-                            "source_text_raw_full": text,
+                            "source_text_raw_full": (text or "None"),
                             "extraction_method": _method,
                             "output_records_count": 1,
                         }
@@ -2697,7 +2697,7 @@ def clean_with_model_capacity_matching(
                         "model_norm": m_norm,
                         "capacity_gb": int(c_gb) if not pd.isna(c_gb) else None,
                         "base_price": int(p),
-                        "source_text_raw_full": text,
+                        "source_text_raw_full": (text or "None"),
                         "extraction_method": _method,
                         "output_records_count": 1,
                     }
@@ -2735,7 +2735,7 @@ def clean_with_model_capacity_matching(
                 "model_norm": m_norm,
                 "capacity_gb": int(c_gb) if not pd.isna(c_gb) else None,
                 "base_price": int(p),
-                "source_text_raw_full": text,
+                "source_text_raw_full": (text or "None"),
                 "extraction_method": _method,
                 "output_records_count": len(rows) - _rows_start_idx,
             }

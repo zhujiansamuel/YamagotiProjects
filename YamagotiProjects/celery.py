@@ -8,6 +8,8 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "YamagotiProjects.settings")
 app = Celery("YamagotiProjects")
 app.config_from_object("django.conf:settings", namespace="CELERY")
 
+app.conf.task_track_started = True
+
 
 @setup_logging.connect
 def config_loggers(*args, **kwargs):

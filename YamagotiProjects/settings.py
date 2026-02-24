@@ -62,6 +62,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'elasticapm.contrib.django.middleware.TracingMiddleware',
     'django.middleware.locale.LocaleMiddleware',  # 可选
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",
@@ -206,7 +207,7 @@ else:
             "PASSWORD": os.getenv("POSTGRES_PASSWORD", "localpass"),
             "HOST": os.getenv("POSTGRES_HOST", "127.0.0.1"),
             "PORT": os.getenv("POSTGRES_PORT", "5433"),
-            "CONN_MAX_AGE": 60,  # 连接复用
+            "CONN_MAX_AGE": 0,  # 立即释放连接
             "CONN_HEALTH_CHECKS": True,
             "OPTIONS": {
                 "options": "-c statement_timeout=60000",
@@ -883,3 +884,15 @@ for _shop_code in set(WEB_SCRAPER_SOURCE_MAP.values()):
         'level': os.getenv('SHOP_CLEANERS_LOG_LEVEL', 'DEBUG'),
         'propagate': False,
     }
+
+# ---- Elastic APM ----
+ELASTIC_APM = {
+    'SERVICE_NAME': 'yamagoti-projects',
+    'SERVER_URL': 'http://host.docker.internal:8200',
+    'ENVIRONMENT': os.getenv('DJANGO_ENV', 'dev'),
+    'DEBUG': True,
+    'DISABLE_SEND': False,
+    'CAPTURE_BODY': 'all',
+    'TRANSACTION_SAMPLE_RATE': 1.0,
+    'SPAN_SAMPLE_RATE': 1.0,
+}
