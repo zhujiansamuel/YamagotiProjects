@@ -2942,11 +2942,12 @@ def match_tokens_generic(
                 # 提取金额相关
                 sep = m.group("sep") if "sep" in m.groupdict() else None
                 sign = m.group("sign") if "sign" in m.groupdict() else None
-                amt = to_int_yen(m.group("amount"))
-                if amt is None:
+                amt_raw = m.group("amount")
+                amt = int(amt_raw.replace(",", "")) if amt_raw else None
+                if amt is None or amt <= 0:
                     continue
                 
-                amt_val = int(amt)
+                amt_val = amt
                 
                 # 格式判定
                 if sign:
