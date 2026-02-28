@@ -396,10 +396,11 @@ FAMILY_SYNONYMS_COLOR: Dict[str, List[str]] = {
     "橙": ["オレンジ", "橙", "コズミックオレンジ"],
     "コズミックオレンジ": ["オレンジ", "橙", "コズミックオレンジ"],
     # green
-    "green": ["グリーン", "緑", "セージ"],
-    "グリーン": ["グリーン", "緑", "セージ"],
-    "緑": ["グリーン", "緑", "セージ"],
-    "セージ": ["グリーン", "緑", "セージ"],
+    "green": ["グリーン", "緑", "セージ", "Sage"],
+    "グリーン": ["グリーン", "緑", "セージ", "Sage"],
+    "緑": ["グリーン", "緑", "セージ", "Sage"],
+    "セージ": ["グリーン", "緑", "セージ", "Sage"],
+    "Sage": ["グリーン", "緑", "セージ", "Sage"],
     # pink
     "pink": ["ピンク"],
     "ピンク": ["ピンク"],
@@ -413,10 +414,11 @@ FAMILY_SYNONYMS_COLOR: Dict[str, List[str]] = {
     "黄": ["イエロー", "黄", "黄色"],
     "黄色": ["イエロー", "黄", "黄色"],
     # purple
-    "purple": ["パープル", "紫", "ラベンダー"],
-    "パープル": ["パープル", "紫", "ラベンダー"],
-    "紫": ["パープル", "紫", "ラベンダー"],
-    "ラベンダー": ["パープル", "紫", "ラベンダー"],
+    "purple": ["パープル", "紫", "ラベンダー", "Lavender"],
+    "パープル": ["パープル", "紫", "ラベンダー", "Lavender"],
+    "紫": ["パープル", "紫", "ラベンダー", "Lavender"],
+    "ラベンダー": ["パープル", "紫", "ラベンダー", "Lavender"],
+    "Lavender": ["パープル", "紫", "ラベンダー", "Lavender"],
     # natural
     "natural": ["ナチュラル"],
     "ナチュラル": ["ナチュラル"],
@@ -867,6 +869,24 @@ def split_composite_label_adaptive(
                 "invalid_parts": invalid_parts,
                 "missing_colors": [],
             }
+
+    # 4b. 兜底：无分隔符的复合标签（如 "青銀"）逐字拆分，仅当每字均匹配 color_map 时接受
+    if 2 <= len(label_text) <= 8:
+        char_parts = [c for c in label_text.strip() if c.strip()]
+        if len(char_parts) >= 2:
+            valid_labels_c, invalid_parts_c, matched_colors_c = validate_split_labels(
+                char_parts, color_map, label_matcher
+            )
+            if not invalid_parts_c and len(matched_colors_c) > best_result["matched_color_count"]:
+                best_result = {
+                    "strategy_used": "char_split",
+                    "labels": valid_labels_c,
+                    "matched_color_count": len(matched_colors_c),
+                    "total_colors_in_catalog": total_colors,
+                    "is_full_match": len(matched_colors_c) == total_colors,
+                    "invalid_parts": [],
+                    "missing_colors": [],
+                }
 
     # 5. 检测潜在遗漏的颜色（仅当非全匹配时）
     best_result["missing_colors"] = detect_missing_colors_with_price(
