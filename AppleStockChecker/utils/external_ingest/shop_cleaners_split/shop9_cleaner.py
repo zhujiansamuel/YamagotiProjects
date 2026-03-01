@@ -51,6 +51,8 @@ from ..cleaner_tools import (
     coerce_amount_yen,
     detect_all_delta_unified,
     match_tokens_generic,
+    detect_color_only_filter,
+    apply_color_only_stacking,
 )
 
 # ----------------------------------------------------------------------
@@ -259,6 +261,32 @@ def clean_shop9(
             agg_all_delta = detect_all_delta_unified(raw_combined_shop9, _ALL_DELTA_RE_shop9)
         if agg_all_delta is None and raw_color_shop9:
             agg_all_delta = detect_all_delta_unified(raw_color_shop9, _ALL_DELTA_RE_shop9)  # 回退：仅色・詳細等
+
+        # 颜色限定モード検出
+        color_only_mode, color_only_specs = detect_color_only_filter(
+            raw_combined_shop9 or raw_color_shop9, color_to_pn, _label_matches_color_unified,
+            split_tokens_re=SPLIT_TOKENS_RE_shop9,
+            normalize_label_func=_normalize_label_shop9,
+            is_plausible_label_func=_is_plausible_color_label_shop9,
+        )
+        if color_only_mode:
+            co_delta_specs = apply_color_only_stacking(color_only_specs, agg_all_delta)
+            decomp = PriceDecomposition(
+                base_price=base_price or 0, delta_specs=co_delta_specs,
+                abs_specs=[], extraction_method="regex",
+                source_text_raw=f"{raw_price_shop9} | {raw_color_shop9}" if raw_price_shop9 and raw_color_shop9 else (raw_price_shop9 or raw_color_shop9),
+            )
+            new_rows, ctx.log_seq = resolve_color_prices(
+                decomp, color_to_pn, _label_matches_color_unified,
+                shop_name=SHOP_NAME, cleaner_name=CLEANER_NAME,
+                recorded_at=t, emit_default_rows=False,
+                skip_non_positive=True, logger=ctx.logger,
+                log_seq_start=ctx.log_seq, row_index=i,
+                model_text=str(raw_model), model_norm=str(m),
+                capacity_gb=c,
+            )
+            rows.extend(new_rows)
+            continue
 
         # 阶段 1：统一流程 raw + preprocessor
         tokens = match_tokens_generic(

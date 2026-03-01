@@ -27,6 +27,8 @@ from ...external_ingest.cleaner_tools import to_int_yen, parse_dt_aware
 from ..cleaner_tools import (
     normalize_text_stage0,
     detect_all_delta_unified,
+    detect_color_only_filter,
+    apply_color_only_stacking,
     match_tokens_generic,
     normalize_text_basic,
     _parse_capacity_gb,
@@ -255,6 +257,32 @@ def clean_shop14(df: "pd.DataFrame", debug: bool = True) -> "pd.DataFrame":
             ad2 = detect_all_delta_unified(raw_combined_shop14, _ALL_DELTA_RE_shop14)
             if ad2 is not None:
                 agg_all_delta = ad2
+
+        # 颜色限定モード検出（color-only filter）
+        color_only_mode, color_only_specs = detect_color_only_filter(
+            raw_combined_shop14, color_map, _label_matches_color_unified,
+            split_tokens_re=SPLIT_TOKENS_RE_shop14,
+            normalize_label_func=_clean_label_shop14,
+            is_plausible_label_func=_is_plausible_color_label_shop14,
+        )
+        if color_only_mode:
+            co_delta_specs = apply_color_only_stacking(color_only_specs, agg_all_delta)
+            decomp = PriceDecomposition(
+                base_price=base_price, delta_specs=co_delta_specs,
+                abs_specs=[], extraction_method="regex",
+                source_text_raw=raw_combined_shop14,
+            )
+            new_rows, ctx.log_seq = resolve_color_prices(
+                decomp, color_map, _label_matches_color_unified,
+                shop_name=SHOP_NAME, cleaner_name=CLEANER_NAME,
+                recorded_at=rec_at, emit_default_rows=False,
+                skip_non_positive=True, logger=ctx.logger,
+                log_seq_start=ctx.log_seq, row_index=int(idx),
+                model_text=model_text, model_norm=model_norm,
+                capacity_gb=cap_gb,
+            )
+            rows.extend(new_rows)
+            continue
 
         # 阶段 1：对每个 frag 跑 _match_shop14，合并 tokens
         all_tokens: List[MatchToken] = []

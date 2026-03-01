@@ -31,6 +31,8 @@ from ..cleaner_tools import (
     finalize_color_cleaner,
     coerce_amount_yen,
     detect_all_delta_unified,
+    detect_color_only_filter,
+    apply_color_only_stacking,
     match_tokens_generic,
 )
 
@@ -217,7 +219,33 @@ def clean_shop7(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
                 agg_all_delta: Optional[int] = None
                 if raw_nxt_shop7:
                     agg_all_delta = detect_all_delta_unified(raw_nxt_shop7, _ALL_DELTA_RE_shop7)
-                
+
+                # 颜色限定モード検出
+                color_only_mode, color_only_specs = detect_color_only_filter(
+                    raw_nxt_shop7, color_map, _label_matches_color_unified,
+                    split_tokens_re=SPLIT_TOKENS_RE_shop7,
+                    normalize_label_func=_normalize_label_shop7,
+                    is_plausible_label_func=_is_plausible_color_label_shop7,
+                )
+                if color_only_mode:
+                    co_delta_specs = apply_color_only_stacking(color_only_specs, agg_all_delta)
+                    decomp = PriceDecomposition(
+                        base_price=base_price, delta_specs=co_delta_specs,
+                        abs_specs=[], extraction_method="regex",
+                        source_text_raw=raw_nxt_shop7,
+                    )
+                    new_rows, ctx.log_seq = resolve_color_prices(
+                        decomp, color_map, _label_matches_color_unified,
+                        shop_name=SHOP_NAME, cleaner_name=CLEANER_NAME,
+                        recorded_at=rec_at, emit_default_rows=False,
+                        skip_non_positive=True, logger=ctx.logger,
+                        log_seq_start=ctx.log_seq, row_index=i,
+                        model_text=model_text, model_norm=model_norm,
+                        capacity_gb=cap_gb,
+                    )
+                    rows.extend(new_rows)
+                    continue
+
                 tokens = match_tokens_generic(
                     raw_nxt_shop7,
                     split_re=SPLIT_TOKENS_RE_shop7,

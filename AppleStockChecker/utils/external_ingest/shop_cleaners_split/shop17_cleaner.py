@@ -26,6 +26,8 @@ from ..cleaner_tools import (
     detect_all_delta_unified,
     match_tokens_generic,
     EXTRACTION_MODE,
+    detect_color_only_filter,
+    apply_color_only_stacking,
 )
 import os
 from functools import lru_cache
@@ -218,6 +220,32 @@ def clean_shop17(df: pd.DataFrame) -> pd.DataFrame:
 
         # 1. All Delta (on raw text)
         agg_all_delta = detect_all_delta_unified(raw_color_shop17, _ALL_DELTA_RE_shop17)
+
+        # 颜色限定モード検出
+        color_only_mode, color_only_specs = detect_color_only_filter(
+            raw_color_shop17, color_map, _label_matches_color_unified,
+            split_tokens_re=SPLIT_TOKENS_RE_shop17,
+            normalize_label_func=_normalize_label_shop17,
+            is_plausible_label_func=_is_plausible_color_label_shop17,
+        )
+        if color_only_mode:
+            co_delta_specs = apply_color_only_stacking(color_only_specs, agg_all_delta)
+            decomp = PriceDecomposition(
+                base_price=base_price, delta_specs=co_delta_specs,
+                abs_specs=[], extraction_method="regex",
+                source_text_raw=raw_color_shop17,
+            )
+            new_rows, ctx.log_seq = resolve_color_prices(
+                decomp, color_map, _label_matches_color_unified,
+                shop_name=SHOP_NAME, cleaner_name=CLEANER_NAME,
+                recorded_at=rec_at, emit_default_rows=False,
+                skip_non_positive=True, logger=ctx.logger,
+                log_seq_start=ctx.log_seq, row_index=int(idx),
+                model_text=model_text, model_norm=model_norm,
+                capacity_gb=cap_gb,
+            )
+            rows.extend(new_rows)
+            continue
 
         # 2. Match Tokens（统一流程：raw + preprocessor）
         tokens = match_tokens_generic(

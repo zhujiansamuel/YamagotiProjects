@@ -2862,7 +2862,7 @@ def finalize_color_cleaner(
 def detect_all_delta_unified(text: str, regex: Pattern) -> Optional[int]:
     """
     通用全色减额检测。
-    归一化文本 -> 正则匹配 -> 提取金额。
+    归一化文本 -> 正则匹配 -> 提取金額。
     """
     s = normalize_text_basic(text)
     if not s:
@@ -2873,6 +2873,162 @@ def detect_all_delta_unified(text: str, regex: Pattern) -> Optional[int]:
     if "全色" in s:
         return 0
     return None
+
+
+# ── 颜色限定モード検出（共享） ─────────────────────────────────────────
+#
+# 3 種のパターンを検出:
+#   1. 括号パターン: "シルバー(コズミックオレンジ-2,500円)"
+#   2. のみ接尾辞:   "シルバー/ディープブルーのみ"
+#   3. 裸色名:       "コズミックオレンジ" (価格情報なし、色名のみ)
+
+_COLOR_PAREN_RE = re.compile(
+    r"([^(\d\s/、,;]+)\s*\(\s*(.+?)\s*\)",
+    re.UNICODE,
+)
+_PAREN_INNER_ITEM_RE = re.compile(
+    r"([^\d+\-,、\s]+)\s*([+\-])\s*(\d[\d,]*)\s*(?:円)?",
+    re.UNICODE,
+)
+_NOMI_SUFFIX_RE = re.compile(r"のみ\s*$")
+_ALL_COLOR_REMOVAL_RE = re.compile(r"全色\s*[+\-]?\s*\d[\d,]*\s*(?:円)?")
+_HAS_PRICE_INDICATOR_RE = re.compile(r"\d|円|なし")
+
+
+def _matches_any_color(
+    label: str,
+    color_to_pn: Dict[str, Tuple[str, str]],
+    label_matcher: LabelMatcherType,
+) -> bool:
+    """label が color_to_pn 内のいずれかの色に一致するか判定。"""
+    for col_norm, (_, col_raw) in color_to_pn.items():
+        if label_matcher(label, col_raw, col_norm):
+            return True
+    return False
+
+
+def detect_color_only_filter(
+    text: str,
+    color_to_pn: Dict[str, Tuple[str, str]],
+    label_matcher: LabelMatcherType,
+    *,
+    split_tokens_re: Pattern,
+    normalize_label_func: Callable[[str], str],
+    is_plausible_label_func: Callable[[str], bool],
+) -> Tuple[bool, List[Tuple[str, int, bool]]]:
+    """
+    颜色限定モードの前置検出。
+
+    3 種のパターンを検出:
+      1. 括号パターン: "シルバー(コズミックオレンジ-2,500円)"
+      2. のみ接尾辞:   "シルバー/ディープブルーのみ"
+      3. 裸色名:       "コズミックオレンジ" (価格情報なし、色名のみ)
+
+    パラメータ:
+      text: normalize_text_stage0 済みの生テキスト
+      color_to_pn: {color_norm: (part_number, color_raw)}
+      label_matcher: (label_raw, color_raw, color_norm) -> bool
+      split_tokens_re: shop 固有のトークン分割正規表現
+      normalize_label_func: shop 固有のラベル正規化関数
+      is_plausible_label_func: shop 固有のラベル妥当性チェック関数
+
+    戻り値:
+      (color_only_mode, specs)
+      specs: [(label, delta, has_explicit_delta)]
+        has_explicit_delta=True  → 括号内の明示的 delta（全色と重畳しない）
+        has_explicit_delta=False → 裸色名/のみ（全色 delta と重畳する）
+    """
+    if not text or not text.strip():
+        return False, []
+
+    s = normalize_text_basic(text)
+    if not s:
+        return False, []
+
+    # 全色パターンを除去して残りを分析
+    s_no_all = _ALL_COLOR_REMOVAL_RE.sub("", s).strip()
+    s_no_all = re.sub(r"^\s*[/、,;]\s*|\s*[/、,;]\s*$", "", s_no_all).strip()
+
+    if not s_no_all:
+        return False, []
+
+    specs: List[Tuple[str, int, bool]] = []
+
+    # --- 1. 括号パターン ---
+    paren_m = _COLOR_PAREN_RE.search(s_no_all)
+    if paren_m:
+        outer = normalize_label_func(paren_m.group(1))
+        inner = paren_m.group(2)
+
+        if (outer
+                and is_plausible_label_func(outer)
+                and _matches_any_color(outer, color_to_pn, label_matcher)):
+            specs.append((outer, 0, False))
+
+        for im in _PAREN_INNER_ITEM_RE.finditer(inner):
+            lbl = normalize_label_func(im.group(1))
+            sign = im.group(2)
+            amt = int(im.group(3).replace(",", ""))
+            delta = -amt if sign == "-" else amt
+            if (lbl
+                    and is_plausible_label_func(lbl)
+                    and _matches_any_color(lbl, color_to_pn, label_matcher)):
+                specs.append((lbl, delta, True))
+
+        if specs:
+            return True, specs
+
+    # --- 2. のみ接尾辞 ---
+    if "のみ" in s_no_all:
+        parts = [p.strip() for p in split_tokens_re.split(s_no_all)
+                 if p and p.strip()]
+        for p in parts:
+            lbl = _NOMI_SUFFIX_RE.sub("", p).strip()
+            lbl = normalize_label_func(lbl)
+            if (lbl
+                    and is_plausible_label_func(lbl)
+                    and _matches_any_color(lbl, color_to_pn, label_matcher)):
+                specs.append((lbl, 0, False))
+        if specs:
+            return True, specs
+
+    # --- 3. 裸色名 ---
+    if _HAS_PRICE_INDICATOR_RE.search(s_no_all):
+        return False, []
+
+    parts = [p.strip() for p in split_tokens_re.split(s_no_all)
+             if p and p.strip()]
+    if not parts:
+        return False, []
+
+    for p in parts:
+        lbl = normalize_label_func(p)
+        if not lbl or not is_plausible_label_func(lbl):
+            return False, []
+        if not _matches_any_color(lbl, color_to_pn, label_matcher):
+            return False, []
+        specs.append((lbl, 0, False))
+
+    return True, specs
+
+
+def apply_color_only_stacking(
+    color_only_specs: List[Tuple[str, int, bool]],
+    agg_all_delta: Optional[int],
+) -> List[Tuple[str, int]]:
+    """
+    全色 delta 重畳処理。
+
+    has_explicit_delta=True  → 括号内の明示値をそのまま使用（全色と重畳しない）
+    has_explicit_delta=False → 全色 delta を適用（なければ元の delta を使用）
+    """
+    result: List[Tuple[str, int]] = []
+    for lbl, delta, has_explicit in color_only_specs:
+        if has_explicit:
+            result.append((lbl, delta))
+        else:
+            result.append((lbl, agg_all_delta if agg_all_delta is not None else delta))
+    return result
 
 
 def clean_text_generic(text: str) -> str:

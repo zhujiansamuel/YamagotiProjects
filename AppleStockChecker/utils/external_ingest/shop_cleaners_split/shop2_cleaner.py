@@ -50,6 +50,8 @@ from ..cleaner_tools import (
     coerce_amount_yen,
     detect_all_delta_unified,
     match_tokens_generic,
+    detect_color_only_filter,
+    apply_color_only_stacking,
 )
 
 # ----------------------------------------------------------------------
@@ -240,6 +242,33 @@ def clean_shop2(shop2_df: pd.DataFrame, debug: bool = True, debug_limit: int = 3
 
         if raw_rule_shop2:
             agg_all_delta = detect_all_delta_unified(raw_rule_shop2, _ALL_DELTA_RE_shop2)
+
+            # 颜色限定モード検出
+            color_only_mode, color_only_specs = detect_color_only_filter(
+                raw_rule_shop2, cmap, _label_matches_color_unified,
+                split_tokens_re=SPLIT_TOKENS_RE_shop2,
+                normalize_label_func=_normalize_label_shop2,
+                is_plausible_label_func=_is_plausible_color_label_shop2,
+            )
+            if color_only_mode:
+                co_delta_specs = apply_color_only_stacking(color_only_specs, agg_all_delta)
+                decomp = PriceDecomposition(
+                    base_price=base_price_val, delta_specs=co_delta_specs,
+                    abs_specs=[], extraction_method="regex",
+                    source_text_raw=raw_rule_shop2,
+                )
+                new_rows, ctx.log_seq = resolve_color_prices(
+                    decomp, cmap, _label_matches_color_unified,
+                    shop_name=SHOP_NAME, cleaner_name=CLEANER_NAME,
+                    recorded_at=recorded_at, emit_default_rows=False,
+                    skip_non_positive=True, logger=ctx.logger,
+                    log_seq_start=ctx.log_seq, row_index=pos,
+                    model_text=raw_modelcap, model_norm=model_name,
+                    capacity_gb=cap_gb,
+                )
+                out_rows.extend(new_rows)
+                continue
+
             tokens = match_tokens_generic(
                 raw_rule_shop2,
                 split_re=SPLIT_TOKENS_RE_shop2,

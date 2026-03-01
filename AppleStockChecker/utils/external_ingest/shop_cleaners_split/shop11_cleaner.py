@@ -47,6 +47,8 @@ from ..cleaner_tools import (
     coerce_amount_yen,
     detect_all_delta_unified,
     match_tokens_generic,
+    detect_color_only_filter,
+    apply_color_only_stacking,
 )
 
 # ----------------------------------------------------------------------
@@ -195,6 +197,32 @@ def clean_shop11(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) ->
         agg_all_delta: Optional[int] = None
         if raw_caution_shop11:
             agg_all_delta = detect_all_delta_unified(raw_caution_shop11, _ALL_DELTA_RE_shop11)
+
+        # 颜色限定モード検出
+        color_only_mode, color_only_specs = detect_color_only_filter(
+            raw_caution_shop11, color_map, _label_matches_color_unified,
+            split_tokens_re=SPLIT_TOKENS_RE_shop11,
+            normalize_label_func=_normalize_label_shop11,
+            is_plausible_label_func=_is_plausible_color_label_shop11,
+        )
+        if color_only_mode:
+            co_delta_specs = apply_color_only_stacking(color_only_specs, agg_all_delta)
+            decomp = PriceDecomposition(
+                base_price=base_price, delta_specs=co_delta_specs,
+                abs_specs=[], extraction_method="regex",
+                source_text_raw=str(caution_raw or ""),
+            )
+            new_rows, ctx.log_seq = resolve_color_prices(
+                decomp, color_map, _label_matches_color_unified,
+                shop_name=SHOP_NAME, cleaner_name=CLEANER_NAME,
+                recorded_at=rec_at, emit_default_rows=False,
+                skip_non_positive=True, logger=ctx.logger,
+                log_seq_start=ctx.log_seq, row_index=int(i),
+                model_text=model_text, model_norm=model_norm,
+                capacity_gb=cap_gb,
+            )
+            rows.extend(new_rows)
+            continue
 
         # 阶段 1：_match_shop11（内部会 _clean_color_text_shop11）
         tokens = match_tokens_generic(

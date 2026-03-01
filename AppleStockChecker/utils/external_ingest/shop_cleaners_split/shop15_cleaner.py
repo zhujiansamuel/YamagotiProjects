@@ -35,6 +35,8 @@ from ..cleaner_tools import (
     expand_match_tokens,
     match_tokens_to_specs,
     detect_all_delta_unified,
+    detect_color_only_filter,
+    apply_color_only_stacking,
     match_tokens_generic,
     EXTRACTION_MODE,
 )
@@ -197,6 +199,34 @@ def clean_shop15(df: pd.DataFrame, debug: bool = True) -> pd.DataFrame:
         agg_all_delta: Optional[int] = None
         if raw_price_shop15:
             agg_all_delta = detect_all_delta_unified(raw_price_shop15, _ALL_DELTA_RE_shop15)
+
+            # 颜色限定モード検出
+            color_only_mode, color_only_specs = detect_color_only_filter(
+                raw_price_shop15, color_map, _label_matches_color_unified,
+                split_tokens_re=SPLIT_TOKENS_RE_shop15,
+                normalize_label_func=_clean_label_shop15,
+                is_plausible_label_func=_is_plausible_color_label_shop15,
+            )
+            if color_only_mode:
+                co_delta_specs = apply_color_only_stacking(color_only_specs, agg_all_delta)
+                decomp = PriceDecomposition(
+                    base_price=base_price, delta_specs=co_delta_specs,
+                    abs_specs=[], extraction_method="regex",
+                    source_text_raw=raw_price_shop15,
+                )
+                rec_at = parse_dt_aware(row.get("time-scraped"))
+                new_rows, ctx.log_seq = resolve_color_prices(
+                    decomp, color_map, _label_matches_color_unified,
+                    shop_name=SHOP_NAME, cleaner_name=CLEANER_NAME,
+                    recorded_at=rec_at, emit_default_rows=False,
+                    skip_non_positive=True, logger=ctx.logger,
+                    log_seq_start=ctx.log_seq, row_index=int(i),
+                    model_text=model_text, model_norm=model_norm,
+                    capacity_gb=cap_gb,
+                )
+                rows.extend(new_rows)
+                continue
+
             tokens = match_tokens_generic(
                 raw_price_shop15,
                 split_re=SPLIT_TOKENS_RE_shop15,

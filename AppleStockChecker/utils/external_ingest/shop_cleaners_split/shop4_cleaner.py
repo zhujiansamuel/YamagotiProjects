@@ -49,6 +49,8 @@ from ..cleaner_tools import (
     finalize_color_cleaner,
     coerce_amount_yen,
     detect_all_delta_unified,
+    detect_color_only_filter,
+    apply_color_only_stacking,
     match_tokens_generic,
 )
 
@@ -209,31 +211,6 @@ _ALL_DELTA_RE_shop4 = re.compile(r"全色\s*(?:[+\-−－])?\s*(\d[\d,]*)\s*(?:�
 
 _BAD_LABEL_WORDS_shop4 = ("利用制限", "保証", "郵送", "持ち込み", "開始", "未満", "減額", "SIM", "制限")
 
-# ----------------------------------------------------------------------
-# 颜色限定モード検出（のみ / 括号 / 裸色名）
-# ----------------------------------------------------------------------
-
-# 括号パターン: "シルバー(コズミックオレンジ-2,500円)"
-_COLOR_PAREN_RE_shop4 = re.compile(
-    r"([^(\d\s/、,;]+)\s*\(\s*(.+?)\s*\)",
-    re.UNICODE,
-)
-
-# 括号内アイテム: "コズミックオレンジ-2,500円"
-_PAREN_INNER_ITEM_RE_shop4 = re.compile(
-    r"([^\d+\-,、\s]+)\s*([+\-])\s*(\d[\d,]*)\s*(?:円)?",
-    re.UNICODE,
-)
-
-# のみ 接尾辞
-_NOMI_SUFFIX_RE_shop4 = re.compile(r"のみ\s*$")
-
-# 全色パターン除去（分析用）
-_ALL_COLOR_REMOVAL_RE_shop4 = re.compile(r"全色\s*[+\-]?\s*\d[\d,]*\s*(?:円)?")
-
-# 価格関連パターン検出（裸色名判定用）
-_HAS_PRICE_INDICATOR_RE_shop4 = re.compile(r"\d|円|なし")
-
 
 def _normalize_label_shop4(lbl: str) -> str:
     """归一化颜色标签。"""
@@ -254,112 +231,6 @@ def _is_plausible_color_label_shop4(label: str) -> bool:
     if len(label) > 16 or any(w in label for w in _BAD_LABEL_WORDS_shop4):
         return False
     return True
-
-
-def _matches_any_color_shop4(
-    label: str,
-    color_to_pn: Dict[str, Tuple[str, str]],
-    label_matcher,
-) -> bool:
-    """label が color_to_pn 内のいずれかの色に一致するか判定。"""
-    for col_norm, (_, col_raw) in color_to_pn.items():
-        if label_matcher(label, col_raw, col_norm):
-            return True
-    return False
-
-
-def detect_color_only_filter(
-    text: str,
-    color_to_pn: Dict[str, Tuple[str, str]],
-    label_matcher,
-) -> Tuple[bool, List[Tuple[str, int, bool]]]:
-    """
-    颜色限定モードの前置検出。
-
-    3 種のパターンを検出:
-      1. 括号パターン: "シルバー(コズミックオレンジ-2,500円)"
-      2. のみ接尾辞:   "シルバー/ディープブルーのみ"
-      3. 裸色名:       "コズミックオレンジ" (価格情報なし、色名のみ)
-
-    戻り値:
-      (color_only_mode, specs)
-      specs: [(label, delta, has_explicit_delta)]
-        has_explicit_delta=True  → 括号内の明示的 delta（全色と重畳しない）
-        has_explicit_delta=False → 裸色名/のみ（全色 delta と重畳する）
-    """
-    if not text or not text.strip():
-        return False, []
-
-    # normalize_text_basic で全角→半角統一
-    s = normalize_text_basic(text)
-    if not s:
-        return False, []
-
-    # 全色パターンを除去して残りを分析
-    s_no_all = _ALL_COLOR_REMOVAL_RE_shop4.sub("", s).strip()
-    s_no_all = re.sub(r"^\s*[/、,;]\s*|\s*[/、,;]\s*$", "", s_no_all).strip()
-
-    if not s_no_all:
-        return False, []
-
-    specs: List[Tuple[str, int, bool]] = []
-
-    # --- 1. 括号パターン ---
-    paren_m = _COLOR_PAREN_RE_shop4.search(s_no_all)
-    if paren_m:
-        outer = _normalize_label_shop4(paren_m.group(1))
-        inner = paren_m.group(2)
-
-        if (outer
-                and _is_plausible_color_label_shop4(outer)
-                and _matches_any_color_shop4(outer, color_to_pn, label_matcher)):
-            specs.append((outer, 0, False))
-
-        for im in _PAREN_INNER_ITEM_RE_shop4.finditer(inner):
-            lbl = _normalize_label_shop4(im.group(1))
-            sign = im.group(2)
-            amt = int(im.group(3).replace(",", ""))
-            delta = -amt if sign == "-" else amt
-            if (lbl
-                    and _is_plausible_color_label_shop4(lbl)
-                    and _matches_any_color_shop4(lbl, color_to_pn, label_matcher)):
-                specs.append((lbl, delta, True))
-
-        if specs:
-            return True, specs
-
-    # --- 2. のみ接尾辞 ---
-    if "のみ" in s_no_all:
-        parts = [p.strip() for p in SPLIT_TOKENS_RE_shop4.split(s_no_all)
-                 if p and p.strip()]
-        for p in parts:
-            lbl = _NOMI_SUFFIX_RE_shop4.sub("", p).strip()
-            lbl = _normalize_label_shop4(lbl)
-            if (lbl
-                    and _is_plausible_color_label_shop4(lbl)
-                    and _matches_any_color_shop4(lbl, color_to_pn, label_matcher)):
-                specs.append((lbl, 0, False))
-        if specs:
-            return True, specs
-
-    # --- 3. 裸色名 ---
-    if _HAS_PRICE_INDICATOR_RE_shop4.search(s_no_all):
-        return False, []
-
-    parts = [p.strip() for p in SPLIT_TOKENS_RE_shop4.split(s_no_all)
-             if p and p.strip()]
-    if not parts:
-        return False, []
-
-    for p in parts:
-        lbl = _normalize_label_shop4(p)
-        if not lbl or not _is_plausible_color_label_shop4(lbl):
-            return False, []
-        if not _matches_any_color_shop4(lbl, color_to_pn, label_matcher):
-            return False, []
-        specs.append((lbl, 0, False))
-
-    return True, specs
 
 
 # ----------------------------------------------------------------------
@@ -428,19 +299,13 @@ def clean_shop4(df: pd.DataFrame, debug: bool = True, debug_limit: int = 30) -> 
         # ── 颜色限定モード検出 (Step 3.5) ─────────────────────────
         color_only_mode, color_only_specs = detect_color_only_filter(
             raw_combined_shop4, color_to_pn, _label_matches_color_unified,
+            split_tokens_re=SPLIT_TOKENS_RE_shop4,
+            normalize_label_func=_normalize_label_shop4,
+            is_plausible_label_func=_is_plausible_color_label_shop4,
         )
 
         if color_only_mode:
-            # 全色 delta との重畳処理:
-            #   has_explicit_delta=True  → 括号内の明示値をそのまま使用
-            #   has_explicit_delta=False → 全色 delta を重畳（なければ 0）
-            co_delta_specs: List[Tuple[str, int]] = []
-            for lbl, delta, has_explicit in color_only_specs:
-                if has_explicit:
-                    co_delta_specs.append((lbl, delta))
-                else:
-                    effective = agg_all_delta if agg_all_delta is not None else delta
-                    co_delta_specs.append((lbl, effective))
+            co_delta_specs = apply_color_only_stacking(color_only_specs, agg_all_delta)
 
             decomp = PriceDecomposition(
                 base_price=base_price,
