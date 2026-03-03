@@ -107,6 +107,9 @@ try:
 except NameError:
     pass
 
+# ---- Dashboard Service Token (service-to-service auth) ----
+DASHBOARD_SERVICE_TOKEN = os.getenv('DASHBOARD_SERVICE_TOKEN', '')
+
 # ---- SimpleJWT ----
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),

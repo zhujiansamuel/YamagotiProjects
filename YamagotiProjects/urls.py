@@ -24,6 +24,7 @@ from drf_spectacular.views import (
     SpectacularRedocView,
 )
 from django.http import HttpResponse
+from AppleStockChecker.dashboard_views import ScraperEventDashboardView
 def health(_): return HttpResponse("ok")
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -35,4 +36,7 @@ urlpatterns = [
     path("inbound-goods/", include("inbound_goods.urls")),
     path("accounts/", include("django.contrib.auth.urls")),
     path("healthz/", health),
+
+    # Dashboard API (service-to-service, token auth)
+    path("api/dashboard/scraper-events/", ScraperEventDashboardView.as_view(), name="dashboard-scraper-events"),
 ]
