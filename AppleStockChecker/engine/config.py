@@ -17,7 +17,7 @@ class BucketConfig:
 
 
 # 特征计算窗口 (分钟)
-FEATURE_WINDOWS: list[int] = [120, 900, 1800]
+FEATURE_WINDOWS: list[int] = [30, 60, 75, 120, 900, 1800]
 
 # 每个窗口对应的桶数 (÷15min)
 WINDOW_TO_BUCKETS: dict[int, int] = {w: w // 15 for w in FEATURE_WINDOWS}

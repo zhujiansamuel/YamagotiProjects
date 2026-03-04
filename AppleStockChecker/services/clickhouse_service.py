@@ -7,7 +7,11 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
+import numpy as np
 from django.conf import settings
+
+# numpy 整型的基类，用于 insert_features 类型判断
+_NP_INT_TYPES = np.integer
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +108,12 @@ class ClickHouseService:
             d = {"run_id": run_id, "bucket": _to_naive(row.bucket), "scope": row.scope}
             for c in feature_cols:
                 v = getattr(row, c)
-                d[c] = None if _is_nan(v) else float(v)
+                if _is_nan(v):
+                    d[c] = None
+                elif isinstance(v, (int, _NP_INT_TYPES)):
+                    d[c] = int(v)
+                else:
+                    d[c] = float(v)
             rows.append(d)
 
         self.client.execute(f"INSERT INTO features_wide ({col_list}) VALUES", rows)

@@ -15,6 +15,10 @@ from .config import FEATURE_WINDOWS, WINDOW_TO_BUCKETS
 
 logger = logging.getLogger(__name__)
 
+# EMA half-life 窗口 (分钟) → 桶数 (÷15min)
+EMA_HL_WINDOWS: list[int] = [30, 60]
+EMA_HL_BUCKETS: dict[int, int] = {w: w // 15 for w in EMA_HL_WINDOWS}
+
 
 @dataclass
 class BollingerResult:
@@ -39,6 +43,27 @@ def compute_ema_batch(series: torch.Tensor, window: int) -> torch.Tensor:
     Tensor  (n_iphones, n_buckets)
     """
     alpha = 2.0 / (window + 1.0)
+    ema = torch.zeros_like(series)
+    ema[:, 0] = series[:, 0]
+    for t in range(1, series.shape[1]):
+        ema[:, t] = alpha * series[:, t] + (1 - alpha) * ema[:, t - 1]
+    return ema
+
+
+def compute_ema_halflife_batch(series: torch.Tensor, hl_buckets: int) -> torch.Tensor:
+    """半衰期 EMA。alpha = 1 - exp(-ln2 / hl_buckets)。
+
+    Parameters
+    ----------
+    series : (n_iphones, n_buckets)
+    hl_buckets : int  半衰期 (桶数)
+
+    Returns
+    -------
+    Tensor  (n_iphones, n_buckets)
+    """
+    import math as _math
+    alpha = 1.0 - _math.exp(-_math.log(2) / hl_buckets)
     ema = torch.zeros_like(series)
     ema[:, 0] = series[:, 0]
     for t in range(1, series.shape[1]):
@@ -165,6 +190,11 @@ def compute_all_features(
         features[f"boll_up_{win_min}"] = boll.upper
         features[f"boll_low_{win_min}"] = boll.lower
         features[f"boll_width_{win_min}"] = boll.width
+
+    # EMA half-life 系列
+    for hl_min in EMA_HL_WINDOWS:
+        hl_buckets = EMA_HL_BUCKETS[hl_min]
+        features[f"ema_hl_{hl_min}"] = compute_ema_halflife_batch(agg_mean, hl_buckets)
 
     logger.info("compute_all_features: %d features computed for %d windows",
                 len(features), len(windows))

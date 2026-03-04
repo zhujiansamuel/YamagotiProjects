@@ -41,22 +41,50 @@ CREATE TABLE IF NOT EXISTS yamagoti.features_wide (
     shop_count          UInt16,
     dispersion          Nullable(Float64),
 
-    -- EMA (3 窗口)
+    -- EMA (6 窗口)
+    ema_30              Nullable(Float64),
+    ema_60              Nullable(Float64),
+    ema_75              Nullable(Float64),
     ema_120             Nullable(Float64),
     ema_900             Nullable(Float64),
     ema_1800            Nullable(Float64),
 
-    -- SMA (3 窗口)
+    -- SMA (6 窗口)
+    sma_30              Nullable(Float64),
+    sma_60              Nullable(Float64),
+    sma_75              Nullable(Float64),
     sma_120             Nullable(Float64),
     sma_900             Nullable(Float64),
     sma_1800            Nullable(Float64),
 
-    -- WMA (3 窗口)
+    -- WMA (6 窗口)
+    wma_30              Nullable(Float64),
+    wma_60              Nullable(Float64),
+    wma_75              Nullable(Float64),
     wma_120             Nullable(Float64),
     wma_900             Nullable(Float64),
     wma_1800            Nullable(Float64),
 
-    -- Bollinger Bands (3 窗口 x 4 值)
+    -- EMA half-life (2 窗口)
+    ema_hl_30           Nullable(Float64),
+    ema_hl_60           Nullable(Float64),
+
+    -- Bollinger Bands (6 窗口 x 4 值)
+    boll_mid_30         Nullable(Float64),
+    boll_up_30          Nullable(Float64),
+    boll_low_30         Nullable(Float64),
+    boll_width_30       Nullable(Float64),
+
+    boll_mid_60         Nullable(Float64),
+    boll_up_60          Nullable(Float64),
+    boll_low_60         Nullable(Float64),
+    boll_width_60       Nullable(Float64),
+
+    boll_mid_75         Nullable(Float64),
+    boll_up_75          Nullable(Float64),
+    boll_low_75         Nullable(Float64),
+    boll_width_75       Nullable(Float64),
+
     boll_mid_120        Nullable(Float64),
     boll_up_120         Nullable(Float64),
     boll_low_120        Nullable(Float64),
@@ -76,3 +104,36 @@ CREATE TABLE IF NOT EXISTS yamagoti.features_wide (
 ) ENGINE = ReplacingMergeTree(inserted_at)
 PARTITION BY (run_id, toYYYYMM(bucket))
 ORDER BY (run_id, scope, bucket);
+
+-- --------------------------------------------------------------------------
+-- Migration: 新增 30/60/75 分钟窗口列 + ema_hl 列 (已有表执行 ALTER TABLE)
+-- --------------------------------------------------------------------------
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS ema_30 Nullable(Float64);
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS ema_60 Nullable(Float64);
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS ema_75 Nullable(Float64);
+
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS sma_30 Nullable(Float64);
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS sma_60 Nullable(Float64);
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS sma_75 Nullable(Float64);
+
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS wma_30 Nullable(Float64);
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS wma_60 Nullable(Float64);
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS wma_75 Nullable(Float64);
+
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS ema_hl_30 Nullable(Float64);
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS ema_hl_60 Nullable(Float64);
+
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS boll_mid_30 Nullable(Float64);
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS boll_up_30 Nullable(Float64);
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS boll_low_30 Nullable(Float64);
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS boll_width_30 Nullable(Float64);
+
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS boll_mid_60 Nullable(Float64);
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS boll_up_60 Nullable(Float64);
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS boll_low_60 Nullable(Float64);
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS boll_width_60 Nullable(Float64);
+
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS boll_mid_75 Nullable(Float64);
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS boll_up_75 Nullable(Float64);
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS boll_low_75 Nullable(Float64);
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS boll_width_75 Nullable(Float64);

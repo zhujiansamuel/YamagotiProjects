@@ -5,6 +5,7 @@ Cohort 加权聚合: 从 PG 读取 Cohort 配置, 对 iPhone 维度加权, 计�
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -26,6 +27,33 @@ class CohortConfig:
     # members: [{'iphone_id': 42, 'weight': 1.0}, ...]
     shop_weights: dict[int, float] = field(default_factory=dict)
     # shop_weights: {shop_id: weight, ...}, 空 dict 表示等权
+
+
+@dataclass
+class ShopWeightProfileConfig:
+    """一个 ShopWeightProfile 的配置。"""
+    slug: str
+    items: list[dict] = field(default_factory=list)
+    # items: [{'shop_id': 14, 'weight': 1.0}, ...]
+
+
+def load_shop_weight_profiles() -> list[ShopWeightProfileConfig]:
+    """从 PG 读取全部 ShopWeightProfile + ShopWeightItem。"""
+    from AppleStockChecker.models import ShopWeightProfile
+
+    profiles = []
+    for profile in ShopWeightProfile.objects.prefetch_related("items__shop").all():
+        items = [
+            {"shop_id": item.shop_id, "weight": item.weight}
+            for item in profile.items.all()
+        ]
+        profiles.append(ShopWeightProfileConfig(
+            slug=profile.slug,
+            items=items,
+        ))
+
+    logger.info("load_shop_weight_profiles: %d profiles loaded", len(profiles))
+    return profiles
 
 
 def load_cohort_configs() -> list[CohortConfig]:
@@ -128,10 +156,14 @@ def compute_cohort_features(
         # 组装行
         scope = f"cohort:{cfg.slug}"
         for b_i in range(n_buckets):
+            mean_val = cohort_mean[b_i].item()
+            # 成员 iPhone 在该桶均无数据时 mean 为 NaN，跳过
+            if math.isnan(mean_val):
+                continue
             row = {
                 "bucket": agg.bucket_index[b_i],
                 "scope": scope,
-                "mean": cohort_mean[b_i].item(),
+                "mean": mean_val,
                 "median": cohort_median[b_i].item(),
                 "std": cohort_std[b_i].item(),
                 "shop_count": int(cohort_shop_count[b_i].item()),

@@ -77,6 +77,13 @@ services:
       - .:/app
       - ypa_static:/app/staticfiles
       - ypa_media:/app/media
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     restart: unless-stopped
 
   # Celery Worker - 默认队列 (开发时可选)

@@ -23,6 +23,9 @@ COPY requirements.txt .
 RUN pip install --upgrade pip && \
     pip install -r requirements.txt
 
+# PyTorch with CUDA 12.6 (宿主机 Driver 590 / CUDA 13.1，向下兼容 cu126)
+RUN pip install torch --index-url https://download.pytorch.org/whl/cu126
+
 # 复制项目文件
 COPY . .
 

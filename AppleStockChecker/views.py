@@ -1848,18 +1848,83 @@ class FeatureSnapshotViewSet(_CHListViewSet):
 
 
 class FeaturePointsViewSet(FeatureSnapshotViewSet):
+    # 前端名 → CH 列名 映射
+    _FE_NAME_MAP = {
+        "wma30m": "wma_30", "wma60m": "wma_60", "wma75m": "wma_75",
+        "wma120m": "wma_120", "wma900m": "wma_900", "wma1800m": "wma_1800",
+        "ema30m": "ema_30", "ema60m": "ema_60", "ema75m": "ema_75",
+        "ema120m": "ema_120", "ema900m": "ema_900", "ema1800m": "ema_1800",
+        "ema_hl30m": "ema_hl_30", "ema_hl60m": "ema_hl_60",
+        "sma30m": "sma_30", "sma60m": "sma_60", "sma75m": "sma_75",
+        "sma120m": "sma_120", "sma900m": "sma_900", "sma1800m": "sma_1800",
+    }
+    _FE_NAME_MAP_REV = {v: k for k, v in _FE_NAME_MAP.items()}
+
+    # 排除元数据列 + 不需要的统计列 (仅保留 mean/std)
+    _POINTS_SKIP_COLS = frozenset({
+        "run_id", "bucket", "scope", "inserted_at",
+        "median", "shop_count", "dispersion",
+    })
+
+    def list(self, request):
+        try:
+            wide_rows, _ = self._query_ch_wide(request)
+            tall_rows = self._pivot_wide_to_tall(wide_rows, request)
+            return Response(tall_rows)  # 裸数组, 不走 _respond
+        except Exception as exc:
+            return self._handle_ch_error(exc)
+
     def _pivot_wide_to_tall(self, wide_rows, request):
-        rows = super()._pivot_wide_to_tall(wide_rows, request)
-        return [
-            {
-                "t": r["bucket"],
-                "v": r["value"],
-                "scope": r["scope"],
-                "name": r["name"],
-                "is_final": r["is_final"],
-            }
-            for r in rows
-        ]
+        params = request.query_params
+
+        # 合并 name 和 version 参数
+        name_filter = params.get("name")
+        version_filter = params.get("version")
+        name_in = params.get("name__in")
+
+        allowed_names = None
+        raw_names = set()
+        if name_filter:
+            raw_names.add(name_filter)
+        if version_filter:
+            raw_names.add(version_filter)
+        if name_in:
+            raw_names.update(n.strip() for n in name_in.split(","))
+
+        if raw_names:
+            # 将前端名映射为 CH 列名, 同时保留原名 (可能已是 CH 列名)
+            allowed_names = set()
+            for n in raw_names:
+                allowed_names.add(n)
+                if n in self._FE_NAME_MAP:
+                    allowed_names.add(self._FE_NAME_MAP[n])
+                if n in self._FE_NAME_MAP_REV:
+                    allowed_names.add(n)
+
+        tall = []
+        for row in wide_rows:
+            bucket = row.get("bucket")
+            scope = row.get("scope", "")
+            is_final = _derive_is_final(bucket)
+
+            for col, val in row.items():
+                if col in self._POINTS_SKIP_COLS:
+                    continue
+                if val is None:
+                    continue
+                # CH 列名 → 前端名
+                output_name = self._FE_NAME_MAP_REV.get(col, col)
+                if allowed_names and col not in allowed_names and output_name not in raw_names:
+                    continue
+
+                tall.append({
+                    "t": bucket,
+                    "v": float(val) if val is not None else None,
+                    "scope": scope,
+                    "name": output_name,
+                    "is_final": is_final,
+                })
+        return tall
 
 
 # ── PSTA CH-backed ViewSets (price_aligned) ──────────────────────────────

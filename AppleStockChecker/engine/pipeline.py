@@ -132,6 +132,7 @@ def run(
 
     # ── Step: aggregate ──────────────────────────────────────────────────
     agg = None
+    tensor = None
     if "aggregate" in effective_steps:
         t_step = time.time()
 
@@ -172,6 +173,24 @@ def run(
             }
             logger.info("  [features] done: %d feature cols → %d rows inserted",
                         len(iphone_features), inserted)
+
+            # per-shop features (scope = shop:{sid}|iphone:{iid})
+            if tensor is not None:
+                shop_df = _per_shop_features_df(tensor)
+                if not shop_df.empty:
+                    shop_ins = ch.insert_features(shop_df, run_id)
+                    stats["features_per_shop"] = {"rows_inserted": shop_ins}
+                    logger.info("  [features/per-shop] %d rows inserted", shop_ins)
+
+                # per-profile features (scope = shopcohort:{slug}|iphone:{iid})
+                from AppleStockChecker.engine.cohorts import load_shop_weight_profiles
+                profiles = load_shop_weight_profiles()
+                if profiles:
+                    profile_df = _per_profile_features_df(tensor, profiles)
+                    if not profile_df.empty:
+                        prof_ins = ch.insert_features(profile_df, run_id)
+                        stats["features_per_profile"] = {"rows_inserted": prof_ins}
+                        logger.info("  [features/per-profile] %d rows inserted", prof_ins)
 
         stats["features_seconds"] = round(time.time() - t_step, 2)
 
@@ -218,6 +237,7 @@ def _agg_to_features_df(
     features: dict[str, object],
 ) -> pd.DataFrame:
     """将 AggResult + feature tensors 组装为 features_wide 格式 DataFrame。"""
+    import math
     import torch
 
     n_iphones = len(agg.iphone_ids)
@@ -229,10 +249,14 @@ def _agg_to_features_df(
         scope = f"iphone:{iphone_id}"
 
         for b_idx in range(n_buckets):
+            mean_val = agg.mean[i_idx, b_idx].item()
+            # shop_count=0 的桶 mean 为 NaN，无有效数据，跳过
+            if math.isnan(mean_val):
+                continue
             row = {
                 "bucket": agg.bucket_index[b_idx],
                 "scope": scope,
-                "mean": agg.mean[i_idx, b_idx].item(),
+                "mean": mean_val,
                 "median": agg.median[i_idx, b_idx].item(),
                 "std": agg.std[i_idx, b_idx].item(),
                 "shop_count": int(agg.shop_count[i_idx, b_idx].item()),
@@ -242,4 +266,129 @@ def _agg_to_features_df(
                 row[fname] = ftensor[i_idx, b_idx].item()
             rows.append(row)
 
+    return pd.DataFrame(rows)
+
+
+def _per_shop_features_df(tensor) -> pd.DataFrame:
+    """为每个 (shop_id, iphone_id) 计算特征，scope = shop:{sid}|iphone:{iid}。
+
+    单店的 mean 就是价格本身 (shop_count=1, std=0)。
+    """
+    import math
+    import torch
+    from AppleStockChecker.engine.features import compute_all_features
+
+    n_iphones, n_shops, n_buckets = tensor.data.shape
+    rows = []
+
+    for s_idx in range(n_shops):
+        shop_id = int(tensor.shop_ids[s_idx])
+        # 取该店的 2D 切片: (n_iphones, n_buckets)
+        shop_slice = tensor.data[:, s_idx, :]
+
+        # 检查该店是否有任何有效数据
+        if torch.isnan(shop_slice).all():
+            continue
+
+        features = compute_all_features(shop_slice)
+
+        for i_idx in range(n_iphones):
+            iphone_id = int(tensor.iphone_ids[i_idx])
+            scope = f"shop:{shop_id}|iphone:{iphone_id}"
+
+            for b_idx in range(n_buckets):
+                price_val = shop_slice[i_idx, b_idx].item()
+                if math.isnan(price_val):
+                    continue
+                row = {
+                    "bucket": tensor.bucket_index[b_idx],
+                    "scope": scope,
+                    "mean": price_val,
+                    "median": price_val,
+                    "std": 0.0,
+                    "shop_count": 1,
+                    "dispersion": 0.0,
+                }
+                for fname, ftensor in features.items():
+                    row[fname] = ftensor[i_idx, b_idx].item()
+                rows.append(row)
+
+    logger.info("_per_shop_features_df: %d rows", len(rows))
+    return pd.DataFrame(rows)
+
+
+def _per_profile_features_df(tensor, profiles) -> pd.DataFrame:
+    """为每个 ShopWeightProfile × iphone_id 计算加权特征。
+
+    scope = shopcohort:{slug}|iphone:{iid}
+    """
+    import math
+    import torch
+    from AppleStockChecker.engine.features import compute_all_features
+
+    shop_id_to_idx = {int(v): i for i, v in enumerate(tensor.shop_ids)}
+    n_iphones = tensor.data.shape[0]
+    n_buckets = tensor.data.shape[2]
+    rows = []
+
+    for profile in profiles:
+        # 找到 profile 中在 tensor 里存在的 shop 及其权重
+        indices = []
+        weights = []
+        for item in profile.items:
+            s_idx = shop_id_to_idx.get(item["shop_id"])
+            if s_idx is not None:
+                indices.append(s_idx)
+                weights.append(item["weight"])
+
+        if not indices:
+            logger.warning("profile %s: no shops found in tensor, skipping", profile.slug)
+            continue
+
+        w = torch.tensor(weights, dtype=torch.float64, device=tensor.data.device)
+        w = w / w.sum()  # 归一化
+
+        # 对每个 iphone_id，按 shop 权重加权聚合
+        # tensor.data shape: (n_iphones, n_shops, n_buckets)
+        # 取 indices 对应的 shops: (n_iphones, len(indices), n_buckets)
+        shop_data = tensor.data[:, indices, :]
+
+        # 将 NaN 替换为 0 以便加权求和，同时跟踪有效性
+        valid_mask = ~torch.isnan(shop_data)  # (I, S_sub, B)
+        shop_data_clean = torch.where(valid_mask, shop_data, torch.zeros_like(shop_data))
+
+        # 加权有效掩码
+        w_expanded = w.unsqueeze(0).unsqueeze(2)  # (1, S_sub, 1)
+        valid_w = torch.where(valid_mask, w_expanded.expand_as(valid_mask), torch.zeros_like(shop_data))
+        w_sum = valid_w.sum(dim=1)  # (I, B)
+
+        # 加权平均
+        weighted_mean = (shop_data_clean * w_expanded.expand_as(shop_data_clean)).sum(dim=1)  # (I, B)
+        # 重新归一化 (只除以实际参与的权重之和)
+        weighted_mean = torch.where(w_sum > 0, weighted_mean / w_sum, torch.full_like(weighted_mean, float("nan")))
+
+        features = compute_all_features(weighted_mean)
+
+        for i_idx in range(n_iphones):
+            iphone_id = int(tensor.iphone_ids[i_idx])
+            scope = f"shopcohort:{profile.slug}|iphone:{iphone_id}"
+
+            for b_idx in range(n_buckets):
+                mean_val = weighted_mean[i_idx, b_idx].item()
+                if math.isnan(mean_val):
+                    continue
+                row = {
+                    "bucket": tensor.bucket_index[b_idx],
+                    "scope": scope,
+                    "mean": mean_val,
+                    "median": mean_val,
+                    "std": 0.0,
+                    "shop_count": int(valid_mask[i_idx, :, b_idx].sum().item()),
+                    "dispersion": 0.0,
+                }
+                for fname, ftensor in features.items():
+                    row[fname] = ftensor[i_idx, b_idx].item()
+                rows.append(row)
+
+    logger.info("_per_profile_features_df: %d rows", len(rows))
     return pd.DataFrame(rows)

@@ -11,6 +11,7 @@ from datetime import timedelta
 from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework.permissions import AllowAny
 
 from .dashboard_auth import SimpleTokenAuthentication
 from .models import DataIngestionLog
@@ -28,6 +29,7 @@ class ScraperEventDashboardView(APIView):
     shop5_1~5_4 are merged into "shop5", shop6_1~6_4 into "shop6", etc.
     """
     authentication_classes = [SimpleTokenAuthentication]
+    permission_classes = [AllowAny]
 
     def get(self, request):
         days = int(request.query_params.get('days', 2))
