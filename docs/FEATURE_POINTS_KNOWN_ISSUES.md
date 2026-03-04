@@ -54,21 +54,10 @@ for t in range(1, ...):
 
 ---
 
-## BUG 4（低）：per-profile 的 `std=0.0` 不精确
+## ~~BUG 4（低）：per-profile 的 `std=0.0` 不精确~~ — 已修复 (2026-03-04)
 
-**文件**: `AppleStockChecker/engine/pipeline.py` — `_per_profile_features_df()`
-
-**现象**:
-per-profile 的加权均值是多店数据的加权平均，实际存在跨店离散度。
-代码硬编码 `std: 0.0, dispersion: 0.0`。
-
-**影响**:
-前端请求 `name=std` + `scope=shopcohort:*` 时，会拿到全零值。
-mean±std 阴影带宽度为 0，让用户误以为没有波动。
-
-**建议修复方向**:
-1. 计算加权标准差：`std = sqrt(sum(w_i * (x_i - mean)^2) / sum(w_i))`
-2. 或在该 scope 下不写 std 列（让 CH 中为 NULL，API 层自动跳过）
+已改为计算加权标准差 `sqrt(sum(w_i * (x_i - mean)^2) / sum(w_i))`，
+dispersion 同步更新为 `std / mean`。
 
 ---
 

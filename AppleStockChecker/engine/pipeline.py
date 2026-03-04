@@ -367,6 +367,18 @@ def _per_profile_features_df(tensor, profiles) -> pd.DataFrame:
         # 重新归一化 (只除以实际参与的权重之和)
         weighted_mean = torch.where(w_sum > 0, weighted_mean / w_sum, torch.full_like(weighted_mean, float("nan")))
 
+        # 加权标准差: sqrt(sum(w_i * (x_i - mean)^2) / sum(w_i))
+        diff_sq = (shop_data_clean - weighted_mean.unsqueeze(1)) ** 2  # (I, S_sub, B)
+        weighted_var = torch.where(
+            valid_mask, diff_sq * w_expanded.expand_as(diff_sq), torch.zeros_like(diff_sq),
+        ).sum(dim=1)  # (I, B)
+        weighted_std = torch.where(
+            w_sum > 0, torch.sqrt(weighted_var / w_sum), torch.zeros_like(w_sum),
+        )  # (I, B)
+        weighted_disp = torch.where(
+            weighted_mean != 0, weighted_std / weighted_mean, torch.zeros_like(weighted_std),
+        )  # (I, B)
+
         features = compute_all_features(weighted_mean)
 
         for i_idx in range(n_iphones):
@@ -382,9 +394,9 @@ def _per_profile_features_df(tensor, profiles) -> pd.DataFrame:
                     "scope": scope,
                     "mean": mean_val,
                     "median": mean_val,
-                    "std": 0.0,
+                    "std": weighted_std[i_idx, b_idx].item(),
                     "shop_count": int(valid_mask[i_idx, :, b_idx].sum().item()),
-                    "dispersion": 0.0,
+                    "dispersion": weighted_disp[i_idx, b_idx].item(),
                 }
                 for fname, ftensor in features.items():
                     row[fname] = ftensor[i_idx, b_idx].item()
