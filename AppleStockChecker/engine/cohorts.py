@@ -13,7 +13,7 @@ import pandas as pd
 import torch
 
 from .aggregate import AggResult
-from .features import compute_all_features
+from .features import compute_all_features, compute_all_features_skipnan
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +91,7 @@ def compute_cohort_features(
     configs: list[CohortConfig],
     *,
     device: str = "cpu",
+    skipnan: bool = False,
 ) -> pd.DataFrame:
     """对每个 Cohort 做加权聚合, 返回 features_wide 格式的 DataFrame。
 
@@ -148,7 +149,8 @@ def compute_cohort_features(
 
         # 在 cohort_mean 上重新计算特征
         cohort_mean_2d = cohort_mean.unsqueeze(0)  # (1, n_buckets) for feature funcs
-        cohort_features = compute_all_features(cohort_mean_2d)
+        feat_fn = compute_all_features_skipnan if skipnan else compute_all_features
+        cohort_features = feat_fn(cohort_mean_2d)
 
         # 组装行
         scope = f"cohort:{cfg.slug}"

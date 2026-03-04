@@ -49,6 +49,12 @@ class Command(BaseCommand):
             "--shop-ids",
             help="限定 Shop ID, 逗号分隔",
         )
+        parser.add_argument(
+            "--nan-mode",
+            choices=["ffill", "skipnan"],
+            default="ffill",
+            help="NaN 处理模式: ffill=前向填充(默认), skipnan=跳过NaN(实验)",
+        )
 
     def handle(self, *args, **options):
         from AppleStockChecker.engine.pipeline import run
@@ -74,9 +80,12 @@ class Command(BaseCommand):
         if options["shop_ids"]:
             shop_ids = [int(x) for x in options["shop_ids"].split(",")]
 
+        nan_mode = options["nan_mode"]
+
         self.stdout.write(self.style.NOTICE(
             f"Pipeline START  run_id={options['run_id']}  "
-            f"range={date_from}→{date_to}  device={options['device']}"
+            f"range={date_from}→{date_to}  device={options['device']}  "
+            f"nan_mode={nan_mode}"
         ))
 
         stats = run(
@@ -88,6 +97,7 @@ class Command(BaseCommand):
             batch_days=options["batch_days"],
             iphone_ids=iphone_ids,
             shop_ids=shop_ids,
+            nan_mode=nan_mode,
         )
 
         self.stdout.write(self.style.SUCCESS(

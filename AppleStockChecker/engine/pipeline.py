@@ -26,6 +26,7 @@ def run(
     batch_days: int = 30,
     iphone_ids: list[int] | None = None,
     shop_ids: list[int] | None = None,
+    nan_mode: str = "ffill",
 ) -> dict:
     """执行 pipeline。
 
@@ -51,11 +52,12 @@ def run(
     from AppleStockChecker.engine.reader import read_price_records
     from AppleStockChecker.engine.align import align_to_buckets
     from AppleStockChecker.engine.aggregate import build_price_tensor, aggregate_cross_shop
-    from AppleStockChecker.engine.features import compute_all_features
+    from AppleStockChecker.engine.features import compute_all_features, compute_all_features_skipnan
     from AppleStockChecker.engine.cohorts import load_cohort_configs, compute_cohort_features
     from AppleStockChecker.services.clickhouse_service import ClickHouseService
 
     effective_steps = steps or ALL_STEPS
+    skipnan = nan_mode == "skipnan"
     config = BucketConfig()
     ch = ClickHouseService()
 
@@ -161,7 +163,8 @@ def run(
         if agg is None:
             logger.warning("  [features] no agg data, skipping")
         else:
-            iphone_features = compute_all_features(agg.mean)
+            feat_fn = compute_all_features_skipnan if skipnan else compute_all_features
+            iphone_features = feat_fn(agg.mean)
 
             # 写入 CH: 组装 iphone 级 features_wide DataFrame
             iphone_df = _agg_to_features_df(agg, iphone_features)
@@ -176,7 +179,7 @@ def run(
 
             # per-shop features (scope = shop:{sid}|iphone:{iid})
             if tensor is not None:
-                shop_df = _per_shop_features_df(tensor)
+                shop_df = _per_shop_features_df(tensor, skipnan=skipnan)
                 if not shop_df.empty:
                     shop_ins = ch.insert_features(shop_df, run_id)
                     stats["features_per_shop"] = {"rows_inserted": shop_ins}
@@ -186,7 +189,7 @@ def run(
                 from AppleStockChecker.engine.cohorts import load_shop_weight_profiles
                 profiles = load_shop_weight_profiles()
                 if profiles:
-                    profile_df = _per_profile_features_df(tensor, profiles)
+                    profile_df = _per_profile_features_df(tensor, profiles, skipnan=skipnan)
                     if not profile_df.empty:
                         prof_ins = ch.insert_features(profile_df, run_id)
                         stats["features_per_profile"] = {"rows_inserted": prof_ins}
@@ -204,7 +207,7 @@ def run(
             configs = load_cohort_configs()
             if configs:
                 cohort_df = compute_cohort_features(
-                    agg, configs, device=device,
+                    agg, configs, device=device, skipnan=skipnan,
                 )
                 if not cohort_df.empty:
                     inserted = ch.insert_features(cohort_df, run_id)
@@ -269,14 +272,14 @@ def _agg_to_features_df(
     return pd.DataFrame(rows)
 
 
-def _per_shop_features_df(tensor) -> pd.DataFrame:
+def _per_shop_features_df(tensor, *, skipnan: bool = False) -> pd.DataFrame:
     """为每个 (shop_id, iphone_id) 计算特征，scope = shop:{sid}|iphone:{iid}。
 
     单店的 mean 就是价格本身 (shop_count=1, std=0)。
     """
     import math
     import torch
-    from AppleStockChecker.engine.features import compute_all_features
+    from AppleStockChecker.engine.features import compute_all_features, compute_all_features_skipnan
 
     n_iphones, n_shops, n_buckets = tensor.data.shape
     rows = []
@@ -290,7 +293,8 @@ def _per_shop_features_df(tensor) -> pd.DataFrame:
         if torch.isnan(shop_slice).all():
             continue
 
-        features = compute_all_features(shop_slice)
+        feat_fn = compute_all_features_skipnan if skipnan else compute_all_features
+        features = feat_fn(shop_slice)
 
         for i_idx in range(n_iphones):
             iphone_id = int(tensor.iphone_ids[i_idx])
@@ -317,14 +321,14 @@ def _per_shop_features_df(tensor) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _per_profile_features_df(tensor, profiles) -> pd.DataFrame:
+def _per_profile_features_df(tensor, profiles, *, skipnan: bool = False) -> pd.DataFrame:
     """为每个 ShopWeightProfile × iphone_id 计算加权特征。
 
     scope = shopcohort:{slug}|iphone:{iid}
     """
     import math
     import torch
-    from AppleStockChecker.engine.features import compute_all_features
+    from AppleStockChecker.engine.features import compute_all_features, compute_all_features_skipnan
 
     shop_id_to_idx = {int(v): i for i, v in enumerate(tensor.shop_ids)}
     n_iphones = tensor.data.shape[0]
@@ -379,7 +383,8 @@ def _per_profile_features_df(tensor, profiles) -> pd.DataFrame:
             weighted_mean != 0, weighted_std / weighted_mean, torch.zeros_like(weighted_std),
         )  # (I, B)
 
-        features = compute_all_features(weighted_mean)
+        feat_fn = compute_all_features_skipnan if skipnan else compute_all_features
+        features = feat_fn(weighted_mean)
 
         for i_idx in range(n_iphones):
             iphone_id = int(tensor.iphone_ids[i_idx])

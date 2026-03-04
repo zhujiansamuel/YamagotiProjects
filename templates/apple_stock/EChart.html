@@ -348,6 +348,14 @@
             </div>
         </div>
 
+        <div style="margin-top:10px">
+            <label>特徴モード</label>
+            <select id="feature-nan-mode">
+                <option value="live" selected>Forward-Fill（デフォルト）</option>
+                <option value="live_sn">Skip-NaN（実験）</option>
+            </select>
+        </div>
+
         <div class="btns" style="margin:10px 0 8px">
             <button id="load" type="button">読み込み・描画</button>
             <button id="reset" class="secondary" type="button">表示をリセット</button>
@@ -2254,6 +2262,9 @@ function adjustGridTopForLegend(inst) {
     // 取单指标
     async function fetchFeaturePointsSimple(scope, name, startUtc, endUtc) {
         const u = new URL(FEATURE_SERIES_API.replace(/\/+$/, ''), location.origin);
+        const nanMode = document.getElementById('feature-nan-mode')?.value || 'live';
+        u.searchParams.set('run_id', nanMode);
+        u.searchParams.set('limit', '0');
         u.searchParams.set('scope', scope);
         applyFeatureMetricParam(u, name);  // mean/std → name=，其余 → version=
         if (startUtc) u.searchParams.set('bucket__gte', startUtc);
@@ -2265,6 +2276,35 @@ function adjustGridTopForLegend(inst) {
         if (!r.ok) throw new Error(`features/points ${r.status}`);
         const arr = await r.json();
         return Array.isArray(arr) ? arr : [];
+    }
+
+    // 批量取多指标 (1 次请求, name__in=a,b,c)
+    async function fetchFeaturePointsBatch(scope, names, startUtc, endUtc) {
+        const u = new URL(FEATURE_SERIES_API.replace(/\/+$/, ''), location.origin);
+        const nanMode = document.getElementById('feature-nan-mode')?.value || 'live';
+        u.searchParams.set('run_id', nanMode);
+        u.searchParams.set('limit', '0');
+        u.searchParams.set('scope', scope);
+        u.searchParams.set('name__in', (names || []).join(','));
+        if (startUtc) u.searchParams.set('bucket__gte', startUtc);
+        if (endUtc) u.searchParams.set('bucket__lte', endUtc);
+        const headers = {'Accept': 'application/json'};
+        const token = localStorage.getItem('iphone:token');
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        const r = await fetch(u.toString(), {headers});
+        if (!r.ok) throw new Error(`features/points ${r.status}`);
+        const arr = await r.json();
+        // 按 name 分组, 返回与原 Promise.all 相同的 [{name, rows}] 格式
+        const grouped = new Map();
+        for (const row of (Array.isArray(arr) ? arr : [])) {
+            const n = String(row.name || '').toLowerCase();
+            if (!grouped.has(n)) grouped.set(n, []);
+            grouped.get(n).push(row);
+        }
+        return (names || []).map(n => ({
+            name: String(n).toLowerCase(),
+            rows: grouped.get(String(n).toLowerCase()) || []
+        }));
     }
 
     // 分图用（B/C/D/E）
@@ -2730,6 +2770,9 @@ function adjustGridTopForLegend(inst) {
 
     async function fetchFeatureSeries({scope, name, startIso, endIso}) {
         const u = new URL(FEATURE_SERIES_API, location.origin);
+        const nanMode = document.getElementById('feature-nan-mode')?.value || 'live';
+        u.searchParams.set('run_id', nanMode);
+        u.searchParams.set('limit', '0');
         u.searchParams.set('scope', scope);
         applyFeatureMetricParam(u, name);  // mean/std 走 name=，其它走 version=
         u.searchParams.set('bucket__gte', toUtcZ(startIso));
@@ -2746,6 +2789,34 @@ function adjustGridTopForLegend(inst) {
             .sort((a, b) => a[0] - b[0]);
     }
 
+    // 批量取多指标 (同一 scope, 1 次请求), 返回 Map<name, [[ts,v],...]>
+    async function fetchFeatureSeriesBatch({scope, names, startIso, endIso}) {
+        const u = new URL(FEATURE_SERIES_API, location.origin);
+        const nanMode = document.getElementById('feature-nan-mode')?.value || 'live';
+        u.searchParams.set('run_id', nanMode);
+        u.searchParams.set('limit', '0');
+        u.searchParams.set('scope', scope);
+        u.searchParams.set('name__in', (names || []).join(','));
+        u.searchParams.set('bucket__gte', toUtcZ(startIso));
+        u.searchParams.set('bucket__lte', toUtcZ(endIso));
+        const headers = {"Accept": "application/json"};
+        const token = localStorage.getItem('iphone:token');
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+        const resp = await fetch(u.toString(), {headers});
+        if (!resp.ok) throw new Error(`Feature HTTP ${resp.status}`);
+        const arr = await resp.json();
+        const grouped = new Map();
+        for (const r of (Array.isArray(arr) ? arr : [])) {
+            const n = String(r.name || '').toLowerCase();
+            const ts = new Date(r.t).valueOf();
+            const v = Number(r.v);
+            if (!Number.isFinite(ts) || !Number.isFinite(v)) continue;
+            if (!grouped.has(n)) grouped.set(n, []);
+            grouped.get(n).push([ts, v]);
+        }
+        for (const data of grouped.values()) data.sort((a, b) => a[0] - b[0]);
+        return grouped;
+    }
 
     // 计算均值±标准差带：返回 {lower: [...], range: [...]}，用于 stack 填充
     function buildMeanStdBand(meanData, stdData) {
@@ -2817,13 +2888,14 @@ function adjustGridTopForLegend(inst) {
         inst.setOption(baseOptionForFeature(), true);
         ensureDailyTicksOn(inst);
 
-        // 拉取所需指标
-        const all = await Promise.all(
-            (names || []).map(n =>
-                fetchFeaturePointsSimple(scope, n, startUtc, endUtc)
-                    .then(rows => ({name: String(n).toLowerCase(), rows}))
-            )
-        );
+        // loading 指示
+        inst.showLoading('default', {text: '特徴データ読み込み中…', maskColor: 'rgba(255,255,255,0.7)'});
+        let all;
+        try {
+            all = await fetchFeaturePointsBatch(scope, names, startUtc, endUtc);
+        } finally {
+            inst.hideLoading();
+        }
 
         // 工具：行 -> [t(ms), v] 且排序
         function toPairs(rows) {
@@ -2984,27 +3056,41 @@ function adjustGridTopForLegend(inst) {
             const inst = ensureFeatureChartForPart(part);
             inst.setOption(baseOptionForFeature(), true);
 
-            // 若只有 mean，则自动补一条 std
-            const hasStd = sis.some(x => String(x.name).toLowerCase() === 'std');
-            const finalSis = hasStd ? sis : ([
-                ...sis,
-                ...sis.filter(x => String(x.name).toLowerCase() === 'mean')
-                    .map(x => ({...x, name: 'std', legend: (x.legend || '').replace(/mean/i, 'std')}))
-            ]);
+            // loading 指示
+            inst.showLoading('default', {text: '特徴データ読み込み中…', maskColor: 'rgba(255,255,255,0.7)'});
 
-            const results = await Promise.all(
-                finalSis.map((si, i) => (async () => {
-                        const data = await fetchFeatureSeries({scope: si.scope, name: si.name, startIso, endIso});
-                        return {
-                            legend: si.legend || si.name,      // 如 "iPhone 15 Pro 256GB 白 · mean"
-                            metric: si.name,                   // 'mean' / 'std'
-                            scope: si.scope,
-                            color: LINE_PALETTE[i % LINE_PALETTE.length],
-                            data
-                        };
-                    })
-                )
-            );
+            let results;
+            try {
+                // 若只有 mean，则自动补一条 std
+                const hasStd = sis.some(x => String(x.name).toLowerCase() === 'std');
+                const finalSis = hasStd ? sis : ([
+                    ...sis,
+                    ...sis.filter(x => String(x.name).toLowerCase() === 'mean')
+                        .map(x => ({...x, name: 'std', legend: (x.legend || '').replace(/mean/i, 'std')}))
+                ]);
+
+                // 按 scope 分组, 每组 1 次请求批量获取
+                const scopeGroups = new Map();
+                finalSis.forEach((si, i) => {
+                    if (!scopeGroups.has(si.scope)) scopeGroups.set(si.scope, []);
+                    scopeGroups.get(si.scope).push({...si, _idx: i});
+                });
+                const batchResults = await Promise.all(
+                    Array.from(scopeGroups.entries()).map(([scope, group]) =>
+                        fetchFeatureSeriesBatch({scope, names: group.map(s => s.name), startIso, endIso})
+                            .then(dataMap => group.map(si => ({
+                                legend: si.legend || si.name,
+                                metric: si.name,
+                                scope: si.scope,
+                                color: LINE_PALETTE[si._idx % LINE_PALETTE.length],
+                                data: dataMap.get(String(si.name).toLowerCase()) || []
+                            })))
+                    )
+                );
+                results = batchResults.flat();
+            } finally {
+                inst.hideLoading();
+            }
 
             const groups = new Map(); // legendBase -> {mean:[], std:[], color}
             for (const r of results) {

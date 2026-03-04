@@ -66,6 +66,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from AppleStockChecker.utils.external_ingest.registry import get_cleaner
 from AppleStockChecker.utils.webscraper_tasks.shop_queue_mapping import get_shop_queue, normalize_source_name
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.gzip import gzip_page
 from django.conf import settings
 from dotenv import load_dotenv
 
@@ -1581,7 +1582,7 @@ class _CHListViewSet(viewsets.ViewSet):
         return request.query_params.get("run_id", "live")
 
     def _get_limit_offset(self, request):
-        limit = min(int(request.query_params.get("limit", 200)), 10000)
+        limit = int(request.query_params.get("limit", 200))
         offset = int(request.query_params.get("offset", 0))
         return limit, offset
 
@@ -1774,13 +1775,28 @@ _STATS_COLS = frozenset({
 })
 
 
+@method_decorator(gzip_page, name="list")
 class FeatureSnapshotViewSet(_CHListViewSet):
     """CH features_wide → 逐行 pivot 为 (bucket, scope, name, value) 格式。"""
 
+    def _resolve_requested_columns(self, request):
+        """从 request 参数解析需要的 CH 列名, 返回 list 或 None (全部)。"""
+        name_filter = request.query_params.get("name")
+        name_in = request.query_params.get("name__in")
+        if not name_filter and not name_in:
+            return None  # 未指定 → 全部列
+        names = set()
+        if name_filter:
+            names.add(name_filter)
+        if name_in:
+            names.update(n.strip() for n in name_in.split(","))
+        return list(names)
+
     def list(self, request):
         try:
-            wide_rows, _ = self._query_ch_wide(request)
-            tall_rows = self._pivot_wide_to_tall(wide_rows, request)
+            columns = self._resolve_requested_columns(request)
+            wide_rows, _ = self._query_ch_wide(request, columns=columns)
+            tall_rows = self._pivot_wide_to_tall(wide_rows, columns)
 
             # 分页 (对 tall rows)
             limit, offset = self._get_limit_offset(request)
@@ -1791,18 +1807,25 @@ class FeatureSnapshotViewSet(_CHListViewSet):
         except Exception as exc:
             return self._handle_ch_error(exc)
 
-    def _query_ch_wide(self, request):
+    def _query_ch_wide(self, request, *, columns=None):
         ch = self._ch_service()
         params = request.query_params
 
+        bucket_gte = self._parse_dt(params.get("bucket__gte"))
+        bucket_lte = self._parse_dt(params.get("bucket__lte"))
+        # 有时间范围时不限行数; 否则回退安全上限
+        limit = 0 if (bucket_gte or bucket_lte) else 50000
         kwargs = {
             "run_id": self._get_run_id(request),
-            "bucket_gte": self._parse_dt(params.get("bucket__gte")),
-            "bucket_lte": self._parse_dt(params.get("bucket__lte")),
+            "bucket_gte": bucket_gte,
+            "bucket_lte": bucket_lte,
             "ordering": params.get("ordering", "bucket"),
-            "limit": 10000,
+            "limit": limit,
             "offset": 0,
+            "need_total": False,
         }
+        if columns:
+            kwargs["columns"] = columns
 
         scope = params.get("scope")
         scope_in = params.get("scope__in")
@@ -1813,40 +1836,32 @@ class FeatureSnapshotViewSet(_CHListViewSet):
 
         return ch.query_features(**kwargs)
 
-    def _pivot_wide_to_tall(self, wide_rows, request):
-        name_filter = request.query_params.get("name")
-        name_in = request.query_params.get("name__in")
-        allowed_names = None
-        if name_filter:
-            allowed_names = {name_filter}
-        elif name_in:
-            allowed_names = {n.strip() for n in name_in.split(",")}
-
+    def _pivot_wide_to_tall(self, wide_rows, columns):
         tall = []
         for row in wide_rows:
             bucket = row.get("bucket")
             scope = row.get("scope", "")
             is_final = _derive_is_final(bucket)
 
-            for col, val in row.items():
-                if col in _STATS_COLS:
-                    continue
+            cols_to_scan = columns if columns else [
+                c for c in row if c not in _STATS_COLS
+            ]
+            for col in cols_to_scan:
+                val = row.get(col)
                 if val is None:
                     continue
-                if allowed_names and col not in allowed_names:
-                    continue
-
                 tall.append({
                     "bucket": bucket,
                     "scope": scope,
                     "name": col,
-                    "value": float(val) if val is not None else None,
+                    "value": float(val),
                     "version": "v1",
                     "is_final": is_final,
                 })
         return tall
 
 
+@method_decorator(gzip_page, name="list")
 class FeaturePointsViewSet(FeatureSnapshotViewSet):
     # 前端名 → CH 列名 映射
     _FE_NAME_MAP = {
@@ -1860,29 +1875,13 @@ class FeaturePointsViewSet(FeatureSnapshotViewSet):
     }
     _FE_NAME_MAP_REV = {v: k for k, v in _FE_NAME_MAP.items()}
 
-    # 排除元数据列 + 不需要的统计列 (仅保留 mean/std)
-    _POINTS_SKIP_COLS = frozenset({
-        "run_id", "bucket", "scope", "inserted_at",
-        "median", "shop_count", "dispersion",
-    })
-
-    def list(self, request):
-        try:
-            wide_rows, _ = self._query_ch_wide(request)
-            tall_rows = self._pivot_wide_to_tall(wide_rows, request)
-            return Response(tall_rows)  # 裸数组, 不走 _respond
-        except Exception as exc:
-            return self._handle_ch_error(exc)
-
-    def _pivot_wide_to_tall(self, wide_rows, request):
+    def _resolve_requested_columns(self, request):
+        """从 name/version/name__in 解析 CH 列名 + 记录前端名映射。"""
         params = request.query_params
-
-        # 合并 name 和 version 参数
         name_filter = params.get("name")
         version_filter = params.get("version")
         name_in = params.get("name__in")
 
-        allowed_names = None
         raw_names = set()
         if name_filter:
             raw_names.add(name_filter)
@@ -1891,15 +1890,28 @@ class FeaturePointsViewSet(FeatureSnapshotViewSet):
         if name_in:
             raw_names.update(n.strip() for n in name_in.split(","))
 
-        if raw_names:
-            # 将前端名映射为 CH 列名, 同时保留原名 (可能已是 CH 列名)
-            allowed_names = set()
-            for n in raw_names:
-                allowed_names.add(n)
-                if n in self._FE_NAME_MAP:
-                    allowed_names.add(self._FE_NAME_MAP[n])
-                if n in self._FE_NAME_MAP_REV:
-                    allowed_names.add(n)
+        if not raw_names:
+            return None  # 全部列
+
+        # 解析 CH 列名: 前端名 → CH 列名, 或原名直接用
+        ch_cols = set()
+        for n in raw_names:
+            ch_cols.add(self._FE_NAME_MAP.get(n, n))
+        return list(ch_cols)
+
+    def list(self, request):
+        try:
+            columns = self._resolve_requested_columns(request)
+            wide_rows, _ = self._query_ch_wide(request, columns=columns)
+            tall_rows = self._pivot_wide_to_tall(wide_rows, columns)
+            return Response(tall_rows)  # 裸数组, 不走 _respond
+        except Exception as exc:
+            return self._handle_ch_error(exc)
+
+    def _pivot_wide_to_tall(self, wide_rows, columns):
+        # 不需要 pivot 的元数据列 + 非特征统计列
+        skip = {"run_id", "bucket", "scope", "inserted_at",
+                "median", "shop_count", "dispersion"}
 
         tall = []
         for row in wide_rows:
@@ -1907,21 +1919,18 @@ class FeaturePointsViewSet(FeatureSnapshotViewSet):
             scope = row.get("scope", "")
             is_final = _derive_is_final(bucket)
 
-            for col, val in row.items():
-                if col in self._POINTS_SKIP_COLS:
-                    continue
+            cols_to_scan = columns if columns else [
+                c for c in row if c not in skip
+            ]
+            for col in cols_to_scan:
+                val = row.get(col)
                 if val is None:
                     continue
-                # CH 列名 → 前端名
-                output_name = self._FE_NAME_MAP_REV.get(col, col)
-                if allowed_names and col not in allowed_names and output_name not in raw_names:
-                    continue
-
                 tall.append({
                     "t": bucket,
-                    "v": float(val) if val is not None else None,
+                    "v": float(val),
                     "scope": scope,
-                    "name": output_name,
+                    "name": self._FE_NAME_MAP_REV.get(col, col),
                     "is_final": is_final,
                 })
         return tall
