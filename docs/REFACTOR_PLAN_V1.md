@@ -1,7 +1,7 @@
 # GPU + ClickHouse 重构方案 V1
 
-> 状态: 设计基本确定，准备实施
-> 最后更新: 2026-02-13
+> 状态: Phase 2/3 已实施，持续迭代中
+> 最后更新: 2026-03-04
 > 范围: 时间对齐 / 聚合 / 特征计算 pipeline 的全面重构
 > 不包含: 数据摄入层(WebScraper/cleaners)、AutoML 因果分析
 
@@ -177,17 +177,20 @@ ORDER BY (run_id, scope, bucket)
 
 ### 5.3 run_id 工作流
 
-- `live` — 线上正式版本
+- `live` — 线上正式版本（Forward-Fill NaN 处理）
+- `live_sn` — Skip-NaN 实验版本
 - `backfill_YYYYMMDD_vN` — 回写试验版本
 
 ```bash
-# 回写试验
+# 回写试验 (默认 ffill 模式)
 python manage.py run_pipeline --run-id backfill_v3 --from 2025-01-01 --to 2025-12-31
+
+# 双模式运行: 生成两套隔离数据
+python manage.py run_pipeline --run-id live --from 2025-01-01 --to 2025-12-31
+python manage.py run_pipeline --run-id live_sn --from 2025-01-01 --to 2025-12-31 --nan-mode skipnan
 
 # 不满意 → 毫秒级删除
 python manage.py drop_run --run-id backfill_v3 --confirm
-# 内部执行: ALTER TABLE price_aligned DROP PARTITION ...
-#           ALTER TABLE features_wide DROP PARTITION ...
 
 # 满意 → 提升为 live
 python manage.py promote_run --from backfill_v3 --to live
@@ -289,6 +292,40 @@ def compute_bollinger_batch(series, window, k=2.0):
     return BollingerResult(mid=mid, upper=mid + k*std, lower=mid - k*std, width=2*k*std)
 ```
 
+### 6.4 双模式 NaN 处理（已实施）
+
+单店稀疏数据导致 EMA/SMA/WMA 大量 NaN 传播。提供两种处理方案：
+
+**方案一: Forward-Fill（默认, `nan_mode="ffill"`）**
+
+```python
+def _forward_fill_1d(series: Tensor) -> Tensor:
+    """沿 dim=1 forward-fill NaN。前导 NaN 保留，中间/尾部用最近有效值填充。"""
+
+def compute_all_features(agg_mean, windows):
+    filled = _forward_fill_1d(agg_mean)  # 先 ffill 再计算
+    # EMA/SMA/WMA/Bollinger 在 filled 上计算 → 连续曲线
+```
+
+**方案二: Skip-NaN（实验, `nan_mode="skipnan"`）**
+
+```python
+def compute_ema_batch_skipnan(series, window):
+    """NaN 桶输出 NaN（断链），有效值恢复时重新初始化 EMA"""
+
+def compute_all_features_skipnan(agg_mean, windows):
+    # EMA → skipnan 版（断链）; SMA/WMA/Bollinger → 直接复用（窗口含 NaN → 输出 NaN）
+```
+
+两套数据用不同 `run_id` 隔离存储（`live` vs `live_sn`），前端通过 toggle 切换。
+
+| 函数 | 文件 | 说明 |
+|------|------|------|
+| `_forward_fill_1d(series)` | features.py | 沿时间轴 ffill NaN, shape (I,B) → (I,B) |
+| `compute_ema_batch_skipnan(series, window)` | features.py | 首个有效值初始化，NaN 桶输出 NaN |
+| `compute_ema_halflife_batch_skipnan(series, hl)` | features.py | 同上，半衰期版 |
+| `compute_all_features_skipnan(agg_mean, windows)` | features.py | skip-nan 版全特征 |
+
 ---
 
 ## 7. Management Commands
@@ -303,6 +340,13 @@ python manage.py run_pipeline \
     --device cuda:0 \
     --batch-days 30
 
+# Skip-NaN 模式
+python manage.py run_pipeline \
+    --run-id live_sn \
+    --from 2025-01-01 \
+    --to 2025-12-31 \
+    --nan-mode skipnan
+
 # 只算某些 iPhone
 python manage.py run_pipeline \
     --run-id test_iphone42 \
@@ -314,6 +358,17 @@ python manage.py run_pipeline \
     --run-id backfill_v3 \
     --steps features,cohorts
 ```
+
+| 参数 | 说明 |
+|------|------|
+| `--run-id` | (必填) CH 写入标识 |
+| `--from` / `--to` | (必填) 日期范围 YYYY-MM-DD |
+| `--device` | PyTorch 设备 (默认 settings.PIPELINE_DEVICE) |
+| `--batch-days` | PG 分段读取天数 (默认 30) |
+| `--steps` | 逗号分隔: align,aggregate,features,cohorts |
+| `--nan-mode` | `ffill`(默认) 或 `skipnan`(实验) |
+| `--iphone-ids` | 限定 iPhone ID |
+| `--shop-ids` | 限定 Shop ID |
 
 ### 7.2 `drop_run`
 
@@ -368,7 +423,7 @@ clickhouse:
 ```
 # 新增
 torch                    # GPU 计算引擎
-clickhouse-driver        # ClickHouse Native TCP 连接
+clickhouse-driver[lz4]   # ClickHouse Native TCP 连接 + LZ4 压缩
 
 # 保留
 numpy
@@ -432,11 +487,16 @@ class ClickHouseService:
             host=settings.CLICKHOUSE_HOST,
             port=settings.CLICKHOUSE_PORT,
             database=settings.CLICKHOUSE_DB,
+            compression='lz4',  # CH↔Python 间 LZ4 压缩传输
         )
 
     # ── 读 ──
     def query_price_aligned(self, run_id='live', filters=None, order='-bucket', limit=100): ...
-    def query_features(self, run_id='live', scope=None, bucket_gte=None, bucket_lte=None): ...
+    def query_features(self, run_id='live', scope=None, bucket_gte=None, bucket_lte=None,
+                       columns=None, need_total=True): ...
+        # columns: 只 SELECT 指定列 (None=全部)
+        # need_total: False 时跳过 COUNT 查询
+        # limit=0 时不加 LIMIT 子句
 
     # ── 写 ──
     def insert_price_aligned(self, data, run_id): ...
@@ -447,6 +507,44 @@ class ClickHouseService:
     def promote_run(self, from_run, to_run): ...
     def list_runs(self): ...
 ```
+
+### 11.5 查询性能优化（已实施）
+
+**列投影**: `_query_ch_wide` 根据前端请求的 `name`/`version`/`name__in` 参数解析出需要的 CH 列名，
+传给 `query_features(columns=[...])` 只 SELECT 需要的列（原先 `SELECT *` 拉全部 30+ 列）。
+
+**跳过 COUNT**: 不需要分页信息的端点传 `need_total=False`，避免多余的 `SELECT count()` 查询。
+
+**安全上限**: 有时间范围过滤时 `limit=0`（不限），无时间范围时回退 `limit=50000` 防止内存溢出。
+
+**压缩**:
+- CH → Django: `clickhouse-driver` 连接参数 `compression='lz4'`
+- Django → 浏览器: `@gzip_page` 装饰器 (`FeatureSnapshotViewSet`, `FeaturePointsViewSet`)
+
+### 11.6 前端批量获取（已实施）
+
+前端原先对每个指标发独立 HTTP 请求（如 9 个指标 → 9 次请求），改为批量获取：
+
+```
+改前: Promise.all × 9 个 fetchFeaturePointsSimple → 9 × HTTP RTT + 9 × CH 查询
+改后: 1 个 fetchFeaturePointsBatch(name__in=a,b,c,...) → 1 × HTTP RTT + 1 × CH 查询
+```
+
+| 函数 | 说明 |
+|------|------|
+| `fetchFeaturePointsBatch(scope, names, ...)` | 1 次请求多指标，按 name 分组返回 `[{name, rows}]` |
+| `fetchFeatureSeriesBatch({scope, names, ...})` | 同上，按 scope 分组，返回 `Map<name, [[ts,v],...]>` |
+
+前端特征图表在 fetch 期间显示 ECharts 内置 loading 指示器（`showLoading` / `hideLoading`）。
+
+### 11.7 前端 NaN 模式切换（已实施）
+
+在「店舗」区域下方增加「特徴モード」下拉框：
+- `live` — Forward-Fill（デフォルト）
+- `live_sn` — Skip-NaN（実験）
+
+所有 feature fetch 函数自动读取该 select 的值，设置 `run_id` 参数。
+后端 `_get_run_id(request)` 已支持从 query params 读取 `run_id`，无需改动。
 
 ---
 
@@ -615,6 +713,7 @@ CLICKHOUSE_PORT     = int(os.getenv('CLICKHOUSE_PORT', 9000))
 CLICKHOUSE_DB       = os.getenv('CLICKHOUSE_DB', 'yamagoti')
 CLICKHOUSE_USER     = os.getenv('CLICKHOUSE_USER', 'default')
 CLICKHOUSE_PASSWORD = os.getenv('CLICKHOUSE_PASSWORD', '')
+CLICKHOUSE_COMPRESSION = os.getenv('CLICKHOUSE_COMPRESSION', 'lz4')  # lz4 | lz4hc | 空字符串=无压缩
 
 # ── Pipeline 默认参数 ──
 PIPELINE_DEVICE     = os.getenv('PIPELINE_DEVICE', 'cuda:0')
@@ -640,6 +739,10 @@ PIPELINE_BATCH_DAYS = int(os.getenv('PIPELINE_BATCH_DAYS', 30))
 | 11 | 实时模式 | 后续实现 | 1 Celery Beat + pipeline incremental |
 | 12 | 备份 | 可重算 + keep-backup | promote 前保留旧 live 快照 |
 | 13 | 现有文件 | 保留 + 加注释 | 不删除，标注 DEPRECATED |
+| 14 | NaN 处理 | 双模式 (ffill + skipnan) | run_id 隔离，前端 toggle |
+| 15 | CH 压缩 | LZ4 | clickhouse-driver 连接层 |
+| 16 | HTTP 压缩 | gzip | @gzip_page 装饰器 |
+| 17 | 前端批量获取 | name__in 合并请求 | 9 次 → 1 次 HTTP |
 
 ---
 
@@ -1010,6 +1113,11 @@ clickhouse-client -q "SELECT run_id, count() FROM features_wide GROUP BY run_id"
 | 13 | 现有文件 | 保留 + 加注释 | 不删除，标注 DEPRECATED |
 | 14 | 回归对比 | 不做 | 无历史对比数据 |
 | 15 | 过渡方案 | 直接替换 | 无 feature flag，git revert 兜底 |
+| 16 | NaN 处理 | 双模式 (ffill + skipnan) | run_id 隔离 (live / live_sn)，前端 toggle |
+| 17 | CH 传输压缩 | LZ4 | clickhouse-driver `compression='lz4'` |
+| 18 | HTTP 响应压缩 | gzip | `@gzip_page` 装饰器 |
+| 19 | 前端批量获取 | `name__in` 合并请求 | 9 次 HTTP → 1 次 |
+| 20 | 查询列投影 | 按需 SELECT | `columns` 参数只拉需要的列 |
 
 ---
 
