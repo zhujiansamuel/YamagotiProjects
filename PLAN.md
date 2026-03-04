@@ -1,276 +1,179 @@
-# GPU Engine ↔ Celery Task 双向对齐修改计划（v2）
+# GPU Engine ↔ Celery Task 双向对齐修改计划（v3）
 
-基于 22 个差异点的用户决策 + 确认事项：
-- CH 列固定 → B4/B5/C4 保持硬编码，不读 FeatureSpec
-- C1 → 所有 Bollinger 统一为 SMA 中线（Celery 删除 center_mode 支持）
-- E1 logb → 独立行（scope + name），不影响 CH features_wide 列
-- Celery EMA 跳 None → 直接删除
-- Q2 → 动态价格过滤在 tensor 阶段置 NaN
-
----
-
-## Phase 1: engine/aggregate.py — 跨店聚合
-
-### 1.1 MAD 异常值过滤 (A1) — GPU 侧
-
-**当前**: 无过滤
-
-**修改**: 在 `aggregate_cross_shop()` 中，nanmean 之前加入 MAD 过滤：
-
-```python
-def _mad_filter_dim1(data: torch.Tensor, k: float = 3.0) -> torch.Tensor:
-    """沿 dim=1 (shop 维度) 做 MAD 过滤，异常值置 NaN。
-    threshold = median ± k × 1.4826 × MAD
-    """
-```
-
-- 对 data (I, S, B) 的每个 (i, b)：nanmedian → MAD → 标准化 → 超出 k=3 倍的置 NaN
-- 在 `aggregate_cross_shop()` 开头调用：`data = _mad_filter_dim1(tensor.data)`
-
-### 1.2 标准中位数 (A4) — GPU 侧
-
-**当前**: `_nanmedian_dim1()` 用 `valid.median()` — 偶数个取偏小值
-
-**修改**: 改为偶数个取两中间值平均：
-```python
-sorted_v = valid.sort().values
-n = sorted_v.numel()
-if n % 2 == 1:
-    result[i, b] = sorted_v[n // 2]
-else:
-    result[i, b] = (sorted_v[n // 2 - 1] + sorted_v[n // 2]) / 2.0
-```
-
-### 1.3 动态价格区间过滤 (A5) — GPU 侧
-
-**当前**: 无
-
-**修改**: 在 aggregate.py 新增函数：
-
-```python
-def apply_dynamic_price_filter(
-    tensor: PriceTensor,
-    *,
-    lookback_buckets: int = 2,       # 回看 2 桶 = 30 分钟
-    tolerance: float = 0.10,          # ±10%
-    min_samples: int = 3,
-    fallback_range: tuple = (100_000, 350_000),
-) -> PriceTensor:
-    """对每个 (iphone, bucket)，基于前 N 桶参考价过滤异常值，置 NaN。"""
-```
-
-在 pipeline.py 的 aggregate 步骤中调用：
-```python
-tensor = build_price_tensor(full_aligned, device=device)
-tensor = apply_dynamic_price_filter(tensor)      # A5
-agg = aggregate_cross_shop(tensor, ...)           # A1 MAD 在内部
-```
-
-### 1.4 ✅ 无需修改确认
-
-- A2 (ddof=1): `_nanstd_dim1` 已用 `count - 1`
-- A3 (CV): `dispersion = std / mean` 已满足
+核心决策：
+- **Celery 是主要实时路径**，GPU 是批量回填/实验路径
+- **Celery 也写入 CH features_wide**（新增）
+- 两侧统计指标硬编码，窗口/列完全一致: `[30, 60, 75, 120, 900, 1800]`
+- 所有 Bollinger 统一 SMA 中线
+- logb 作为 features_wide 的额外列 (`logb_30` ... `logb_1800`)
+- Celery EMA 跳 None 逻辑直接删除（见 Phase 4.5）
 
 ---
 
-## Phase 2: engine/features.py — 特征计算
+## Phase 1: engine/aggregate.py — GPU 跨店聚合
 
-### 2.1 SMA 缩窗 (B2) — GPU 侧
+### 1.1 MAD 异常值过滤 (A1)
 
-**当前**: `F.pad(..., mode='replicate')` + conv1d
+新增 `_mad_filter_dim1(data, k=3.0)`: 沿 shop 维度 MAD 过滤，异常值置 NaN。
+在 `aggregate_cross_shop()` 开头调用。
 
-**修改**: 改为 cumsum 实现，不足窗口时用实际可用长度：
-```python
-def compute_sma_batch(series: torch.Tensor, window: int) -> torch.Tensor:
-    n = series.shape[1]
-    cumsum = series.cumsum(dim=1)
-    sma = torch.zeros_like(series)
-    for t in range(n):
-        w = min(t + 1, window)
-        if t >= w:
-            sma[:, t] = (cumsum[:, t] - cumsum[:, t - w]) / w
-        else:
-            sma[:, t] = cumsum[:, t] / (t + 1)
-    return sma
-```
+### 1.2 标准中位数 (A4)
 
-### 2.2 WMA 缩窗 (B3) — GPU 侧
+`_nanmedian_dim1()` 改为偶数取两中间值平均。
 
-**当前**: `F.pad(..., mode='replicate')` + conv1d
+### 1.3 动态价格区间过滤 (A5)
 
-**修改**: 改为逐列计算，不足窗口时用实际可用长度的线性权重：
-```python
-def compute_wma_batch(series: torch.Tensor, window: int) -> torch.Tensor:
-    n = series.shape[1]
-    wma = torch.zeros_like(series)
-    for t in range(n):
-        w = min(t + 1, window)
-        start = t - w + 1
-        segment = series[:, start:t+1]            # (I, w)
-        weights = torch.arange(1, w + 1, dtype=series.dtype, device=series.device)
-        wma[:, t] = (segment * weights).sum(dim=1) / weights.sum()
-    return wma
-```
-
-### 2.3 Bollinger 统一 SMA 中线 (C1) — GPU 侧
-
-**当前**: `compute_bollinger_batch()` 已使用 SMA
-
-**修改**: ✅ 无需修改，已满足。删除计划中的 center_mode 参数扩展。
-
-### 2.4 ✅ 无需修改确认
-
-- B1 (双模式 ffill + skipnan): 已满足
-- B4 (alpha 硬编码): 保持硬编码
-- B5 (窗口硬编码): 保持硬编码
-- C2 (rolling std): 已满足
-- C3 (ddof=1): torch.std 默认 Bessel correction
-- C4 (窗口硬编码): 保持硬编码
+新增 `apply_dynamic_price_filter(tensor, ...)`: 基于前 N 桶参考价 ± 10% 过滤。
+在 pipeline.py aggregate 步骤中 `aggregate_cross_shop()` 之前调用。
 
 ---
 
-## Phase 3: engine/pipeline.py — 主流程
+## Phase 2: engine/features.py — GPU 特征计算
 
-### 3.1 输出精度截断 2 位小数 (B6) — GPU 侧
+### 2.1 SMA 缩窗 (B2)
 
-**修改**: 在 `_agg_to_features_df()`, `_per_shop_features_df()`, `_per_profile_features_df()` 中，
-写入 row 时对所有数值做 round(v, 2)：
-```python
-for fname, ftensor in features.items():
-    row[fname] = round(ftensor[i_idx, b_idx].item(), 2)
-# 同理对 mean, median, std, dispersion
-row["mean"] = round(mean_val, 2)
-row["median"] = round(..., 2)
-# ...
-```
+`compute_sma_batch()` 改为 cumsum 实现，不足窗口用实际可用长度。
 
-### 3.2 新增 Case 3: shop × cohort (D2) — GPU 侧
+### 2.2 WMA 缩窗 (B3)
 
-**当前**: 无 `shop:{sid}|cohort:{slug}` scope
-
-**新增**: `_per_shop_cohort_features_df(tensor, cohort_configs, *, skipnan)`:
-- 对每个 shop_id × 每个 CohortConfig：
-  - 取该店的成员 iPhone 价格: `tensor.data[:, s_idx, :]` 中 members 对应行
-  - 按 model_weight 加权 mean（归一化权重）
-  - 加权 std = sqrt(Σ(w×(x-μ_w)²)/Σ(w))
-  - 在 weighted_mean 上计算特征
-  - scope = `shop:{sid}|cohort:{slug}`
-
-### 3.3 新增 Case 4: shopcohort × cohort (D3) — GPU 侧
-
-**新增**: `_per_profile_cohort_features_df(tensor, profiles, cohort_configs, *, skipnan)`:
-- 对每个 ShopWeightProfile × 每个 CohortConfig：
-  - 取 profile 中的 shops + cohort 中的 member iPhones
-  - 双重权重: shop_weight × model_weight（无 recency）
-  - 加权聚合 → 特征计算
-  - scope = `shopcohort:{prof_slug}|cohort:{coh_slug}`
-
-### 3.4 Market Log Premium (E1) — GPU 侧
-
-**新增**: `_compute_market_log_premium(features_df, official_prices)`:
-
-logb 以 **独立行** 写入 ClickHouse features_wide:
-- 找 `shopcohort:full_store|iphone:*` scope 的行
-- 对每个这样的行，取其 WMA 列（如 wma_120, wma_1800）
-- 计算 `logb = math.log(wma / official_price)`
-- 生成新行: scope 不变, 额外列 `logb_{window}` = logb 值
-
-实际上 logb 可以作为 features_wide 的额外列追加到同一行中（比如 `logb_120`, `logb_1800`），因为它们跟其他特征列是一对一关系。
-
-但用户选择"独立行 scope+name"——这更适合写入 **PG FeatureSnapshot**（Celery 的写法），而 CH features_wide 是宽表无 name 列。
-
-**方案**: GPU pipeline 同时写两处：
-1. CH features_wide: 在 shopcohort:full_store|iphone:* 行中追加 `logb_120`, `logb_1800` 等列（可选，如果 CH 已建列）
-2. PG FeatureSnapshot: 通过 FeatureWriter 写入独立行 (scope, name="logb", version="wma120m", value=logb_value)
+`compute_wma_batch()` 改为逐步缩窗线性权重。
 
 ---
 
-## Phase 4: Celery 侧修改 — timestamp_alignment_task.py
+## Phase 3: engine/pipeline.py — GPU 主流程
 
-### 4.1 MAD 异常值过滤 (A1) — Celery 侧
+### 3.1 输出精度 round(v, 2) (B6)
 
-**当前**: `_filter_outliers_by_mean_band(vals, 0.5, 1.5)` — 按 mean×[0.5, 1.5] 过滤
+`_agg_to_features_df()`, `_per_shop_features_df()`, `_per_profile_features_df()` 对所有数值 round 2 位。
 
-**修改**: 重写为 `_filter_outliers_by_mad(vals, k=3.0)`:
+### 3.2 新增 shop × cohort scope (D2)
+
+新增 `_per_shop_cohort_features_df()`: scope = `shop:{sid}|cohort:{slug}`
+
+### 3.3 新增 shopcohort × cohort scope (D3)
+
+新增 `_per_profile_cohort_features_df()`: scope = `shopcohort:{prof}|cohort:{slug}`
+
+### 3.4 logb 列 (E1)
+
+新增 `_compute_market_log_premium()`:
+- 从 `shopcohort:full_store|iphone:*` 行的 `wma_{W}` 列计算 `logb_{W} = log(wma / official_price)`
+- 写入同一行的 `logb_30` ... `logb_1800` 列
+
+---
+
+## Phase 4: tasks/timestamp_alignment_task.py — Celery 侧对齐
+
+### 4.1 MAD 过滤 (A1)
+
+删除 `_filter_outliers_by_mean_band()`，新增 `_filter_outliers_by_mad(vals, k=3.0)`:
 ```python
 def _filter_outliers_by_mad(vals, k=3.0):
-    """MAD 过滤：median ± k × 1.4826 × MAD"""
-    if len(vals) < 3:
-        return list(vals)
-    vals_sorted = sorted(vals)
-    n = len(vals_sorted)
-    med = vals_sorted[n // 2] if n % 2 else 0.5 * (vals_sorted[n // 2 - 1] + vals_sorted[n // 2])
-    abs_devs = sorted(abs(v - med) for v in vals_sorted)
-    mad = abs_devs[n // 2] if n % 2 else 0.5 * (abs_devs[n // 2 - 1] + abs_devs[n // 2])
-    threshold = k * 1.4826 * mad
-    if threshold == 0:
-        return list(vals)  # 所有值相同
-    filtered = [v for v in vals if abs(v - med) <= threshold]
-    return filtered if filtered else list(vals)
+    med = 标准 median（偶数取平均）
+    MAD = median(|v - med|)
+    threshold = k × 1.4826 × MAD
+    return [v for v in vals if |v - med| <= threshold]
 ```
+`_stats()` 中调用替换。
 
-**调用点修改**: `_stats()` 函数中 `_filter_outliers_by_mean_band(vals_raw)` → `_filter_outliers_by_mad(vals_raw)`
+### 4.2 样本标准差 ddof=1 (A2)
 
-删除 `_filter_outliers_by_mean_band()` 函数。
+`_pop_std()` → `_sample_std()`: 除以 `n-1` 而非 `n`。全文替换调用点。
 
-### 4.2 标准差 ddof=1 (A2) — Celery 侧
+### 4.3 离散度 = 变异系数 (A3)
 
-**当前**: `_pop_std()` 除以 N（总体 std）
+`_stats()` 中 `disp_v = std_v / mean_v`，删除 p10/p90 和 `_quantile` 函数。
 
-**修改**: 改为除以 N-1（样本 std）：
+### 4.4 Bollinger 统一 SMA + rolling std (C1, C2, C3)
+
+`_agg_bollinger_bands()`:
+1. 删除 `_parse_center_mode()` 和 EMA 分支，统一 `mid = _sma(series, W)`
+2. std 改为只取最近 W 个点的样本 std: `std = _sample_std(series[-W:])`
+3. **删除 FeatureSpec 读取**，改用硬编码窗口 `[30, 60, 75, 120, 900, 1800]`:
 ```python
-def _sample_std(vals):
-    """样本标准差 (ddof=1)；N<=1 返回 0."""
-    n = len(vals)
-    if n <= 1:
-        return 0.0
-    mu = sum(vals) / n
-    s2 = sum((v - mu) ** 2 for v in vals) / (n - 1)
-    return s2 ** 0.5
+FEATURE_WINDOWS = [30, 60, 75, 120, 900, 1800]
+for W in FEATURE_WINDOWS:
+    for scope, x_t in base_now.items():
+        ...  # 计算 boll_mid, boll_up, boll_low, boll_width
 ```
 
-重命名 `_pop_std` → `_sample_std`，全文替换所有调用点。
+### 4.5 EMA/SMA/WMA 硬编码窗口 + 删除 FeatureSpec 读取
 
-### 4.3 离散度 = 变异系数 (A3) — Celery 侧
+`_agg_time_series_features()`:
+1. **删除 FeatureSpec 查询**（当前从 DB 读 active specs）
+2. 改为硬编码，与 GPU 完全一致:
+```python
+FEATURE_WINDOWS = [30, 60, 75, 120, 900, 1800]
+EMA_HL_WINDOWS = [30, 60]
 
-**当前**: `_stats()` 中 `disp_v = (p90 - p10)`
+for W in FEATURE_WINDOWS:
+    for scope, x_t in base_now.items():
+        # EMA: alpha = 2/(W+1), name = f"ema_{W}"
+        # SMA: name = f"sma_{W}"
+        # WMA: name = f"wma_{W}"
+for W in EMA_HL_WINDOWS:
+    # EMA half-life: alpha = 1 - 0.5^(1/hl_buckets)
+```
+3. **EMA 跳 None 逻辑删除**: `_ema_from_series` 中没有跳 None 逻辑（series 已由 `_fetch_prev_base` 预过滤 None）。真正的变化是：`_fetch_prev_base` 返回的是**连续非 None 值序列**（中间跳过 None 桶），这导致时间不等间距。修改方案：
 
-**修改**: 改为 `disp_v = std_v / mean_v if mean_v != 0 else 0.0`
+   - **`_fetch_prev_base` 改为保留 None 位置**（返回含 None 的等间距序列）
+   - `_ema_from_series` 遇到 None 时直接沿用前一个 ema 值（不更新）
+   - `_sma`, `_wma_linear` 的 window slice 中只取非 None 值计算
 
-删除 `_quantile` 函数（仅用于 p10/p90，不再需要）。
+   这与 GPU 的 ffill 行为一致：遇到 NaN 时 forward-fill 使 EMA 状态不变。
 
-### 4.4 Bollinger 统一 SMA 中线 + rolling std (C1, C2, C3) — Celery 侧
+### 4.6 logb 硬编码 (E1)
 
-**当前**: `_agg_bollinger_bands()` 中：
-- center_mode 从 FeatureSpec 读取（支持 sma/ema）
-- std = `_pop_std(series_old_to_new)` — 全序列总体 std
+`_agg_market_log_premium()`:
+- 删除从 FeatureSnapshot 查 WMA 记录的逻辑
+- 改为直接使用 4.5 中刚计算的 WMA 值
+- 生成 `logb_{W}` 列值
 
-**修改**:
-1. 删除 `_parse_center_mode()` 和 center_mode 分支，统一用 SMA：
+### 4.7 Celery 写入 CH features_wide（新增）
+
+**当前**: Celery 只写 PG FeatureSnapshot（逐条 upsert via FeatureWriter）
+**新增**: 每个 bucket 处理完后，汇总为一行 wide-format dict，写入 CH
+
+实现方案:
+1. 在 `_agg_feature_combos` + `_agg_time_series_features` + `_agg_bollinger_bands` + `_agg_market_log_premium` 执行完后，**收集本桶所有 (scope, name, value) 结果**
+2. 按 scope 分组，转为 wide-format row:
    ```python
-   mid = _sma(series_old_to_new, W)
+   # 例如 scope="shopcohort:full_store|iphone:42" 的一行:
+   {
+       "bucket": bucket,
+       "scope": scope,
+       "mean": ..., "median": ..., "std": ..., "shop_count": ..., "dispersion": ...,
+       "ema_30": ..., "ema_60": ..., ..., "ema_1800": ...,
+       "sma_30": ..., ..., "sma_1800": ...,
+       "wma_30": ..., ..., "wma_1800": ...,
+       "ema_hl_30": ..., "ema_hl_60": ...,
+       "boll_mid_30": ..., "boll_up_30": ..., ..., "boll_width_1800": ...,
+       "logb_30": ..., ..., "logb_1800": ...,
+   }
    ```
-2. std 改为 rolling std (ddof=1)，只取最近 W 个点：
-   ```python
-   window_vals = series_old_to_new[-W:]
-   std = _sample_std(window_vals)
-   ```
+3. 调用 `ClickHouseService.insert_features(df, run_id="live")`
 
-### 4.5 EMA 跳 None 逻辑删除 (B1) — Celery 侧
+**run_id 约定**: Celery 实时写入用 `"live"`（与 GPU 回填的 run_id 区分）
 
-**当前**: `_fetch_prev_base()` 三个 return 语句中 `if v is not None` 过滤掉 None
+**PG FeatureSnapshot 保留还是废弃?**
+→ 待讨论（见下方问题）
 
-**这实际上是合理的 DB 查询过滤**（DB 中 None 表示无数据），不需要删除。
+---
 
-真正需要删除的是：如果 EMA 函数本身有跳过 None 的逻辑。
-检查发现 `_ema_from_series()`, `_sma()`, `_wma_linear()` 本身 **没有** 跳 None 逻辑——
-它们接收的 series 已经被 `_fetch_prev_base` 预过滤了 None。
+## Phase 5: CH Schema 变更 — init.sql
 
-**问题**: _fetch_prev_base 过滤 None 后，序列中间会缺少时间点（非等间距），这就是 B1 说的"跳过模式"。
+### 5.1 新增 logb 列
 
-**修改方案**: 不改 `_fetch_prev_base`（DB 查询过滤 None 是合理的），但在构建 series 时需要意识到这个时间间隔问题。由于 Celery 是实时逐桶处理（只取最新值），且 B1 决策是"废弃 Celery 的跳过模式"——实际含义是：**Celery 侧的这些时间序列特征（EMA/SMA/WMA/Bollinger）将在 GPU pipeline 完全接管后停用**。
+```sql
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS logb_30 Nullable(Float64);
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS logb_60 Nullable(Float64);
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS logb_75 Nullable(Float64);
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS logb_120 Nullable(Float64);
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS logb_900 Nullable(Float64);
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS logb_1800 Nullable(Float64);
+```
 
-因此 Celery 侧 EMA/SMA/WMA 相关代码的 None 跳过逻辑**保持不动**（因为它马上就要被 GPU 取代），只修改聚合阶段（A1-A3, C1-C3）保证在两边并行运行期间数据一致。
+同步更新 CREATE TABLE 定义。
 
 ---
 
@@ -280,40 +183,57 @@ def _sample_std(vals):
 
 | 文件 | 修改内容 | 差异点 |
 |------|---------|--------|
-| `engine/aggregate.py` | 新增 `_mad_filter_dim1()`; 修改 `_nanmedian_dim1()`; 新增 `apply_dynamic_price_filter()` | A1, A4, A5 |
-| `engine/features.py` | 重写 `compute_sma_batch()` (cumsum 缩窗); 重写 `compute_wma_batch()` (缩窗) | B2, B3 |
-| `engine/pipeline.py` | 集成 A5 过滤; 输出 round(v,2); 新增 `_per_shop_cohort_features_df()`; 新增 `_per_profile_cohort_features_df()`; 新增 `_compute_market_log_premium()` | A5, B6, D2, D3, E1 |
+| `engine/aggregate.py` | `_mad_filter_dim1()`; `_nanmedian_dim1()` 偶数; `apply_dynamic_price_filter()` | A1, A4, A5 |
+| `engine/features.py` | SMA cumsum 缩窗; WMA 缩窗 | B2, B3 |
+| `engine/pipeline.py` | round(v,2); D2/D3 scope; logb 列 | B6, D2, D3, E1 |
 
 ### Celery 侧
 
 | 文件 | 修改内容 | 差异点 |
 |------|---------|--------|
-| `tasks/timestamp_alignment_task.py` | `_filter_outliers_by_mean_band` → `_filter_outliers_by_mad`; `_pop_std` → `_sample_std` (ddof=1); `_stats()` dispersion → CV; Bollinger 删除 center_mode 分支 + std 改 rolling | A1, A2, A3, C1, C2, C3 |
+| `tasks/timestamp_alignment_task.py` | MAD 过滤; ddof=1; CV; Bollinger 硬编码+SMA+rolling; EMA/SMA/WMA 硬编码窗口; 删除 FeatureSpec 读取; EMA 等间距处理; logb 硬编码; **CH 写入** | A1-A3, C1-C3, B4/B5/C4, E1, 新需求 |
 
-### 无需修改
+### 共用
+
+| 文件 | 修改内容 |
+|------|---------|
+| `clickhouse/init.sql` | 新增 logb_30..1800 列 |
+| `services/clickhouse_service.py` | （可能无需修改，insert_features 已是动态列） |
+
+---
+
+## 无需修改确认
 
 | 差异点 | 状态 |
 |--------|------|
-| A2 GPU | ✅ 已满足 |
-| A3 GPU | ✅ 已满足 |
-| A4 Celery | ✅ 已满足 |
-| A5 Celery | ✅ 已有 |
-| B1 | ✅ GPU 双模式已有; Celery 跳过模式将随 GPU 接管而废弃 |
-| B4, B5, C4 | ✅ 保持硬编码（CH 列固定） |
-| C1 GPU | ✅ 已是 SMA 中线 |
-| C2, C3 GPU | ✅ 已满足 |
-| D1, D6 | ✅ 不加时效权重 |
-| D4 | ✅ GPU 已用加权 std |
-| D5 | ✅ GPU 已用 median=mean |
-| E2, E3, E4 | ✅ 无需处理 |
-| F1, F2 | ✅ 无需处理 |
+| A2/A3/A4 GPU | ✅ 已满足 |
+| B1 GPU | ✅ 双模式已有 |
+| B4/B5/C4 | ✅ 硬编码（两侧统一） |
+| C1/C2/C3 GPU | ✅ 已满足 |
+| D1/D6 | ✅ 不加时效权重 |
+| D4/D5 | ✅ GPU 已满足 |
+| E2-E4, F1-F2 | ✅ 无需处理 |
 
 ---
 
 ## 实施顺序
 
-1. **Phase 1**: engine/aggregate.py (A1, A4, A5) — 基础聚合对齐
-2. **Phase 2**: engine/features.py (B2, B3) — SMA/WMA 缩窗
-3. **Phase 3**: engine/pipeline.py (B6, D2, D3, E1) — 新 scope + logb + 精度
-4. **Phase 4**: tasks/timestamp_alignment_task.py (A1, A2, A3, C1, C2, C3) — Celery 侧对齐
-5. **测试**: 对关键函数编写单元测试验证数值一致性
+1. Phase 5: CH schema (logb 列) — 先建表
+2. Phase 1: aggregate.py (A1, A4, A5)
+3. Phase 2: features.py (B2, B3)
+4. Phase 3: pipeline.py (B6, D2, D3, E1)
+5. Phase 4: timestamp_alignment_task.py (全部 Celery 侧变更)
+6. 测试: 关键函数单元测试
+
+---
+
+## 待讨论问题
+
+**Q1**: Celery 写 CH 后，**PG FeatureSnapshot 是否保留?**
+- 选项 A: 保留双写（PG + CH），PG 作为 Celery 侧时序特征的中间状态（`_fetch_prev_base` 从 PG 读历史）
+- 选项 B: 废弃 PG 写入，`_fetch_prev_base` 改从 CH 读历史
+- 建议选 A（保留双写）: PG FeatureSnapshot 是 `_fetch_prev_base` 的数据源，Bollinger/EMA/SMA/WMA 都依赖它读历史。改成从 CH 读会引入较大的架构变更。
+
+**Q2**: Celery 的 `_fetch_prev_base` 读 OverallBar/CohortBar 的路径已被注释。对于 `overall:iphone:*` 和 `cohort:*` 这两类 scope 的时间序列特征，是否仍然跳过？
+
+**Q3**: Celery run_id 用 `"live"` 是否 OK？GPU 回填通常用什么 run_id？
