@@ -204,7 +204,7 @@ def run(
             configs = load_cohort_configs()
             if configs:
                 cohort_df = compute_cohort_features(
-                    agg, iphone_features, configs, device=device,
+                    agg, configs, device=device,
                 )
                 if not cohort_df.empty:
                     inserted = ch.insert_features(cohort_df, run_id)

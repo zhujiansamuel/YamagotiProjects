@@ -90,10 +90,6 @@ init.sql 中的 ALTER TABLE 语句只在 ClickHouse 容器**首次启动**时执
 （`docker-entrypoint-initdb.d`）。对已有环境需手动运行 init.sql 尾部的
 ALTER TABLE 语句块。
 
-### `compute_cohort_features` 的 `features` 参数未使用
+### ~~`compute_cohort_features` 的 `features` 参数未使用~~ — 已修复 (2026-03-04)
 
-**文件**: `AppleStockChecker/engine/cohorts.py` — `compute_cohort_features()`
-
-函数签名接收 `features: dict[str, Tensor]` 参数，但函数体内从未引用
-（cohort 特征在 `cohort_mean_2d` 上重新计算）。属于 pre-existing 死代码，
-可顺手清理。
+已移除死参数，同步更新调用方 `pipeline.py`。

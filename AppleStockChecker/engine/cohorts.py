@@ -88,7 +88,6 @@ def load_cohort_configs() -> list[CohortConfig]:
 
 def compute_cohort_features(
     agg: AggResult,
-    features: dict[str, torch.Tensor],
     configs: list[CohortConfig],
     *,
     device: str = "cpu",
@@ -99,8 +98,6 @@ def compute_cohort_features(
     ----------
     agg : AggResult
         iPhone 级跨店聚合结果
-    features : dict[str, Tensor]
-        iPhone 级特征 {name: (n_iphones, n_buckets)}
     configs : list[CohortConfig]
     device : str
 
