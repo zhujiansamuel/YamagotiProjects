@@ -82,6 +82,101 @@ def build_price_tensor(
                        bucket_index=bucket_index)
 
 
+def apply_dynamic_price_filter(
+    tensor: PriceTensor,
+    *,
+    lookback_buckets: int = 2,
+    tolerance: float = 0.10,
+    min_samples: int = 3,
+    fallback_range: tuple[float, float] = (100_000.0, 350_000.0),
+) -> PriceTensor:
+    """基于前 N 桶参考价过滤异常值，超出 ref ± tolerance 的置 NaN。
+
+    Parameters
+    ----------
+    tensor : PriceTensor
+        shape (n_iphones, n_shops, n_buckets)
+    lookback_buckets : int
+        回看桶数 (2 桶 = 30 分钟)
+    tolerance : float
+        参考价容忍度 (0.10 = ±10%)
+    min_samples : int
+        参考价最小样本数，不足时用 fallback_range
+    fallback_range : tuple
+        固定价格范围 [min, max]
+    """
+    data = tensor.data.clone()  # (I, S, B)
+    n_i, n_s, n_b = data.shape
+    filtered_count = 0
+
+    for b in range(n_b):
+        lb = max(0, b - lookback_buckets)
+        if lb == b:
+            # 第一个桶，只能用 fallback
+            ref_slice = data[:, :, b:b + 1]
+        else:
+            ref_slice = data[:, :, lb:b]  # (I, S, lookback)
+
+        for i in range(n_i):
+            ref_vals = ref_slice[i].reshape(-1)
+            ref_valid = ref_vals[~torch.isnan(ref_vals)]
+
+            if ref_valid.numel() >= min_samples:
+                ref_price = ref_valid.mean().item()
+                lo = ref_price * (1 - tolerance)
+                hi = ref_price * (1 + tolerance)
+            else:
+                lo, hi = fallback_range
+
+            prices = data[i, :, b]
+            bad = (~torch.isnan(prices)) & ((prices < lo) | (prices > hi))
+            filtered_count += bad.sum().item()
+            prices[bad] = float("nan")
+
+    if filtered_count > 0:
+        logger.info("apply_dynamic_price_filter: %d values filtered", filtered_count)
+
+    return PriceTensor(
+        data=data,
+        iphone_ids=tensor.iphone_ids,
+        shop_ids=tensor.shop_ids,
+        bucket_index=tensor.bucket_index,
+    )
+
+
+def _mad_filter_dim1(data: torch.Tensor, k: float = 3.0) -> torch.Tensor:
+    """沿 dim=1 (shop 维度) 做 MAD 过滤，异常值置 NaN。
+
+    threshold = median ± k × 1.4826 × MAD
+    """
+    I, S, B = data.shape
+    result = data.clone()
+    for i in range(I):
+        for b in range(B):
+            vals = data[i, :, b]
+            valid_mask = ~torch.isnan(vals)
+            valid = vals[valid_mask]
+            if valid.numel() < 3:
+                continue
+            sorted_v = valid.sort().values
+            n = sorted_v.numel()
+            if n % 2 == 1:
+                med = sorted_v[n // 2]
+            else:
+                med = (sorted_v[n // 2 - 1] + sorted_v[n // 2]) / 2.0
+            abs_devs = (valid - med).abs().sort().values
+            if n % 2 == 1:
+                mad = abs_devs[n // 2]
+            else:
+                mad = (abs_devs[n // 2 - 1] + abs_devs[n // 2]) / 2.0
+            threshold = k * 1.4826 * mad
+            if threshold == 0:
+                continue
+            outlier = valid_mask & ((vals - med).abs() > threshold)
+            result[i, outlier, b] = float("nan")
+    return result
+
+
 def aggregate_cross_shop(
     tensor: PriceTensor,
     *,
@@ -100,7 +195,7 @@ def aggregate_cross_shop(
     -------
     AggResult  每个字段 shape (n_iphones, n_buckets)
     """
-    data = tensor.data  # (I, S, B)
+    data = _mad_filter_dim1(tensor.data)  # A1: MAD 过滤
 
     # 非 NaN 计数
     valid_mask = ~torch.isnan(data)
@@ -109,7 +204,7 @@ def aggregate_cross_shop(
     # nanmean
     mean = torch.nanmean(data, dim=1)  # (I, B)
 
-    # nanmedian: torch.nanmedian 只返回单值，需要手动处理
+    # nanmedian: 偶数取两中间值平均
     median = _nanmedian_dim1(data)  # (I, B)
 
     # nanstd (无偏)
@@ -143,7 +238,7 @@ def aggregate_cross_shop(
 # ── 辅助函数 ─────────────────────────────────────────────────────────────
 
 def _nanmedian_dim1(data: torch.Tensor) -> torch.Tensor:
-    """沿 dim=1 计算 nanmedian, 返回 (I, B)。"""
+    """沿 dim=1 计算 nanmedian, 偶数取两中间值平均, 返回 (I, B)。"""
     I, S, B = data.shape
     result = torch.full((I, B), float("nan"), dtype=data.dtype, device=data.device)
 
@@ -151,8 +246,13 @@ def _nanmedian_dim1(data: torch.Tensor) -> torch.Tensor:
         for b in range(B):
             vals = data[i, :, b]
             valid = vals[~torch.isnan(vals)]
-            if valid.numel() > 0:
-                result[i, b] = valid.median()
+            n = valid.numel()
+            if n > 0:
+                sorted_v = valid.sort().values
+                if n % 2 == 1:
+                    result[i, b] = sorted_v[n // 2]
+                else:
+                    result[i, b] = (sorted_v[n // 2 - 1] + sorted_v[n // 2]) / 2.0
     return result
 
 

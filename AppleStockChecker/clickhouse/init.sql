@@ -100,6 +100,14 @@ CREATE TABLE IF NOT EXISTS yamagoti.features_wide (
     boll_low_1800       Nullable(Float64),
     boll_width_1800     Nullable(Float64),
 
+    -- Market Log Premium (6 窗口)
+    logb_30             Nullable(Float64),
+    logb_60             Nullable(Float64),
+    logb_75             Nullable(Float64),
+    logb_120            Nullable(Float64),
+    logb_900            Nullable(Float64),
+    logb_1800           Nullable(Float64),
+
     inserted_at         DateTime DEFAULT now()
 ) ENGINE = ReplacingMergeTree(inserted_at)
 PARTITION BY (run_id, toYYYYMM(bucket))
@@ -137,3 +145,11 @@ ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS boll_mid_75 Nullable
 ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS boll_up_75 Nullable(Float64);
 ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS boll_low_75 Nullable(Float64);
 ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS boll_width_75 Nullable(Float64);
+
+-- Migration: 新增 logb 列 (Market Log Premium)
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS logb_30 Nullable(Float64);
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS logb_60 Nullable(Float64);
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS logb_75 Nullable(Float64);
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS logb_120 Nullable(Float64);
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS logb_900 Nullable(Float64);
+ALTER TABLE yamagoti.features_wide ADD COLUMN IF NOT EXISTS logb_1800 Nullable(Float64);

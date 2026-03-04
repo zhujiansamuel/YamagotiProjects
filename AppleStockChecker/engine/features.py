@@ -9,7 +9,6 @@ import logging
 from dataclasses import dataclass
 
 import torch
-import torch.nn.functional as F
 
 from .config import FEATURE_WINDOWS, WINDOW_TO_BUCKETS
 
@@ -174,7 +173,7 @@ def compute_ema_halflife_batch_skipnan(series: torch.Tensor, hl_buckets: int) ->
 # ── SMA ──────────────────────────────────────────────────────────────────
 
 def compute_sma_batch(series: torch.Tensor, window: int) -> torch.Tensor:
-    """简单移动平均, 全向量化 (F.conv1d)。
+    """简单移动平均, cumsum 实现缩窗: 不足窗口时用实际可用长度。
 
     Parameters
     ----------
@@ -185,17 +184,22 @@ def compute_sma_batch(series: torch.Tensor, window: int) -> torch.Tensor:
     -------
     Tensor  (n_iphones, n_buckets)
     """
-    kernel = torch.ones(1, 1, window, dtype=series.dtype, device=series.device) / window
-    padded = F.pad(series.unsqueeze(1), (window - 1, 0), mode="replicate")
-    return F.conv1d(padded, kernel).squeeze(1)
+    n = series.shape[1]
+    cumsum = series.cumsum(dim=1)
+    sma = torch.zeros_like(series)
+    for t in range(n):
+        w = min(t + 1, window)
+        if t >= w:
+            sma[:, t] = (cumsum[:, t] - cumsum[:, t - w]) / w
+        else:
+            sma[:, t] = cumsum[:, t] / (t + 1)
+    return sma
 
 
 # ── WMA ──────────────────────────────────────────────────────────────────
 
 def compute_wma_batch(series: torch.Tensor, window: int) -> torch.Tensor:
-    """线性加权移动平均, 全向量化 (F.conv1d)。
-
-    权重: [1, 2, ..., window], 归一化后做卷积。
+    """线性加权移动平均, 缩窗: 不足窗口时用实际可用长度的线性权重。
 
     Parameters
     ----------
@@ -206,10 +210,15 @@ def compute_wma_batch(series: torch.Tensor, window: int) -> torch.Tensor:
     -------
     Tensor  (n_iphones, n_buckets)
     """
-    weights = torch.arange(1, window + 1, dtype=series.dtype, device=series.device)
-    kernel = (weights / weights.sum()).flip(0).reshape(1, 1, window)
-    padded = F.pad(series.unsqueeze(1), (window - 1, 0), mode="replicate")
-    return F.conv1d(padded, kernel).squeeze(1)
+    n = series.shape[1]
+    wma = torch.zeros_like(series)
+    for t in range(n):
+        w = min(t + 1, window)
+        start = t - w + 1
+        segment = series[:, start:t + 1]  # (I, w)
+        weights = torch.arange(1, w + 1, dtype=series.dtype, device=series.device)
+        wma[:, t] = (segment * weights).sum(dim=1) / weights.sum()
+    return wma
 
 
 # ── Bollinger Bands ──────────────────────────────────────────────────────
