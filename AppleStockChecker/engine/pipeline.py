@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 import numpy as np
 import pandas as pd
 
-from .config import ALL_STEPS, BucketConfig
+from .config import ALL_STEPS, BucketConfig, FEATURE_WINDOWS
 
 logger = logging.getLogger(__name__)
 
@@ -218,14 +218,6 @@ def run(
                             stats["features_profile_cohort"] = {"rows_inserted": pc_ins}
                             logger.info("  [features/profile-cohort] %d rows inserted", pc_ins)
 
-                # E1: Market Log Premium (logb)
-                all_profile_dfs = []
-                if not profile_df.empty:
-                    all_profile_dfs.append(profile_df)
-                logb_df = _compute_market_log_premium(all_profile_dfs, run_id, ch)
-                if logb_df is not None:
-                    stats["features_logb"] = {"rows_updated": len(logb_df)}
-
         stats["features_seconds"] = round(time.time() - t_step, 2)
 
     # ── Step: cohorts ────────────────────────────────────────────────────
@@ -417,6 +409,13 @@ def _per_profile_features_df(tensor, profiles, *, skipnan: bool = False) -> pd.D
         feat_fn = compute_all_features_skipnan if skipnan else compute_all_features
         features = feat_fn(weighted_mean)
 
+        # E1: 如果是 full_store profile，预加载 official_prices 用于 logb
+        is_full_store = (profile.slug == "full_store")
+        official_prices = {}
+        if is_full_store:
+            from django.conf import settings as _settings
+            official_prices = getattr(_settings, "IPHONE_OFFICIAL_PRICES", {})
+
         for i_idx in range(n_iphones):
             iphone_id = int(tensor.iphone_ids[i_idx])
             scope = f"shopcohort:{profile.slug}|iphone:{iphone_id}"
@@ -436,6 +435,16 @@ def _per_profile_features_df(tensor, profiles, *, skipnan: bool = False) -> pd.D
                 }
                 for fname, ftensor in features.items():
                     row[fname] = round(ftensor[i_idx, b_idx].item(), 2)
+
+                # E1: logb 直接在此计算，避免二次 INSERT
+                if is_full_store and official_prices:
+                    official = official_prices.get(iphone_id)
+                    if official and official > 0:
+                        for W in FEATURE_WINDOWS:
+                            wma_val = row.get(f"wma_{W}")
+                            if wma_val is not None and not math.isnan(wma_val) and wma_val > 0:
+                                row[f"logb_{W}"] = round(math.log(wma_val / official), 4)
+
                 rows.append(row)
 
     logger.info("_per_profile_features_df: %d rows", len(rows))
@@ -603,75 +612,3 @@ def _per_profile_cohort_features_df(
     logger.info("_per_profile_cohort_features_df: %d rows", len(rows))
     return pd.DataFrame(rows)
 
-
-def _compute_market_log_premium(
-    profile_dfs: list[pd.DataFrame],
-    run_id: str,
-    ch,
-) -> pd.DataFrame | None:
-    """E1: 对 shopcohort:full_store|iphone:* 的 WMA 行计算 logb。
-
-    logb_{W} = log(wma_{W} / official_price)
-    结果作为额外列追加到 profile_df 中并重新写入 CH。
-    """
-    import math as _math
-    from django.conf import settings
-    from .config import FEATURE_WINDOWS
-
-    official_prices = getattr(settings, "IPHONE_OFFICIAL_PRICES", {})
-    if not official_prices:
-        logger.info("_compute_market_log_premium: no IPHONE_OFFICIAL_PRICES configured")
-        return None
-
-    if not profile_dfs:
-        return None
-
-    combined = pd.concat(profile_dfs, ignore_index=True)
-    mask = combined["scope"].str.startswith("shopcohort:full_store|iphone:")
-    target = combined[mask].copy()
-    if target.empty:
-        return None
-
-    logb_rows = []
-    for _, row in target.iterrows():
-        scope = row["scope"]
-        try:
-            iphone_id = int(scope.split("|iphone:")[-1])
-        except (ValueError, IndexError):
-            continue
-        official = official_prices.get(iphone_id)
-        if not official or official <= 0:
-            continue
-
-        logb_row = {
-            "bucket": row["bucket"],
-            "scope": scope,
-            "mean": row["mean"],
-            "median": row["median"],
-            "std": row["std"],
-            "shop_count": row["shop_count"],
-            "dispersion": row["dispersion"],
-        }
-        # Copy existing feature columns
-        for col in row.index:
-            if col not in ("bucket", "scope", "mean", "median", "std", "shop_count", "dispersion"):
-                logb_row[col] = row[col]
-
-        for W in FEATURE_WINDOWS:
-            wma_col = f"wma_{W}"
-            wma_val = row.get(wma_col)
-            if wma_val is not None and not _math.isnan(wma_val) and wma_val > 0:
-                logb_row[f"logb_{W}"] = round(_math.log(wma_val / official), 4)
-            else:
-                logb_row[f"logb_{W}"] = None
-
-        logb_rows.append(logb_row)
-
-    if not logb_rows:
-        return None
-
-    logb_df = pd.DataFrame(logb_rows)
-    # 重新写入 CH（ReplacingMergeTree 会去重更新）
-    ch.insert_features(logb_df, run_id)
-    logger.info("_compute_market_log_premium: %d rows with logb written", len(logb_df))
-    return logb_df
