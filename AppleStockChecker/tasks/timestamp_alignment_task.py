@@ -346,42 +346,6 @@ def _wma_linear(series_old_to_new: List[float], window: int) -> Optional[float]:
     return sum(v * w for v, w in zip(s, weights)) / denom if denom > 0 else None
 
 
-def _fetch_prev_base(scope: str, base_name: str, base_version: str, limit: int, anchor_dt):
-    """
-    读取历史"基值"序列（不包含当前 x_t），按时间从新到旧取 limit 条：
-    - overall:iphone:<id>  -> OverallBar.mean
-    - cohort:<slug>        -> CohortBar.mean
-    - 其他 scope           -> FeatureSnapshot(base_name)
-    """
-    from AppleStockChecker.models import OverallBar, CohortBar, FeatureSnapshot
-
-    if scope.startswith("overall:iphone:"):
-        ipid = int(scope.rsplit(":", 1)[-1])
-        rows = (
-            OverallBar.objects
-            .filter(iphone_id=ipid, bucket__lt=anchor_dt)
-            .order_by("-bucket")
-            .values_list("mean", flat=True)[:limit]
-        )
-        return [float(v) for v in rows if v is not None]
-
-    if scope.startswith("cohort:"):
-        slug = scope.split(":", 1)[1]
-        rows = (
-            CohortBar.objects
-            .filter(cohort__slug=slug, bucket__lt=anchor_dt)
-            .order_by("-bucket")
-            .values_list("mean", flat=True)[:limit]
-        )
-        return [float(v) for v in rows if v is not None]
-
-    rows = (
-        FeatureSnapshot.objects
-        .filter(scope=scope, name=base_name, version=base_version, bucket__lt=anchor_dt)
-        .order_by("-bucket")
-        .values_list("value", flat=True)[:limit]
-    )
-    return [float(v) for v in rows if v is not None]
 
 def _agg_overallbar(
     *,
@@ -1043,17 +1007,27 @@ def _fetch_prev_base(scope: str, column: str, limit: int, anchor_dt):
 
 
 def _ema_from_series_with_none(series_old_to_new, alpha):
-    """EMA 计算，None 时沿用前值（等效 GPU ffill）。"""
+    """EMA 计算，None 时用前一个有效原始值替代（等效 GPU ffill + EMA）。
+
+    GPU 侧行为：先 _forward_fill_1d 把 NaN 替换为前一个有效原始值，
+    再对 ffill 后的完整序列跑标准 EMA。
+    等效逻辑：遇到 None 时用 last_valid 作为输入继续更新 ema。
+    """
     if not series_old_to_new:
         return 0.0
     ema = None
+    last_valid = None
     for v in series_old_to_new:
-        if v is None:
-            continue
+        if v is not None:
+            last_valid = float(v)
+        # ffill: 用 last_valid 替代 None
+        x = last_valid
+        if x is None:
+            continue  # 序列开头全是 None，跳过
         if ema is None:
-            ema = float(v)
+            ema = x
         else:
-            ema = alpha * float(v) + (1.0 - alpha) * ema
+            ema = alpha * x + (1.0 - alpha) * ema
     return ema if ema is not None else 0.0
 
 
@@ -1186,20 +1160,25 @@ def _agg_bollinger_bands(
             for scope, x_t in base_now.items():
                 prev_vals = _fetch_prev_base(scope, "mean", W_buckets - 1, anchor_bucket)
                 series_raw = list(reversed(prev_vals)) + [float(x_t)]
-                # 过滤 None
-                series = [v for v in series_raw if v is not None]
-                if not series:
+
+                # ffill: 与 GPU _forward_fill_1d 一致
+                series_filled = []
+                last_v = None
+                for v in series_raw:
+                    if v is not None:
+                        last_v = v
+                    if last_v is not None:
+                        series_filled.append(last_v)
+                if not series_filled:
                     boll_debug["skipped"].append(f"W{W}@{scope}:no_valid_data")
                     continue
 
-                # SMA 中轨
-                mid = _sma_with_none(series_raw, W_buckets)
-                if mid is None:
-                    boll_debug["skipped"].append(f"W{W}@{scope}:sma_none")
-                    continue
+                # SMA 中轨 (用 ffill 后的序列)
+                w = min(W_buckets, len(series_filled))
+                window_slice = series_filled[-w:]
+                mid = sum(window_slice) / len(window_slice)
 
-                # rolling std (ddof=1) on window slice
-                window_slice = series[-W_buckets:] if len(series) >= W_buckets else series
+                # rolling std (ddof=1) on same window slice
                 std = _sample_std(window_slice)
 
                 up = mid + k * std

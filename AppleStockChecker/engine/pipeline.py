@@ -189,6 +189,7 @@ def run(
                 # per-profile features (scope = shopcohort:{slug}|iphone:{iid})
                 from AppleStockChecker.engine.cohorts import load_shop_weight_profiles
                 profiles = load_shop_weight_profiles()
+                profile_df = pd.DataFrame()
                 if profiles:
                     profile_df = _per_profile_features_df(tensor, profiles, skipnan=skipnan)
                     if not profile_df.empty:
@@ -219,7 +220,7 @@ def run(
 
                 # E1: Market Log Premium (logb)
                 all_profile_dfs = []
-                if profiles:
+                if not profile_df.empty:
                     all_profile_dfs.append(profile_df)
                 logb_df = _compute_market_log_premium(all_profile_dfs, run_id, ch)
                 if logb_df is not None:
