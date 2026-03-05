@@ -1872,6 +1872,8 @@ class FeaturePointsViewSet(FeatureSnapshotViewSet):
         "ema_hl30m": "ema_hl_30", "ema_hl60m": "ema_hl_60",
         "sma30m": "sma_30", "sma60m": "sma_60", "sma75m": "sma_75",
         "sma120m": "sma_120", "sma900m": "sma_900", "sma1800m": "sma_1800",
+        "logb30m": "logb_30", "logb60m": "logb_60", "logb75m": "logb_75",
+        "logb120m": "logb_120", "logb900m": "logb_900", "logb1800m": "logb_1800",
     }
     _FE_NAME_MAP_REV = {v: k for k, v in _FE_NAME_MAP.items()}
 

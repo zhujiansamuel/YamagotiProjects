@@ -9,7 +9,6 @@ import logging
 from dataclasses import dataclass
 
 import torch
-import torch.nn.functional as F
 
 from .config import FEATURE_WINDOWS, WINDOW_TO_BUCKETS
 
@@ -174,7 +173,7 @@ def compute_ema_halflife_batch_skipnan(series: torch.Tensor, hl_buckets: int) ->
 # ── SMA ──────────────────────────────────────────────────────────────────
 
 def compute_sma_batch(series: torch.Tensor, window: int) -> torch.Tensor:
-    """简单移动平均, 全向量化 (F.conv1d)。
+    """简单移动平均, cumsum 向量化实现, 缩窗: 不足窗口时用实际可用长度。
 
     Parameters
     ----------
@@ -185,17 +184,33 @@ def compute_sma_batch(series: torch.Tensor, window: int) -> torch.Tensor:
     -------
     Tensor  (n_iphones, n_buckets)
     """
-    kernel = torch.ones(1, 1, window, dtype=series.dtype, device=series.device) / window
-    padded = F.pad(series.unsqueeze(1), (window - 1, 0), mode="replicate")
-    return F.conv1d(padded, kernel).squeeze(1)
+    n = series.shape[1]
+    cumsum = series.cumsum(dim=1)
+    # 在 dim=1 前面补一列 0, 方便做差
+    padded = torch.cat([torch.zeros(series.shape[0], 1, dtype=series.dtype,
+                                     device=series.device), cumsum], dim=1)
+    # padded shape: (I, n+1), padded[:,t+1] = cumsum[:,t]
+
+    sma = torch.zeros_like(series)
+    w = min(window, n)
+
+    # ── 缩窗部分: t = 0 .. min(window, n)-1, 分母 = t+1 ──
+    # sma[:, t] = cumsum[:, t] / (t+1)
+    divisors = torch.arange(1, w + 1, dtype=series.dtype, device=series.device)
+    sma[:, :w] = cumsum[:, :w] / divisors.unsqueeze(0)
+
+    # ── 满窗部分: t = window .. n-1, 分母 = window ──
+    if n > window:
+        # cumsum[:, t] - cumsum[:, t-window] = padded[:,t+1] - padded[:,t+1-window]
+        sma[:, window:] = (padded[:, window + 1:] - padded[:, 1:n - window + 1]) / window
+
+    return sma
 
 
 # ── WMA ──────────────────────────────────────────────────────────────────
 
 def compute_wma_batch(series: torch.Tensor, window: int) -> torch.Tensor:
-    """线性加权移动平均, 全向量化 (F.conv1d)。
-
-    权重: [1, 2, ..., window], 归一化后做卷积。
+    """线性加权移动平均, conv1d 实现, 缩窗: 不足窗口时用实际可用长度的线性权重。
 
     Parameters
     ----------
@@ -206,10 +221,27 @@ def compute_wma_batch(series: torch.Tensor, window: int) -> torch.Tensor:
     -------
     Tensor  (n_iphones, n_buckets)
     """
-    weights = torch.arange(1, window + 1, dtype=series.dtype, device=series.device)
-    kernel = (weights / weights.sum()).flip(0).reshape(1, 1, window)
-    padded = F.pad(series.unsqueeze(1), (window - 1, 0), mode="replicate")
-    return F.conv1d(padded, kernel).squeeze(1)
+    n = series.shape[1]
+    wma = torch.zeros_like(series)
+
+    # ── 满窗部分: t >= window-1, 用 conv1d 一次完成 ──
+    if n >= window:
+        weights = torch.arange(1, window + 1, dtype=series.dtype, device=series.device)
+        w_sum = weights.sum()
+        # conv1d: output[i] = sum(input[i+k] * kernel[k]), k=0..W-1
+        # 要让最新值(segment尾部)权重最大: kernel = [1, 2, ..., W]
+        kernel = weights.reshape(1, 1, window)
+        inp = series.unsqueeze(1)  # (I, 1, B)
+        conv_out = torch.nn.functional.conv1d(inp, kernel, padding=0).squeeze(1)  # (I, B-W+1)
+        wma[:, window - 1:] = conv_out / w_sum
+
+    # ── 缩窗部分: t = 0 .. min(window-1, n-1), 权重 = [1..t+1] ──
+    for t in range(min(window - 1, n)):
+        w = t + 1
+        weights_t = torch.arange(1, w + 1, dtype=series.dtype, device=series.device)
+        wma[:, t] = (series[:, :w] * weights_t).sum(dim=1) / weights_t.sum()
+
+    return wma
 
 
 # ── Bollinger Bands ──────────────────────────────────────────────────────
