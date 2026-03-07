@@ -332,12 +332,13 @@ class ForecastSnapshot(models.Model):
     model_name = models.CharField(max_length=64, db_index=True)#来源模型
     version = models.CharField(max_length=32)#来源模型
     horizon_min = models.IntegerField(default=1)#预测视野（1/5/15…分钟后）
+    iphone = models.ForeignKey('Iphone', on_delete=models.CASCADE, null=True, blank=True, db_index=True)  # 预测对象机型
     yhat = models.FloatField()#点预测与不确定性（或用上下分位）
     yhat_var = models.FloatField(null=True)#点预测与不确定性（或用上下分位）
     is_final = models.BooleanField(default=False)#保持与 OverallBar 同步的最终化语义
 
     class Meta:
-        unique_together = (('bucket', 'model_name', 'version', 'horizon_min'),)
+        unique_together = (('bucket', 'model_name', 'version', 'horizon_min', 'iphone'),)
         indexes = [models.Index(fields=['bucket', 'model_name', 'version'])]
 
 

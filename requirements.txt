@@ -167,3 +167,5 @@ daphne==4.1.2
 flower==2.0.1
 elastic-apm==6.25.0
 clickhouse-driver[lz4]==0.2.10
+lightgbm==4.6.0
+scikit-learn==1.6.1
