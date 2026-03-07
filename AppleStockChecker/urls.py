@@ -70,6 +70,12 @@ from .api.api_goods_sync import (
     UpdateExternalPriceView,
     BatchUpdateExternalPricesView,
 )
+from .api.api_prediction import (
+    TriggerTrainingView,
+    TriggerPredictionView,
+    ForecastListView,
+    ModelArtifactListView,
+)
 
 router = DefaultRouter()
 router.register(r"iphones", IphoneViewSet, basename="iphone")
@@ -267,6 +273,12 @@ urlpatterns = [
                   path('goods-sync/statistics/', GoodsMappingStatisticsView.as_view(), name='goods-sync-statistics'),
                   path('goods-sync/update-price/', UpdateExternalPriceView.as_view(), name='goods-sync-update-price'),
                   path('goods-sync/batch-update-prices/', BatchUpdateExternalPricesView.as_view(), name='goods-sync-batch-update'),
+
+                  # 价格预测 API
+                  path('prediction/trigger-training/', TriggerTrainingView.as_view(), name='prediction-trigger-training'),
+                  path('prediction/trigger-predict/', TriggerPredictionView.as_view(), name='prediction-trigger-predict'),
+                  path('prediction/forecasts/', ForecastListView.as_view(), name='prediction-forecasts'),
+                  path('prediction/models/', ModelArtifactListView.as_view(), name='prediction-models'),
 
                   path("options/scopes/", ScopeOptionsView.as_view(), name="options-scopes"),
                   path("options/shops/", options_shops, name="options-shops"),
